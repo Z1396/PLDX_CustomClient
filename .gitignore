@@ -1,0 +1,10 @@
+/.idea/
+/.vscode/
+/build/
+/cmake-build-*/
+/3rdparty_downloads/
+/logs/
+protoc.exe
+protoc
+vulkan_pipeline_cache.bin
+__pycache__/

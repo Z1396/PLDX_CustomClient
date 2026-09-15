@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=RoboGo
+Exec=/home/yancey/RoboGo/build/release/RoboGo
+StartupNotify=true
+Terminal=true
+Type=Application
+Categories=Utility;
+Comment=RoboGo
