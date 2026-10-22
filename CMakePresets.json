@@ -26,11 +26,13 @@
         },
         {
             "name": "release",
-            "displayName": "Release",
+            "displayName": "Release (Clang)",
             "binaryDir": "${sourceDir}/build/release",
             "generator": "Ninja",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
             }
         }
     ],
@@ -41,7 +43,8 @@
         },
         {
             "name": "release",
-            "configurePreset": "release"
+            "configurePreset": "release",
+            "jobs": 6
         },
         {
             "name": "rel-with-debug-info",

@@ -14,6 +14,9 @@
 
 #pragma once
 
+// 【Dear ImGui 编译期配置】本文件通过 IMGUI_USER_CONFIG 指定，集中开关 ImGui 的特性与默认行为；
+// 所有使用 ImGui 的编译单元都必须一致地定义这些选项，否则数据结构布局不匹配会导致运行时错误。
+
 //---- Define assertion handler. Defaults to calling assert().
 // - If your macro uses multiple statements, make sure is enclosed in a 'do { .. } while (0)' block so it can be used as a single statement.
 // - Compiling with NDEBUG will usually strip out assert() to nothing, which is NOT recommended because we use asserts to notify of programmer mistakes.
@@ -29,13 +32,13 @@
 //#define IMGUI_API __attribute__((visibility("default")))  // GCC/Clang: override visibility when set is hidden
 
 //---- Don't define obsolete functions/enums/behaviors. Consider enabling from time to time after updating to clean your code of obsolete function/names.
-#define IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+#define IMGUI_DISABLE_OBSOLETE_FUNCTIONS   // 关闭已废弃接口/枚举，保持代码整洁并避免误用旧 API
 
 //---- Disable all of Dear ImGui or don't implement standard windows/tools.
 // It is very strongly recommended to NOT disable the demo windows and debug tool during development. They are extremely useful in day to day work. Please read comments in imgui_demo.cpp.
 //#define IMGUI_DISABLE                                     // Disable everything: all headers and source files will be empty.
-#define IMGUI_DISABLE_DEMO_WINDOWS                        // Disable demo windows: ShowDemoWindow()/ShowStyleEditor() will be empty.
-#define IMGUI_DISABLE_DEBUG_TOOLS                         // Disable metrics/debugger and other debug tools: ShowMetricsWindow(), ShowDebugLogWindow() and ShowIDStackToolWindow() will be empty.
+#define IMGUI_DISABLE_DEMO_WINDOWS                        // Disable demo windows: ShowDemoWindow()/ShowStyleEditor() will be empty. // 禁用官方 Demo/样式编辑器窗口，减小体积(发布版不需要)
+#define IMGUI_DISABLE_DEBUG_TOOLS                         // Disable metrics/debugger and other debug tools: ShowMetricsWindow(), ShowDebugLogWindow() and ShowIDStackToolWindow() will be empty. // 禁用 Metrics/调试日志等调试工具窗口，发布版不需要
 
 //---- Don't implement some functions to reduce linkage requirements.
 //#define IMGUI_DISABLE_WIN32_DEFAULT_CLIPBOARD_FUNCTIONS   // [Win32] Don't implement default clipboard handler. Won't use and link with OpenClipboard/GetClipboardData/CloseClipboard etc. (user32.lib/.a, kernel32.lib/.a)
@@ -49,7 +52,7 @@
 //#define IMGUI_DISABLE_FILE_FUNCTIONS                      // Don't implement ImFileOpen/ImFileClose/ImFileRead/ImFileWrite and ImFileHandle at all (replace them with dummies)
 //#define IMGUI_DISABLE_DEFAULT_FILE_FUNCTIONS              // Don't implement ImFileOpen/ImFileClose/ImFileRead/ImFileWrite and ImFileHandle so you can implement them yourself if you don't want to link with fopen/fclose/fread/fwrite. This will also disable the LogToTTY() function.
 //#define IMGUI_DISABLE_DEFAULT_ALLOCATORS                  // Don't implement default allocators calling malloc()/free() to avoid linking with them. You will need to call ImGui::SetAllocatorFunctions().
-#define IMGUI_DISABLE_DEFAULT_FONT                        // Disable default embedded fonts (ProggyClean/ProggyForever), remove ~9 KB + ~14 KB from output binary. AddFontDefaultXXX() functions will assert.
+#define IMGUI_DISABLE_DEFAULT_FONT                        // Disable default embedded fonts (ProggyClean/ProggyForever), remove ~9 KB + ~14 KB from output binary. AddFontDefaultXXX() functions will assert. // 禁用 ImGui 内置默认字体(Proggy)，改用项目自带字体以减小二进制体积
 //#define IMGUI_DISABLE_SSE                                 // Disable use of SSE intrinsics even if available
 
 //---- Enable Test Engine / Automation features.

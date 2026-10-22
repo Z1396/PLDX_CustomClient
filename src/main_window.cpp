@@ -13,6 +13,8 @@
 
 namespace {
 
+    // 功能：把形如 "a,b" 的字符串按首个逗号拆成两段的键值对。
+    // 思路：用 string::find 定位首个逗号，分别取左右子串；找不到逗号则返回空。
     std::optional<std::pair<std::string, std::string>> SplitByComma(const std::string &param) {
         size_t comma_pos = param.find(',');
         if (comma_pos != std::string::npos) {
@@ -21,6 +23,8 @@ namespace {
         return std::nullopt;
     }
 
+    // 功能：将十进制字符串解析为 uint8_t。
+    // 思路：用 strtol 系列的 std::stoul 解析，要求整串都被消费且不超出 uint8_t 范围；否则捕获异常返回空。
     std::optional<uint8_t> ParseByteParam(const std::string &param) {
         try {
             size_t parsed_size = 0;
@@ -33,6 +37,8 @@ namespace {
         return std::nullopt;
     }
 
+    // 功能：构造一条带本地时间戳与自增序号的日志并追加到指定缓冲区。
+    // 思路：取当前时间格式化为 "HH:MM:SS"，分配自增 sequence，超 50 条则丢弃最旧一条以限长。
     void AppendLogBuffer(State &state, std::vector<LogEntry> &buffer, int type, const std::string &text) {
         LogEntry log_entry;
         time_t now = time(nullptr);
@@ -47,6 +53,8 @@ namespace {
         }
     }
 
+    // 功能：按日志类型把文案输出到终端（spdlog），便于现场调试。
+    // 思路：根据 type(0/1/2) 分别走 INFO/WARN/ERROR 级别，其余按 INFO 处理。
     void EmitUiLog(int type, const char *scope, const std::string &text) {
         switch (type) {
             case 0:
@@ -64,6 +72,8 @@ namespace {
         }
     }
 
+    // 功能：在给定可用矩形内按比例缩放，得到保持视频原始宽高比的最大居中显示尺寸。
+    // 思路：比较图像宽高比与可用区域宽高比，谁更"宽"就以宽（或高）为基准计算另一边。
     ImVec2 FitImageSize(const ImVec2 &available_size, const ImVec2 &texture_size) {
         if (available_size.x <= 0.0f || available_size.y <= 0.0f || texture_size.x <= 0.0f || texture_size.y <= 0.0f) {
             return ImVec2(0.0f, 0.0f);
@@ -81,6 +91,8 @@ namespace {
     constexpr ImU32 kRulerLineColor = IM_COL32(180, 80, 255, 120);
     constexpr ImU32 kRulerLabelColor = IM_COL32(255, 255, 255, 180);
 
+    // 功能：在英雄机器人部署模式的视频主画面上按固定像素间距绘制水平刻度线（标尺）。
+    // 思路：把视频像素间距换算成屏幕像素间距（乘缩放比），自上而下逐条画线并标注对应像素高度标签。
     void DrawHeroRulerLines(ImDrawList *draw_list,
                             const ImVec2 &image_min,
                             const ImVec2 &image_max,
@@ -100,16 +112,22 @@ namespace {
 
 }// namespace
 
+// 功能：追加本车日志（操作手主动动作/状态）。
+// 思路：写入车辆日志缓冲区并打印终端日志。
 void AppendVehicleLog(State &state, int type, const std::string &text) {
     AppendLogBuffer(state, state.vehicle_logs, type, text);
     EmitUiLog(type, "本车日志: ", text);
 }
 
+// 功能：追加系统日志（裁判系统事件/判罚）。
+// 思路：写入系统日志缓冲区并打印终端日志。
 void AppendSystemLog(State &state, int type, const std::string &text) {
     AppendLogBuffer(state, state.system_logs, type, text);
     EmitUiLog(type, "系统日志: ", text);
 }
 
+// 功能：构造初始状态。
+// 思路：清零红蓝双方各 9 个机器人的血量/弹量后返回。
 State CreateInitialState() {
     State state;
     for (size_t i = 0; i < std::size(state.red_robots); i++) {
@@ -122,6 +140,8 @@ State CreateInitialState() {
     return state;
 }
 
+// 功能：主界面总绘制入口。组织视频背景、顶部栏、状态栏、各功能面板与开局面板的绘制顺序，处理视频主画面切换。
+// 思路：先绘制全屏视频背景（按主/次视频源选择并居中缩放），再按布局矩形逐个 SetNextWindow 摆放各 ImGui 面板；在比赛中绘制准星，否则绘制开局面板。返回是否请求切换 UDP 视频翻转。
 bool ShowMainWindow(const State &state,
                     RoboGo::io::MqttClient &mqtt_client,
                     ImTextureRef video_texture_ref,
@@ -139,6 +159,7 @@ bool ShowMainWindow(const State &state,
     ImGuiStyle &style = ImGui::GetStyle();
     float font_size = ImGui::GetFontSize();
 
+    // 根据"是否把自定义视频作为主画面"选择背景视频纹理、尺寸及就绪标志。
     const ImTextureRef background_video_texture_ref = using_custom_video_as_main
                                                               ? custom_video_texture_ref
                                                               : video_texture_ref;
@@ -150,6 +171,7 @@ bool ShowMainWindow(const State &state,
                                                         : udp_video_display_ready;
     ImVec2 main_image_min(0.0f, 0.0f);
     ImVec2 main_image_max = viewport->Size;
+    // 视频就绪则把整张视频贴到背景绘制层；自定义视频需先按比例居中，UDP 视频直接拉伸铺满。
     if (background_video_display_ready && background_video_texture_ref.GetTexID() != ImTextureID_Invalid) {
         ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
         if (background_video_size.x > 0.0f && background_video_size.y > 0.0f && using_custom_video_as_main) {
@@ -162,6 +184,7 @@ bool ShowMainWindow(const State &state,
             draw_list->AddImage(background_video_texture_ref, ImVec2(0, 0), viewport->Size, ImVec2(0, 0), ImVec2(1, 1));
         }
     }
+    // 仅在英雄机器人且处于部署模式下，在视频主画面上叠加辅助标尺刻度线。
     {
         const uint32_t robot_id = state.robot_static_status.has_value()
                                           ? state.robot_static_status->robot_id() : 0;
@@ -175,21 +198,25 @@ bool ShowMainWindow(const State &state,
         }
     }
 
+    // 顶部状态栏（高度占窗口 15%）。
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, viewport->Size.y * 0.15f));
     ShowHeaderPanel(state);
 
+    // 左下角本车状态面板（宽 20%，高度按字体估算）。
     float robot_status_panel_height = font_size * 10 + style.SeparatorSize + 4.0f * 4 + style.ItemSpacing.y * 10 + style.WindowPadding.y * 2;
     ImGui::SetNextWindowPos(ImVec2(0, viewport->Size.y - robot_status_panel_height), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.2f, robot_status_panel_height));
     ShowRobotStatusPanel(state);
 
+    // 左侧栏：上下分为"次视频面板"与"日志面板"两个区域，宽均 20%。
     const float left_panel_width = viewport->Size.x * 0.2f;
     const float left_panel_top = viewport->Size.y * 0.15f;
     const float left_panel_total_height = viewport->Size.y - viewport->Size.y * 0.2f - robot_status_panel_height;
     const float left_panel_spacing = style.ItemSpacing.y;
     const float custom_video_panel_height = (left_panel_total_height - left_panel_spacing) * 0.5f;
     const float log_panel_height = left_panel_total_height - left_panel_spacing - custom_video_panel_height;
+    // 次视频源即"非主画面"的另一路视频（UDP 或自定义），并据此准备标题与不可用提示文案。
     const ImTextureRef secondary_video_texture_ref = using_custom_video_as_main
                                                              ? video_texture_ref
                                                              : custom_video_texture_ref;
@@ -219,6 +246,7 @@ bool ShowMainWindow(const State &state,
         }
     }
 
+    // 左上：次视频面板，并显示是否请求翻转 UDP 视频。
     ImGui::SetNextWindowPos(ImVec2(0, left_panel_top), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(left_panel_width, custom_video_panel_height));
     const bool toggle_udp_video_inversion_requested = ShowCustomVideoPanel(
@@ -229,10 +257,12 @@ bool ShowMainWindow(const State &state,
             secondary_video_unavailable_message,
             udp_video_inverted);
 
+    // 左中：日志面板。
     ImGui::SetNextWindowPos(ImVec2(0, left_panel_top + custom_video_panel_height + left_panel_spacing), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(left_panel_width, log_panel_height));
     ShowLogPanel(state);
 
+    // 比赛中绘制准星覆盖全屏；否则绘制开局准备面板（居中 750x500 窗口）。
     if (is_in_game_mode()) {
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, viewport->Size.y));
@@ -245,23 +275,29 @@ bool ShowMainWindow(const State &state,
         StartPanel(state, mqtt_client);
     }
 
+    // 右下：小地图（按 28:15 标准场地比例计算高度）。
     float mini_map_width = viewport->Size.x * 0.2f;
     float mini_map_height = mini_map_width / 28 * 15;
     ImGui::SetNextWindowPos(ImVec2(viewport->Size.x - mini_map_width, viewport->Size.y - mini_map_height), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(mini_map_width, mini_map_height));
     ShowMiniMap(state, mqtt_client, mini_map_texture_ref, mini_map_texture_size);
 
+    // 右侧中部：增益/Buff 面板，占据顶部栏以下到小地图以上的区域。
     float buff_panel_width = viewport->Size.x * 0.2f;
     float buff_panel_height = viewport->Size.y - viewport->Size.y * 0.15f - mini_map_height;
     ImGui::SetNextWindowPos(ImVec2(viewport->Size.x - buff_panel_width, viewport->Size.y * 0.15f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(buff_panel_width, buff_panel_height));
     ShowBuffPanel(state);
 
+    // 底部信息条。
     ShowBottomPanel(state);
 
+    // 把"是否请求翻转 UDP 视频"沿调用链返回给上层。
     return toggle_udp_video_inversion_requested;
 }
 
+// 功能：每帧推进本地状态。目前负责清理已超出剩余时间的 Buff。
+// 思路：遍历 active_buffs，用当前时间减去更新时间得到已持续秒数，若 >= buff 剩余时间则移除；并统计清理条数用于调试日志。
 void UpdateState(State &state) {
     auto now = std::chrono::steady_clock::now();
     const std::size_t previous_size = state.active_buffs.size();
@@ -278,15 +314,20 @@ void UpdateState(State &state) {
     }
 }
 
+// 功能：按需（到达发布周期）构造并下发 CustomControl 控制包，把敌方血量/空中支援状态等透传给机器人电控。
+// 思路：先判断是否到发布时刻及基本状态是否就绪；再从 GlobalUnitStatus 取出对方阵营血量组装成定长字节载荷，附加上空中支援控制与自增调试计数后序列化发布。
 void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client) {
     const auto now = std::chrono::steady_clock::now();
+    // 未到发布周期则跳过，避免高频下发。
     if (!IsCustomControlPublishDue(state.last_custom_control_publish_time, now)) {
         return;
     }
+    // 缺乏己方静态信息或全局血量信息无法定位敌方，直接返回。
     if (!state.robot_static_status.has_value() || !state.global_unit_status.has_value()) {
         return;
     }
 
+    // 血量数组前半为己方、后半为对方，需保证至少有 kCustomControlRobotCount 个对方单位。
     const auto &robot_health = state.global_unit_status->robot_health();
     const auto robot_health_size = robot_health.size();
     const auto half_robot_health_size = robot_health_size / 2;
@@ -298,10 +339,12 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
     std::array<uint16_t, kCustomControlRobotCount> enemy_health{};
     for (size_t k = 0; k < kCustomControlRobotCount; k++) {
         const int enemy_index = half_robot_health_size + static_cast<int>(k);
+        // 取对方单位血量并钳制到 uint16 范围。
         const uint16_t hp = static_cast<uint16_t>(std::min(robot_health[enemy_index], uint32_t{65535}));
         enemy_health[k] = hp;
     }
 
+    // 自增调试计数器，用于下位机识别每帧控制包的新鲜度。
     static uint8_t debug_increment_counter = 0;
     const uint8_t current_debug_counter = debug_increment_counter;
     debug_increment_counter = static_cast<uint8_t>(debug_increment_counter + 1);
@@ -313,6 +356,7 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
     CustomControl custom_control;
     custom_control.set_data(std::string(data.begin(), data.end()));
     std::string serialized;
+    // 序列化成功则发布到 "CustomControl" 话题，并记录本次发布时间。
     if (custom_control.SerializeToString(&serialized)) {
         mqtt_client.publish("CustomControl", serialized);
         state.last_custom_control_publish_time = now;
@@ -338,6 +382,8 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
                 data[kCustomControlDebugCounterOffset]);
 }
 
+// 功能：MQTT 入站消息的统一分发入口，按 topic 反序列化对应 protobuf 并刷新 State。
+// 思路：用 if-else 链按 topic 匹配；解析成功则覆盖 State 快照（或追加日志/透传字节块），失败则记错误日志；未识别 topic 记警告。
 void HandleMqttMessage(State &state,
                        RoboGo::io::MqttClient &mqtt_client,
                        const std::string &topic,
@@ -903,6 +949,8 @@ void HandleMqttMessage(State &state,
     }
 }
 
+// 功能：把机器人 ID 字符串翻译为「红方/蓝方 + 兵种」中文名。
+// 思路：ID<100 为红方（蓝方为 ID-100），按个位/十位映射到兵种常量表；非法输入返回"未知机器人"。
 std::string GetRobotName(const std::string &robot_id) {
     if (robot_id.empty()) {
         SPDLOG_WARN("收到空机器人ID");
@@ -964,6 +1012,7 @@ std::string GetRobotName(const std::string &robot_id) {
     return prefix + suffix;
 }
 
+// 功能：翻译空中支援状态码（0 未开始 / 1 进行中）为中文。
 const char *GetAirSupportStatusName(uint32_t airsupport_status) {
     switch (airsupport_status) {
         case 0:
@@ -975,6 +1024,7 @@ const char *GetAirSupportStatusName(uint32_t airsupport_status) {
     }
 }
 
+// 功能：翻译空中机器人发射机构状态码（0 锁定不可解除 / 1 正常 / 2 锁定可解除）为中文。
 const char *GetAirSupportShooterStatusName(uint32_t shooter_status) {
     switch (shooter_status) {
         case 0:

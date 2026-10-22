@@ -1,39 +1,39 @@
 // RoboGo Resource File
-#include "resources.h"
+#include "resources.h"   // 引入 IDI_APP_ICON 等资源 ID 定义
 
 // Icon resource
-IDI_APP_ICON ICON "app_icon.ico"
+IDI_APP_ICON ICON "app_icon.ico"   // 将 app_icon.ico 文件绑定到 IDI_APP_ICON(101)，作为程序窗口与 exe 图标
 
 // Version information
-VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
-FILEFLAGSMASK   0x3fL
+VS_VERSION_INFO VERSIONINFO   // 定义嵌入 exe 的版本信息资源块
+FILEVERSION     1,0,0,0   // 文件版本号 1.0.0.0
+PRODUCTVERSION  1,0,0,0   // 产品版本号 1.0.0.0
+FILEFLAGSMASK   0x3fL   // 版本信息有效标志位掩码(指定哪些 FILEFLAGS 位有意义)
 #ifdef _DEBUG
-    FILEFLAGS   0x1L
+    FILEFLAGS   0x1L   // 调试构建：标记 VS_FF_DEBUG(含调试信息)
 #else
-    FILEFLAGS   0x0L
+    FILEFLAGS   0x0L   // 发布构建：无特殊标志
 #endif
-FILEOS          0x40004L
-FILETYPE        0x1L
-FILESUBTYPE     0x0L
+FILEOS          0x40004L   // 目标操作系统：NT/Win32(VOS_NT_WINDOWS32)
+FILETYPE        0x1L   // 文件类型：应用程序(主可执行文件)
+FILESUBTYPE     0x0L   // 文件子类型：未指定(0 表示通用)
 BEGIN
-    BLOCK "StringFileInfo"
+    BLOCK "StringFileInfo"   // 字符串形式的版本信息块
     BEGIN
-        BLOCK "040904b0"
+        BLOCK "040904b0"   // 语言/代码页组合：0409(英语-美国) + 04b0(Unicode 代码页 1200)
         BEGIN
-            VALUE "CompanyName", "ACE"
-            VALUE "FileDescription", "RoboGo - RoboMaster Control Software"
-            VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "RoboGo"
-            VALUE "LegalCopyright", "Copyright ©2026 Yingjie Huang"
-            VALUE "OriginalFilename", "RoboGo.exe"
-            VALUE "ProductName", "RoboGo"
-            VALUE "ProductVersion", "1.0.0.0"
+            VALUE "CompanyName", "ACE"   // 公司/团队名称
+            VALUE "FileDescription", "RoboGo - RoboMaster Control Software"   // 文件描述
+            VALUE "FileVersion", "1.0.0.0"   // 文件版本字符串
+            VALUE "InternalName", "RoboGo"   // 内部名称
+            VALUE "LegalCopyright", "Copyright ©2026 Yingjie Huang"   // 版权信息
+            VALUE "OriginalFilename", "RoboGo.exe"   // 原始文件名
+            VALUE "ProductName", "RoboGo"   // 产品名称
+            VALUE "ProductVersion", "1.0.0.0"   // 产品版本字符串
         END
     END
-    BLOCK "VarFileInfo"
+    BLOCK "VarFileInfo"   // 可变版本信息块(声明支持的语言与代码页)
     BEGIN
-        VALUE "Translation", 0x409, 1200
+        VALUE "Translation", 0x409, 1200   // 支持的语言(0x409=英语-美国)与代码页(1200=Unicode)
     END
 END

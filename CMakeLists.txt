@@ -15,6 +15,21 @@ endif()
 # third party
 include(FetchContent)
 
+# 3rdparty_downloads 中已有源码时直接复用，不再联网下载（兼容代理不可用/离线环境）
+set(dep_names directxmath directx-headers directxtk12 glfw abseil-cpp spdlog boost async_mqtt readerwriterqueue protobuf stb_src imgui_src)
+set(dep_dirs directxmath directx-headers directxtk12 glfw abseil-cpp spdlog boost async_mqtt readerwriterqueue protobuf stb imgui)
+list(LENGTH dep_names dep_count)
+math(EXPR dep_last "${dep_count} - 1")
+foreach(i RANGE 0 ${dep_last})
+    list(GET dep_names ${i} dep_name)
+    list(GET dep_dirs ${i} dep_dir)
+    file(GLOB dep_entries "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty_downloads/${dep_dir}/*")
+    if(dep_entries)
+        string(TOUPPER "${dep_name}" dep_upper)
+        set(FETCHCONTENT_SOURCE_DIR_${dep_upper} "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty_downloads/${dep_dir}" CACHE PATH "本地依赖源码目录" FORCE)
+    endif()
+endforeach()
+
 set(CMAKE_SKIP_INSTALL_RULES ON) # we can't use an option to skip async_mqtt install rules, which is failed because some boost targets are not export
 set(BOOST_ENABLE_COMPATIBILITY_TARGETS ON)
 set(ASYNC_MQTT_USE_STATIC_BOOST ON)
@@ -33,6 +48,39 @@ set(GLFW_INSTALL OFF)
 set(GLFW_LIBRARY_TYPE STATIC)
 
 if(WIN32)
+    # DirectXTK12 在 MinGW 下强制要求 directxmath / directx-headers 作为 CMake 包提供
+    FetchContent_Declare(
+            directxmath
+            GIT_REPOSITORY https://github.com/microsoft/DirectXMath.git
+            GIT_TAG may2026
+            GIT_SHALLOW TRUE
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty_downloads/directxmath"
+            OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_Declare(
+            directx-headers
+            GIT_REPOSITORY https://github.com/microsoft/DirectX-Headers.git
+            GIT_TAG v1.619.5
+            GIT_SHALLOW TRUE
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty_downloads/directx-headers"
+            OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_MakeAvailable(directxmath directx-headers)
+    # DirectXMath 的构建树中没有 Microsoft:: 命名空间的别名目标，需要手动补上
+    if(NOT TARGET Microsoft::DirectXMath)
+        add_library(Microsoft::DirectXMath ALIAS DirectXMath)
+    endif()
+    # DirectXTK12 需要用 dxc.exe 编译着色器，这里预先定位 Windows SDK 中自带的版本
+    if(NOT DIRECTX_DXC_TOOL)
+        file(GLOB dxc_tools "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/dxc.exe")
+        list(SORT dxc_tools COMPARE NATURAL)
+        list(LENGTH dxc_tools dxc_tools_count)
+        if(dxc_tools_count GREATER 0)
+            math(EXPR dxc_tools_last "${dxc_tools_count} - 1")
+            list(GET dxc_tools ${dxc_tools_last} DIRECTX_DXC_TOOL)
+            set(DIRECTX_DXC_TOOL "${DIRECTX_DXC_TOOL}" CACHE FILEPATH "DirectXShaderCompiler executable")
+        endif()
+    endif()
     FetchContent_Declare(
             directxtk12
             URL https://github.com/microsoft/DirectXTK12/archive/refs/tags/may2026.tar.gz
@@ -236,10 +284,12 @@ add_executable(RoboGo WIN32
     src/resource/resources.cpp
     gen/messages.pb.cc
     ${EMBEDDED_RESOURCE_SOURCES}
-    resources/resources.rc
 )
 if(WIN32)
-    target_sources(RoboGo PRIVATE resources/resources.rc)
+    # 资源脚本单独编译，避免继承 RoboGo 的全部 include 路径导致 windres/rc 命令行超长
+    add_library(robogo_resources OBJECT resources/resources.rc)
+    target_include_directories(robogo_resources PRIVATE include resources)
+    target_link_libraries(RoboGo PRIVATE robogo_resources)
 endif()
 target_precompile_headers(RoboGo PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/include/pch.h>")
 target_include_directories(RoboGo PRIVATE
