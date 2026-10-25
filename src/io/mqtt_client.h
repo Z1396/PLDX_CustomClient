@@ -1,3 +1,4 @@
+// mqtt_client.h：MQTT 客户端接口——封装与裁判系统的异步连接、上行发布与下行消息回调，并以原子量对外暴露连接状态。
 #pragma once
 
 #include <pch.h>
@@ -10,10 +11,10 @@ namespace RoboGo::io {
     public:
         // 连接状态枚举：Idle(空闲未连) / Connecting(连接中) / Connected(已连接) / Failed(失败待重连)
         enum class ConnectionState {
-            Idle,
-            Connecting,
-            Connected,
-            Failed,
+            Idle,       // 空闲：尚未设置 client_id，或已被置空，不尝试连接
+            Connecting, // 连接中：已设置 client_id，协程正在建立 TCP/MQTT 连接
+            Connected,  // 已连接：连接建立且已完成订阅，可正常收发消息
+            Failed,     // 连接失败：连接或订阅出错，等待下一次重试（自动重连）
         };
 
     private:
@@ -32,6 +33,10 @@ namespace RoboGo::io {
         std::shared_ptr<async_mqtt::client<async_mqtt::protocol_version::v3_1_1, async_mqtt::protocol::mqtt>> active_client;  // 当前活动连接，空表示未连接
 
     public:
+        // 功能：构造 MQTT 客户端——记录服务端地址与收消息回调，并启动后台运行协程。
+        // 参数 io_context：共用的 Asio 执行上下文；host_ip/port：裁判系统 MQTT 地址（默认 192.168.12.1:3333）；
+        //      on_receive_message：收到下行消息时的回调（话题 + 负载），由上层解析 protobuf。
+        // 说明：此处只保存参数不立即连接，需后续调用 set_client_id() 才会真正发起连接。
         explicit MqttClient(boost::asio::io_context &io_context,
                             std::string host_ip,
                             std::string port,

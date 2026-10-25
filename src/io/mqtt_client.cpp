@@ -328,10 +328,7 @@ namespace RoboGo::io {
                                                                  async_mqtt::v3_1_1::connect_packet{
                                                                          true,
                                                                          mqtt_keep_alive_seconds,
-                                                                         std::move(client_id_cloned),
-                                                                         std::nullopt,
-                                                                         "",
-                                                                         ""},
+                                                                         std::move(client_id_cloned)},
                                                                  boost::asio::use_awaitable);
                                                      });
                 SPDLOG_INFO("MQTT连接成功 peer={}", peer);

@@ -1,3 +1,4 @@
+// network_capture_format.h：网络抓包文件的二进制格式定义——抓包标志位、摘要头、记录头与 CRC 校验的字节布局常量。
 #pragma once
 
 #include <pch.h>

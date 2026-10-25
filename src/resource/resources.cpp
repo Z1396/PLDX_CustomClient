@@ -31,16 +31,18 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
         return std::nullopt;   // 返回空可选值表示解码失败
     }
 
-    int width = 0;
-    int height = 0;
+    int width = 0;       // 解码后的图像宽度
+    int height = 0;      // 解码后的图像高度
     int channels_in_file = 0;   // 准备接收解码后的图像尺寸与文件实际通道数
+    // 调用 stb_image 解码函数，将编码字节流解码为 RGBA8 像素
+    // 解码成功返回像素指针，失败返回 nullptr
     stbi_uc *decoded_pixels = stbi_load_from_memory(
-            encoded_bytes.data(),
-            static_cast<int>(encoded_bytes.size()),
-            &width,
-            &height,
-            &channels_in_file,
-            STBI_rgb_alpha);   // 强制解码为 RGBA(4 通道)，统一像素格式便于后续上传 GPU 纹理
+            encoded_bytes.data(),         // 指向编码字节流的指针
+            static_cast<int>(encoded_bytes.size()),   // 编码字节流的字节数
+            &width,   // 接收解码后的图像宽度
+            &height,   // 接收解码后的图像高度
+            &channels_in_file,   // 强制解码为 RGBA(4 通道)，统一像素格式便于后续上传 GPU 纹理
+            STBI_rgb_alpha);   // 传递 STBI_rgb_alpha 作为参数，强制解码为 RGBA(4 通道)，统一像素格式便于后续上传 GPU 纹理
     if (decoded_pixels == nullptr) {   // stb 解码失败会返回空指针
         const char *failure_reason = stbi_failure_reason();   // 获取 stb 内部失败原因字符串
         SPDLOG_ERROR("{}解码失败 reason={}", display_name, failure_reason != nullptr ? failure_reason : "unknown");   // 记录失败原因(空则标记 unknown)
@@ -48,8 +50,8 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     }
 
     DecodedImage image;   // 构造返回用的图像结构
-    image.width = width;
-    image.height = height;
+    image.width = width;  // 赋值解码后的图像宽度
+    image.height = height;    // 赋值解码后的图像高度
     const std::size_t pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;   // 计算总像素字节数 = 宽 * 高 * 4(RGBA)
     image.pixels.assign(decoded_pixels, decoded_pixels + pixel_count);   // 将 stb 分配的像素拷贝进 vector 托管，便于自动释放
     stbi_image_free(decoded_pixels);   // 释放 stb 内部 malloc 的内存，避免泄漏

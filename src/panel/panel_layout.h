@@ -7,17 +7,17 @@ namespace RoboGo::panel {
 
 // 按钮配色与尺寸样式：常态/悬停/按下三色 + 内边距 + 圆角。
 struct ButtonStyle {
-    ImVec4 button_color;
-    ImVec4 hovered_color;
-    ImVec4 active_color;
-    ImVec2 padding = ImVec2(12.0f, 8.0f);
-    float rounding = 6.0f;
+    ImVec4 button_color;                   // 常态背景色
+    ImVec4 hovered_color;                  // 鼠标悬停时的背景色
+    ImVec4 active_color;                   // 鼠标按下时的背景色
+    ImVec2 padding = ImVec2(12.0f, 8.0f);  // 按钮内边距（横向、纵向）
+    float rounding = 6.0f;                 // 按钮圆角半径
 };
 
 // 一行中一个子面板的单元：是否可见 + 渲染回调（接收分配到的宽度）。
 struct PanelRowItem {
-    bool visible = false;
-    std::function<void(float)> render;
+    bool visible = false;               // 是否参与排版：false 时该子面板不占宽度
+    std::function<void(float)> render;  // 渲染回调，参数为分配到的宽度
 };
 
 // RAII 风格的 ImGui 样式栈管理：析构时按计数统一 Pop，避免遗漏。
@@ -30,15 +30,22 @@ public:
     ScopedStyle &operator=(ScopedStyle &&other) noexcept;
     ~ScopedStyle();
 
+    // 功能：压入一个颜色样式（如 ImGuiCol_Text / ImGuiCol_Border），并累加颜色计数。
+    // 参数 index：ImGui 颜色枚举项；color：要覆盖的 RGBA 颜色。
     void PushColor(ImGuiCol index, const ImVec4 &color);
+    // 功能：压入一个标量样式变量（如圆角、边框宽度），并累加变量计数。
+    // 参数 index：ImGui 样式枚举项；value：目标数值。
     void PushVar(ImGuiStyleVar index, float value);
+    // 功能：压入一个二维样式变量（如内边距 ImVec2），并累加变量计数。
+    // 参数 index：ImGui 样式枚举项；value：目标二维数值。
     void PushVar(ImGuiStyleVar index, const ImVec2 &value);
 
 private:
+    // 功能：按记录的计数把已压入的样式全部弹出并清零计数（析构与移动赋值时调用），防止样式栈泄漏。
     void Reset();
 
-    int color_count_ = 0;
-    int var_count_ = 0;
+    int color_count_ = 0; // 已压入的颜色数量，析构时按此计数 Pop
+    int var_count_ = 0;   // 已压入的样式变量数量，析构时按此计数 Pop
 };
 
 // RAII 风格的子窗口：构造 BeginChild，析构 EndChild。
@@ -56,7 +63,7 @@ public:
     ScopedTitledPanel(const char *panel_id, float panel_width, const char *title, const ImVec4 &color);
 
 private:
-    ScopedChildWindow child_;
+    ScopedChildWindow child_;  // 底层子窗口，生命周期与本节面板绑定（构造 BeginChild、析构 EndChild）
 };
 
 // 构造仅修改文字颜色的 ScopedStyle。

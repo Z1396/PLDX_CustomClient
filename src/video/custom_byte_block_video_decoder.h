@@ -1,3 +1,4 @@
+// custom_byte_block_video_decoder.h：自定义字节块解码器接口——解码资源上限配置、解码输出帧结构，以及送入字节包与冲刷解码器的操作。
 #pragma once
 
 #include <pch.h>
@@ -28,10 +29,16 @@ class CustomByteBlockVideoDecoder {
 public:
     struct Impl; // PIMPL 实现，隐藏 FFmpeg 头依赖
 
+    // 功能：按配置构造解码器——校验参数合法性并创建 FFmpeg 解码器上下文、解析器等资源。
+    // 参数 config：资源上限配置（重排帧数、单帧字节/像素上限等），默认使用结构体默认值。
+    // 说明：构造失败（参数非正）会抛 std::invalid_argument；资源在析构时统一释放。
     explicit CustomByteBlockVideoDecoder(CustomByteBlockVideoDecoderConfig config = {});
+    // 功能：析构——冲刷未出帧并释放 FFmpeg 解码器、解析器、缩放上下文与 Impl 实例。
     ~CustomByteBlockVideoDecoder();
 
+    // 功能：移动构造——接管源对象的配置与 Impl 指针，源对象置为不可用状态。
     CustomByteBlockVideoDecoder(CustomByteBlockVideoDecoder &&) noexcept;
+    // 功能：移动赋值——先释放本对象已有资源，再接管源对象资源（自赋值安全）。
     CustomByteBlockVideoDecoder &operator=(CustomByteBlockVideoDecoder &&) noexcept;
 
     CustomByteBlockVideoDecoder(const CustomByteBlockVideoDecoder &) = delete; // 含 unique_ptr，禁止拷贝

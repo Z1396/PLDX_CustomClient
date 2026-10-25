@@ -32,18 +32,18 @@ constexpr int kSrvHeapSize = 64;
 
 // WindowsFrameContext —— 每一“在飞行中”帧的上下文：命令分配器与该帧对应的 fence 值（用于判断 GPU 是否完成该帧）。
 struct WindowsFrameContext {
-    ID3D12CommandAllocator *command_allocator = nullptr;
-    UINT64 fence_value = 0;
+    ID3D12CommandAllocator *command_allocator = nullptr;  // 命令分配器，为该帧的命令列表提供内存
+    UINT64 fence_value = 0;  // 该帧围栏的目标值，用于等待 GPU 完成本帧
 };
 
 // DescriptorHeapAllocator —— 对一段 D3D12 描述符堆做“子分配”的小型分配器：以空闲索引栈管理 CPU/GPU 描述符句柄。
 struct DescriptorHeapAllocator {
-    ID3D12DescriptorHeap *heap = nullptr;
-    D3D12_DESCRIPTOR_HEAP_TYPE heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
-    D3D12_CPU_DESCRIPTOR_HANDLE heap_start_cpu = {};
-    D3D12_GPU_DESCRIPTOR_HANDLE heap_start_gpu = {};
-    UINT heap_handle_increment = 0;
-    ImVector<int> free_indices;
+    ID3D12DescriptorHeap *heap = nullptr;  // 被管理的描述符堆本体，nullptr 表示尚未绑定
+    D3D12_DESCRIPTOR_HEAP_TYPE heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;  // 堆类型(RTV/SRV 等)，默认值 NUM_TYPES 表示尚未确定
+    D3D12_CPU_DESCRIPTOR_HANDLE heap_start_cpu = {};  // 描述符堆起始 CPU 句柄，据此按增量偏移定位各描述符
+    D3D12_GPU_DESCRIPTOR_HANDLE heap_start_gpu = {};  // 描述符堆起始 GPU 句柄，供命令列表绑定与着色器索引
+    UINT heap_handle_increment = 0;  // 单个描述符的句柄步长(字节)，由设备查询得到
+    ImVector<int> free_indices;  // 空闲描述符索引栈，分配时弹出、释放时压回
 
     // 功能：绑定一个已创建的描述符堆并完成初始化。
     // 思路：记录堆起止句柄、句柄步长，并把所有描述符下标压入空闲栈备用。
@@ -89,18 +89,18 @@ struct DescriptorHeapAllocator {
 
 // WindowsVideoTexture —— 单张视频纹理：D3D12 资源、SRV 的 CPU/GPU 描述符句柄、尺寸与状态标志。
 struct WindowsVideoTexture {
-    ID3D12Resource *texture = nullptr;
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = {};
-    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = {};
-    int width = 0;
-    int height = 0;
+    ID3D12Resource *texture = nullptr;  // 纹理资源本体，nullptr 表示尚未上传创建
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = {};  // 该纹理 SRV 的 CPU 句柄，用于创建/归还视图
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = {};  // 该纹理 SRV 的 GPU 句柄，交给 ImGui 采样绘制
+    int width = 0;  // 纹理像素宽度，未上传时为 0
+    int height = 0;  // 纹理像素高度，未上传时为 0
     bool ready = false;                 // 该纹理是否已上传完成、可安全采样。
     bool descriptor_allocated = false;  // 对应的 SRV 描述符是否已从该后端堆中分配。
 };
 
 // WindowsDynamicTextureSet —— 双缓冲视频纹理集合：轮换使用两张纹理避免上传与渲染相互阻塞。
 struct WindowsDynamicTextureSet {
-    std::array<WindowsVideoTexture, 2> textures;
+    std::array<WindowsVideoTexture, 2> textures;  // 两张轮换使用的纹理，使上传与显示互不阻塞
     int current_index = 0;  // 当前正在被显示/采样的一张。
     int next_index = 1;     // 下一次上传写入的一张（写完成后再切换 current）。
 };
@@ -122,17 +122,20 @@ public:
 
         // 构造并注册 Win32 窗口类：使用 CS_CLASSDC 共享设备上下文，窗口过程指向静态转发函数 StaticWndProc。
         window_class_ = {sizeof(window_class_),
-                         CS_CLASSDC,
-                         StaticWndProc,
-                         0L,
-                         0L,
-                         GetModuleHandleW(nullptr),
-                         LoadIcon(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDI_APP_ICON)),
-                         nullptr,
-                         nullptr,
-                         nullptr,
-                         L"RoboGo",
-                         nullptr};
+                         CS_CLASSDC,         // 共享设备上下文，避免每个窗口都创建独立的上下文
+                         StaticWndProc,      // 窗口过程指向静态转发函数 StaticWndProc  
+                         0L,                 // 额外的窗口类数据字节数，0 表示无
+                         0L,                 // 额外的窗口实例数据字节数，0 表示无
+                         GetModuleHandleW(nullptr),// 应用实例句柄，用于加载图标等资源
+                         LoadIcon(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDI_APP_ICON)),// 加载应用图标
+                         nullptr, // 菜单资源句柄，0 表示无
+                         nullptr, // 背景画刷句柄，0 表示使用默认
+                         nullptr, // 鼠标指针资源句柄，0 表示使用默认
+                         L"RoboGo", // 窗口类名，用于创建窗口时指定类名
+                         nullptr   // 窗口图标资源句柄，0 表示使用默认
+                        };
+        // 注册窗口类
+        // 注册窗口类失败时，会返回 0，需要检查返回值是否为 0。
         if (::RegisterClassExW(&window_class_) == 0) {
             SPDLOG_CRITICAL("注册Windows窗口类失败");
             return false;
@@ -954,33 +957,33 @@ private:
     }
 
     // 私有成员：DX12 设备与每帧上下文、窗口、纹理集合及各类状态标志。
-    std::array<WindowsFrameContext, kFramesInFlight> frame_context_ = {};
-    UINT frame_index_ = 0;
-    ID3D12Device *device_ = nullptr;
-    ID3D12DescriptorHeap *rtv_descriptor_heap_ = nullptr;
-    ID3D12DescriptorHeap *srv_descriptor_heap_ = nullptr;
-    DescriptorHeapAllocator srv_descriptor_heap_allocator_;
-    ID3D12CommandQueue *command_queue_ = nullptr;
-    ID3D12GraphicsCommandList *command_list_ = nullptr;
-    ID3D12Fence *fence_ = nullptr;
-    HANDLE fence_event_ = nullptr;
-    UINT64 fence_last_signaled_value_ = 0;
-    IDXGISwapChain3 *swap_chain_ = nullptr;
-    bool swap_chain_tearing_support_ = false;
-    bool swap_chain_occluded_ = false;
-    HANDLE swap_chain_waitable_object_ = nullptr;
-    std::array<ID3D12Resource *, kBackBuffers> main_render_target_resource_ = {};
-    std::array<D3D12_CPU_DESCRIPTOR_HANDLE, kBackBuffers> main_render_target_descriptor_ = {};
-    WNDCLASSEXW window_class_ = {};
-    HWND hwnd_ = nullptr;
-    bool window_class_registered_ = false;
-    float main_scale_ = 1.0f;
-    WindowsDynamicTextureSet udp_video_textures_;
-    WindowsDynamicTextureSet custom_video_textures_;
-    WindowsVideoTexture mini_map_texture_;
-    bool initialized_ = false;
-    bool should_close_ = false;
-    bool game_input_captured_ = false;
+    std::array<WindowsFrameContext, kFramesInFlight> frame_context_ = {};  // 每个飞行帧独立的上下文(命令分配器+围栏值)
+    UINT frame_index_ = 0;  // 单调递增的帧序号，取模后选出当前帧上下文
+    ID3D12Device *device_ = nullptr;  // D3D12 设备，所有图形资源与命令对象的创建入口
+    ID3D12DescriptorHeap *rtv_descriptor_heap_ = nullptr;  // 渲染目标视图(RTV)描述符堆，容纳各后台缓冲的 RTV
+    ID3D12DescriptorHeap *srv_descriptor_heap_ = nullptr;  // 着色器可见的 SRV 堆，供 ImGui 与视频纹理共用
+    DescriptorHeapAllocator srv_descriptor_heap_allocator_;  // SRV 堆的小型子分配器，负责描述符的申请与归还
+    ID3D12CommandQueue *command_queue_ = nullptr;  // 直接命令队列，提交渲染与拷贝命令供 GPU 执行
+    ID3D12GraphicsCommandList *command_list_ = nullptr;  // 图形命令列表，每帧 Reset 后重新录制绘制命令
+    ID3D12Fence *fence_ = nullptr;  // CPU/GPU 同步围栏，记录已完成命令的进度值
+    HANDLE fence_event_ = nullptr;  // 围栏完成事件句柄，用于阻塞等待 GPU 到达指定值
+    UINT64 fence_last_signaled_value_ = 0;  // 最近一次提交给围栏的值，逐帧递增用于同步
+    IDXGISwapChain3 *swap_chain_ = nullptr;  // DXGI 交换链(版本3)，管理后台缓冲与画面呈现
+    bool swap_chain_tearing_support_ = false;  // 是否支持撕裂呈现，决定能否启用低延迟 Present
+    bool swap_chain_occluded_ = false;  // 上一帧呈现是否被遮挡，为真时 BeginFrame 暂停出帧
+    HANDLE swap_chain_waitable_object_ = nullptr;  // 交换链帧延迟可等待对象，用于等待可用的后台缓冲
+    std::array<ID3D12Resource *, kBackBuffers> main_render_target_resource_ = {};  // 各后台缓冲资源，作为渲染目标与呈现源
+    std::array<D3D12_CPU_DESCRIPTOR_HANDLE, kBackBuffers> main_render_target_descriptor_ = {};  // 各后台缓冲的 RTV 句柄，用于绑定渲染目标
+    WNDCLASSEXW window_class_ = {};  // Win32 窗口类描述，注册后用于创建主窗口
+    HWND hwnd_ = nullptr;  // 主窗口句柄，nullptr 表示窗口尚未创建
+    bool window_class_registered_ = false;  // 窗口类是否已注册，决定退出时是否需要注销
+    float main_scale_ = 1.0f;  // 主显示器 DPI 缩放比例，用于按物理像素初始化界面
+    WindowsDynamicTextureSet udp_video_textures_;  // UDP 视频流的双缓冲纹理集合
+    WindowsDynamicTextureSet custom_video_textures_;  // 自定义视频流的双缓冲纹理集合
+    WindowsVideoTexture mini_map_texture_;  // 小地图静态纹理，内容变化不频繁
+    bool initialized_ = false;  // 后端是否已完成初始化，防止重复初始化或重复释放
+    bool should_close_ = false;  // 是否已收到退出请求，决定主循环是否结束
+    bool game_input_captured_ = false;  // 是否处于游戏输入捕获态(锁定并隐藏鼠标光标)
 };
 
 }// namespace

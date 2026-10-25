@@ -1,3 +1,4 @@
+// imgui_setup.cpp：ImGui 初始化——创建上下文、配置键鼠与手柄导航、应用暗色主题并按 DPI 缩放，以及字体加载与后端绑定。
 #include "imgui_setup.h"
 
 #include "embedded_zcool_font.h"

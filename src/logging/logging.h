@@ -1,3 +1,4 @@
+// logging.h：日志模块接口——对外暴露初始化/关闭/状态查询、日志目录与会话 ID 访问，以及网络报文抓取写入接口。
 #pragma once
 
 #include <pch.h>

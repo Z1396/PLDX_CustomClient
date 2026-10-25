@@ -22,57 +22,142 @@ struct RobotStatus {
 
 // 地图点位坐标（ID + 归一化/像素坐标）。
 struct MapPosition {
-    int id;
-    float x;
-    float y;
+    int id;   // 点位编号，用于标识场地上预定义的位置（如出生点、资源点）
+    float x;  // 归一化/像素横坐标
+    float y;  // 归一化/像素纵坐标
 };
 
 // 带更新时间戳的 Buff，用于计算剩余有效时间并自动过期清理。
 struct BuffWithTimestamp {
-    Buff buff;
+    Buff buff;  // 协议下发的增益本体（类型、增益值、剩余时间等）
     std::chrono::steady_clock::time_point update_time;// 收到该 Buff 的本地时刻。
 };
 
 // 全局比赛状态：聚合所有裁判系统/模拟器 MQTT 话题解析后的最新快照，供各面板读取显示。
 struct State {
+    // 【2.2.3 比赛全局状态 · 1Hz】当前局号/总局数、红蓝双方比分、比赛阶段(0未开始/1准备/2自检/3五秒倒计时/4比赛中/5结算中)、
+    // 阶段剩余与已过秒数、是否暂停、当局胜负(0平/1红胜/2蓝胜，非结算为255)、结束原因。
+    // 消费方：header_panel 显示比分与倒计时；开局面板据此判断当前处于哪个阶段。
     std::optional<GameStatus> game_status;
+
+    // 【2.2.4 全局单位状态 · 1Hz】己方/对方基地与前哨站的血量、状态(无敌/护甲展开/被击毁/重建中)、护盾值，
+    // 全部10台机器人的血量数组(按己方1/2/3/4/7号、对方1/2/3/4/7号顺序)，己方剩余发弹量，双方累计总伤害。
+    // 消费方：robot_status_panel 血条；PublishCustomControlIfDue 从这里取敌方血量下发机器人电控。
     std::optional<GlobalUnitStatus> global_unit_status;
+
+    // 【2.2.5 全局后勤信息 · 1Hz】己方当前剩余经济、累计获得总经济、科技等级(工程曾装配的最高难度)、
+    // 加密等级(雷达解析信息波机制)。
     std::optional<GlobalLogisticsStatus> global_logistics_status;
+
+    // 【2.2.6 全局特殊机制 · 1Hz】当前正在生效的特殊机制 ID 列表及各自时间参数(秒)。
+    // 1=己方堡垒被对方占领计时，2=对方堡垒被己方占领计时。
     std::optional<GlobalSpecialMechanism> global_special_mechanism;
+
+    // 【2.2.8 机器人受伤统计 · 1Hz】本次存活期间累计受伤明细：总计、撞击、17mm弹丸、42mm弹丸、
+    // 飞镖溅射、模块离线扣血、异常离线扣血、判罚扣血、服务器强制战亡扣血，以及击杀者ID(0表示未检测到)。
+    // 注意：机器人一旦战亡复活即重新统计。
     std::optional<RobotInjuryStat> robot_injury_stat;
+
+    // 【2.2.9 复活状态 · 1Hz】是否待复活、复活所需总读条与当前进度、可否免费复活、
+    // 花费金币复活所需金币数、是否允许花金币复活。
+    // 消费方：robot_status_panel 复活倒计时与一键复活按钮。
     std::optional<RobotRespawnStatus> robot_respawn_status;
+
+    // 【2.2.10 机器人静态属性 · 1Hz】连接/上场/存活状态、robot_id、robot_type、等级、最大血量与热量、
+    // 热量冷却速率、最大功率、最大缓冲能量与底盘能量，以及发射机构/底盘性能体系选型。
+    // 关键：这里的 robot_id 决定本机是红方还是蓝方，是判断敌我的依据。
     std::optional<RobotStaticStatus> robot_static_status;
+
+    // 【2.2.11 机器人实时数据 · 10Hz】当前血量、热量、上次弹丸射速、底盘能量、缓冲能量、
+    // 当前经验与升级所需经验、累计已发弹量、剩余允许发弹量、是否脱战及脱战倒计时、可否远程补血/补弹。
+    // 频率最高(10Hz)，是 HUD 上血条、热量、弹量等实时数值的直接来源。
     std::optional<RobotDynamicStatus> robot_dynamic_status;
+
+    // 【2.2.12 模块运行状态 · 1Hz】电源管理、RFID、灯条、17mm/42mm发射机构、UWB定位、装甲、
+    // 图传、电容、主控、激光检测共11个模块的在线状态(0离线/1在线/2安装不规范视为离线)。
     std::optional<RobotModuleStatus> robot_module_status;
+
+    // 【2.2.13 机器人坐标与朝向 · 1Hz】世界坐标 X/Y/Z 与测速模块朝向 yaw(度，正北为0)，
+    // 以及坐标归属的 robot_id(6/106为空中机器人，7/107为哨兵，仅云台手客户端生效)。
+    // 消费方：mini_map 绘制自身与友军位置。
     std::optional<RobotPosition> robot_position;
+
+    // 【2.2.14 Buff 增益 · 获得时触发，此后1Hz直到失去】当前生效的全部增益列表，每项附带本地接收时刻。
+    // Buff类型：1攻击/2防御或易伤/3射击热量冷却/4底盘功率/5回血/6可兑换发弹量/7地形跨越(预备)。
+    // 用 vector 而非 optional：同一时刻可有多个增益并存；UpdateState 按 buff_left_time 过期剔除。
     std::vector<BuffWithTimestamp> active_buffs;
+
+    // 【2.2.16 哨兵轨迹规划 · 触发式】哨兵意图(1攻击/2防守/3移动)、起始点坐标(分米)，
+    // 以及长度49的相对位移增量数组 offset_x/offset_y(-128~+127)，用于还原完整巡逻路径。
+    // 消费方：mini_map 绘制哨兵规划轨迹。
     std::optional<RobotPathPlanInfo> robot_path_plan_info;
+
+    // 【2.2.17 地图点击标记 · 触发式】发送范围(0指定/1除哨兵/2含哨兵)、目标机器人ID列表(固定7字节)、
+    // 标记类型(1攻击/2防御/3警戒/4自定义)、标定的敌方ID、自定义图标ASCII码、标记模式(1地图/2敌方机器人)、
+    // 地图坐标 X/Y。即操作手在小地图上打点后，裁判系统回传的同步信息。
     std::optional<MapClickInfo> map_click_info;
+
+    // 【2.2.18 雷达目标信息 · 触发式】雷达站下发的12台机器人位置(对方1/2/3/4/6/7号 + 己方1/2/3/4/6/7号)，
+    // 每项含坐标(cm)与是否特殊标识(0否/1是/2是但目标定位模块离线)。
+    // 消费方：mini_map 显示雷达解析出的敌方位置。
     std::optional<RadarInfoToClient> radar_info_to_client;
+
+    // 【2.2.21 科技核心(能量机关)运动状态 · 1Hz】当前可选最高装配难度、核心基础状态(1初始位/2运动中/3已到位)、
+    // 能量单元的放入/平移/旋转状态、对方科技核心装配情况(仅己方四级装配可用时有效)、
+    // 己方四级装配的总剩余时长与单步间隔剩余时长。
     std::optional<TechCoreMotionStateSync> tech_core_motion_state_sync;
+
+    // 【2.2.23 性能体系同步 · 1Hz】发射机构性能体系、底盘性能体系、哨兵控制方式选择的当前生效值。
+    // 这是服务器权威值；开局面板上的选型控件在收到它后需要回显同步。
     std::optional<RobotPerformanceSelectionSync> robot_performance_selection_sync;
+
+    // 收到上一帧 robot_performance_selection_sync 的本地时刻(steady_clock，非 optional，默认即纪元起点)。
+    // 用途：开局面板用它判断「服务器刚推来新同步」，避免在用户手动改选型的短暂窗口内被服务器旧值回弹覆盖
+    // （配合 performance_panel_state.ignore_remote_sync_until 使用）。
     std::chrono::steady_clock::time_point last_received_robot_performance_selection_sync;
+
+    // 【2.2.26 英雄部署模式 · 1Hz】英雄机器人部署模式状态(0未部署/1已部署)。
     std::optional<DeployModeStatusSync> deploy_mode_status_sync;
+
+    // 【2.2.28 能量机关状态 · 1Hz】当前状态(1未激活/2正在激活/3已激活)、已激活灯臂数量、
+    // 平均环数(仅大能量机关正在激活时有效，其余为0)。
     std::optional<RuneStatusSync> rune_status_sync;
+
+    // 【2.2.30 哨兵姿态 · 1Hz】姿态ID(1进攻/2防御/3移动)、是否弱化、是否强化。
     std::optional<SentryStatusSync> sentry_status_sync;
+
+    // 【2.2.31 飞镖目标选择 · 1Hz】当前选定的飞镖目标ID、闸门状态(0关闭/1开启中/2已开启)。
     std::optional<DartSelectTargetStatusSync> dart_select_target_status_sync;
+
+    // 【2.2.33 哨兵控制指令结果 · 触发式】对应指令编号与执行结果码(0成功，其他失败)。
+    // 即客户端发出哨兵控制指令后，服务器回执的成功/失败反馈。
     std::optional<SentryCtrlResult> sentry_ctrl_result;
+
+    // 【2.2.35 空中支援状态 · 1Hz】空中支援状态(0未进行/1进行中)、免费支援剩余时间、付费已花费金币、
+    // 激光检测模块是否被照射(0否/1是)、发射机构被反制状态(0锁定不可解除/1正常/2锁定可花金币解除)。
     std::optional<AirSupportStatusSync> air_support_status_sync;
+
+    // 空中支援相关的本地自定义控制状态（非协议字段，由本客户端维护）：
+    // 是否待发送呼叫请求、上一次收到的剩余计数(用于判断是否恰好减1)、计数减1的时刻(用于推算冷却剩余秒数)。
+    // 用途：把「对手呼叫空中支援」和「我方冷却剩余秒数」打包进 CustomControl 下发给机器人电控。
     AirSupportCustomControlState air_support_custom_control;
+
+    // 上一次下发 CustomControl 自定义控制包的本地时刻；为空表示从未发送过。
+    // 用途：PublishCustomControlIfDue 据此做节流，避免每个渲染帧都高频下发。
     std::optional<std::chrono::steady_clock::time_point> last_custom_control_publish_time;
 
-    // 自定义状态
-    bool auto_aim = false;
-    bool gyro = false;
+    // 自定义状态（本地维护，非裁判系统下发）
+    bool auto_aim = false;       // 自瞄开关：由操作手在界面切换，随自定义控制包下发机器人电控
+    bool gyro = false;           // 陀螺仪（小陀螺）开关：同上，指示底盘是否进入陀螺模式
 
     // 机器人状态：英雄，工程，步兵x3，无人机，哨兵，飞镖，雷达
-    RobotStatus red_robots[9];
-    RobotStatus blue_robots[9];
+    RobotStatus red_robots[9];   // 红方 9 台机器人的血量/弹量快照，按上述兵种顺序索引
+    RobotStatus blue_robots[9];  // 蓝方 9 台机器人，索引顺序同红方
 
     // 日志
-    uint64_t next_log_sequence = 1;
-    std::vector<LogEntry> vehicle_logs;
-    std::vector<LogEntry> system_logs;
+    uint64_t next_log_sequence = 1;        // 下一条日志将使用的全局自增序号（两个日志列表共用，保证可统一排序）
+    std::vector<LogEntry> vehicle_logs;    // 本车日志：操作手视角的事件记录
+    std::vector<LogEntry> system_logs;     // 系统日志：裁判系统事件、判罚、解析异常等
 };
 
 // 自定义字节块数据包回调：当收到 CustomByteBlock 话题且携带数据时被调用，转发给视频解码器。

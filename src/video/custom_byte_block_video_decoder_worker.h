@@ -1,3 +1,4 @@
+// custom_byte_block_video_decoder_worker.h：解码工作线程接口——在独立线程消费包队列并解码，把 RGBA 帧回调给上层，与收包线程解耦。
 #pragma once
 
 #include <pch.h>
@@ -12,9 +13,14 @@ public:
     using FrameHandler = std::function<void(CustomByteBlockDecodedFrame &&frame)>; // 解出一帧时的回调
     using LogHandler = std::function<void(int type, const std::string &text)>;    // 日志回调（type: 0=信息 2=错误）
 
+    // 功能：构造解码工作线程——保存回调与配置，并立即启动后台线程执行 run() 主循环。
+    // 参数 frame_handler：解出一帧时的回调（帧以右值传出）；
+    //      log_handler：日志回调（type: 0=信息 2=错误）；
+    //      config：解码器资源上限配置，默认使用结构体默认值。
     explicit CustomByteBlockVideoDecoderWorker(FrameHandler frame_handler,
                                                LogHandler log_handler,
                                                CustomByteBlockVideoDecoderConfig config = {});
+    // 功能：析构——若外部未显式调用 stop()，则在此请求停止并等待工作线程退出，防止线程悬空。
     ~CustomByteBlockVideoDecoderWorker();
 
     CustomByteBlockVideoDecoderWorker(const CustomByteBlockVideoDecoderWorker &) = delete; // 持有线程，禁止拷贝

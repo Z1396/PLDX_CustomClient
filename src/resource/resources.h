@@ -1,3 +1,4 @@
+// resources.h：内嵌资源加载接口——把 CMake 阶段 hex 化进二进制的地图 PNG 等资源解码为 RGBA 图像，供 UI 直接使用。
 #pragma once   // 头文件保护，防止重复包含
 
 #include <pch.h>   // 引入预编译头，获得 vector/optional/span/string_view 等基础类型

@@ -1,3 +1,4 @@
+// start_panel.cpp：开局准备面板——队伍与机器人选择、MQTT 服务器地址配置与登录，以及飞镖/哨兵/空中支援/性能选型/装配等赛前指令的下发。
 #include "start_panel.h"
 #include "keyboard_mouse_state_manager.h"
 #include "logging/logging.h"
@@ -149,8 +150,8 @@ struct StartPanelVisibility {
 
 // 按钮的反馈信息：有效时的提示文案，以及被禁用时的原因（为空表示可用）。
 struct ButtonFeedback {
-    std::string valid_tooltip;
-    const char *disabled_reason = nullptr;
+    std::string valid_tooltip;             // 按钮可用时鼠标悬停显示的说明文案
+    const char *disabled_reason = nullptr; // 按钮被禁用的原因文案，nullptr 表示当前可用
 };
 
 // 登录面板选中的队伍与机器人序号（全局持久状态）。
@@ -161,25 +162,25 @@ struct TeamRobotSelectionState {
 
 // MQTT 服务器地址输入状态（全局持久，含输入串、错误提示与初始化标记）。
 struct MqttServerAddressState {
-    std::string input = "127.0.0.1:3333";
-    std::string error_message;
-    bool initialized = false;
+    std::string input = "127.0.0.1:3333"; // 输入框中的服务器地址（host 或 host:port 形式）
+    std::string error_message;            // 地址格式校验失败时的提示文案
+    bool initialized = false;             // 是否已用默认值初始化过（避免覆盖用户已输入的内容）
 };
 
 // 弹药兑换面板输入状态（默认允许发弹量 10）。
 struct AmmoPanelState {
-    std::string ammo_str = "10";
+    std::string ammo_str = "10"; // 输入框中的允许发弹量（字符串形式，便于 ImGui 输入控件绑定）
 };
 
 // 装配控制面板输入状态（默认难度 3）。
 struct AssemblyPanelState {
-    std::string difficulty_str = "3";
+    std::string difficulty_str = "3"; // 输入框中的装配难度等级（1~4 级）
 };
 
 // 飞镖控制面板状态（目标 ID 与闸门开关）。
 struct DartPanelState {
-    uint32_t target_id = 1;
-    bool open = false;
+    uint32_t target_id = 1; // 飞镖打击目标编号（1=前哨站，2=基地固定目标，3/4/5=随机或移动目标）
+    bool open = false;      // 闸门开关意图：true 表示请求开启飞镖闸门
 };
 
 // 性能选择面板状态：缓存本地下发的发射机构/底盘/哨兵模式，并跟踪远端同步时机。

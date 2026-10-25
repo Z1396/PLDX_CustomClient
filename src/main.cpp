@@ -48,10 +48,15 @@ std::vector<std::string> CollectCommandLineArgs(const int argc, char *argv[]) {
 // 思路：创建平台后端 -> 解析启动参数 -> 初始化日志 -> 运行应用主循环 -> 关闭日志。
 int RunMain(const std::vector<std::string> &args) {
     auto platform_backend = RoboGo::platform::CreatePlatformBackend(); // 工厂创建平台后端(Win=DX12+Win32 / Linux=Vulkan+GLFW)
+
     const RoboGo::app::LaunchOptions options = RoboGo::app::ParseLaunchOptions(args); // 解析命令行参数为结构化的启动选项
+
     RoboGo::logging::initialize(platform_backend->application_name(), options.invert_udp_video); // 初始化 spdlog 日志系统，传入应用名与视频翻转开关
+    
     const int result = RoboGo::app::RunApplication(*platform_backend, options); // 进入应用主循环，返回进程退出码
+    
     RoboGo::logging::shutdown(); // 应用退出后释放日志资源
+    
     return result;
 }
 
@@ -75,3 +80,4 @@ int main(const int argc, char *argv[]) {
     return RunMain(CollectCommandLineArgs(argc, argv)); // 收集标准参数后进入主流程
 }
 #endif
+ 

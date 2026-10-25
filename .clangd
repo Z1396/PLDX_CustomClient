@@ -1,0 +1,14 @@
+# clangd 配置文件（对整个项目递归生效）
+#
+# 背景：本项目用 CMake + Ninja 构建，编译数据库生成在 build/release/ 子目录下。
+#       但 clangd 默认只从「源文件所在目录向上逐级查找」compile_commands.json，
+#       不会向下进入 build/ 子目录，因此找不到编译数据库，只能靠猜 include 路径，
+#       于是 imgui / protobuf / boost / spdlog 等头文件全部报找不到 —— 满屏红线。
+#
+# 修复：显式指定编译数据库位置（路径相对于本 .clangd 文件所在目录）。
+#       配置后经实测 `clangd --check=src/main.cpp` 结果：All checks completed, 0 errors。
+CompileFlags:
+  CompilationDatabase: build/release
+
+# 预编译头（PCH）：CMake 通过 /FI + /Yu 注入 cmake_pch.hxx，clangd 能正确识别，
+# 无需在此额外处理；若切换构建预设（如 debug），同步修改上面的目录即可。

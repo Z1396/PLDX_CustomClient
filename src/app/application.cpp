@@ -1,3 +1,4 @@
+// application.cpp：应用程序核心——解析启动参数、搭建后台服务(MQTT / UDP 视频流 / 字节块解码线程)，驱动主渲染循环、视频纹理上传与键鼠上报。
 #include "application.h"
 
 #include "keyboard_mouse_state_manager.h"
@@ -20,10 +21,10 @@ using RoboGo::app::VideoFrame;
 constexpr bool kDefaultInvertUdpVideo = true; // UDP 视频是否默认做 180 度旋转
 
 // 功能：返回默认的 MQTT 服务器地址。
-// 思路：以正式比赛地址为默认值，另保留模拟裁判系统与自部署地址作为注释备用。
+// 思路：以 RoboSouls 本地 broker 为默认值，另保留正式比赛与自部署地址作为注释备用。
 std::string DefaultMqttServer() {
-    // return "tcp://127.0.0.1:3333";// 模拟裁判系统
-    return "tcp://192.168.12.1:3333";// 正式比赛
+    return "tcp://127.0.0.1:3333";// RoboSouls 本地 broker（联调默认）
+    // return "tcp://192.168.12.1:3333";// 正式比赛裁判系统
     // return "tcp://192.168.1.2:3333";// 自己部署的裁判系统
 }
 
@@ -42,6 +43,7 @@ void ParseNetworkEndpoints(LaunchOptions &options) {
             options.mqtt_port = address.substr(colon_pos + 1); // 取 ':' 之后为端口
         }
     }
+    //std::stoi表示将字符串转换为整数，将options.video_port转换为整数
     options.parsed_video_port = std::stoi(options.video_port); // 视频端口字符串转整数
 }
 
@@ -438,6 +440,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
 
     // 注册"游戏输入捕获"回调，使 UI 层可请求锁定/释放鼠标键盘。
     set_game_input_capture_handler([&platform_backend](const bool enabled) {
+        // 调用平台后端设置游戏输入捕获状态
         platform_backend.SetGameInputCapture(enabled);
     });
 
@@ -447,7 +450,10 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     auto mini_map_image = RoboGo::resource::LoadEmbeddedMapImage();
     if (!mini_map_image.has_value()) {
         SPDLOG_WARN("未能加载内嵌小地图，将回退为纯色小地图背景");
-    } else if (platform_backend.UploadTexture(TextureSlot::MiniMap, *mini_map_image)) {
+    } else if 
+    // 尝试上传小地图纹理
+    // 如果上传成功，记录日志
+    (platform_backend.UploadTexture(TextureSlot::MiniMap, *mini_map_image)) {
         SPDLOG_INFO("小地图纹理已上传 width={} height={}", mini_map_image->width, mini_map_image->height);
     } else {
         SPDLOG_ERROR("创建小地图纹理失败 width={} height={}", mini_map_image->width, mini_map_image->height);
@@ -474,9 +480,10 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
             UpdateState(state); // 按时间推进界面/业务状态
             PublishCustomControlIfDue(state, background_services.mqtt_client()); // 到点则上报自定义控制
             UploadLatestVideoFrames(platform_backend, // 上传两路视频的最新帧
-                                    background_services,
-                                    last_udp_frame_time,
-                                    last_custom_frame_time);
+                                    background_services,// 后台服务，用于获取视频帧
+                                    last_udp_frame_time,// 最近一次 UDP 视频帧时间
+                                    last_custom_frame_time// 最近一次自定义视频帧时间
+                                );
 
             if (!platform_backend.BeginFrame()) { // 准备本帧(窗口最小化等可跳过)
                 continue;

@@ -1,3 +1,4 @@
+// video_shards_manager.h：视频分片管理器——接收 UDP 视频分片并重组为完整帧，处理帧 ID 回绕、丢帧冲刷与过期分片丢弃。
 #pragma once
 
 #include <pch.h>

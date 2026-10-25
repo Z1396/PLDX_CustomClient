@@ -1,3 +1,4 @@
+// video_stream_manager.h：视频流管理器——串联 UDP 接收、分片重组与解码三个环节，并独占一个解码线程驱动整条链路。
 #pragma once
 
 #include "io/video_stream_receiver.h"

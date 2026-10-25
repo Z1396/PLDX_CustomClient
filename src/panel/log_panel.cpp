@@ -17,9 +17,10 @@ ImVec4 GetLogTextColor(const LogEntry &log) {
     }
 }
 
+// 合并后的日志行视图：不拷贝日志内容，仅持有一条日志的指针 + 来源标签，用于统一排序与渲染。
 struct CombinedLogLine {
-    const LogEntry *entry = nullptr;
-    const char *source = nullptr;
+    const LogEntry *entry = nullptr;  // 指向 vehicle_logs 或 system_logs 中的原始条目
+    const char *source = nullptr;     // 来源标签："本车" 或 "系统"
 };
 
 }// namespace

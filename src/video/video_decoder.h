@@ -1,3 +1,4 @@
+// video_decoder.h：视频解码器接口——封装 FFmpeg HEVC 解码器与码流解析器，把编码比特流解码为 AVFrame 并回调通知上层。
 #pragma once
 
 #include <pch.h>

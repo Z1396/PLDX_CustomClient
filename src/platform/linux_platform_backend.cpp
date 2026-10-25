@@ -16,20 +16,20 @@ namespace {
 
 // LinuxVideoTexture —— 单张视频纹理：Vulkan 图像、图像视图、显存、ImGui 描述符集与尺寸状态。
 struct LinuxVideoTexture {
-    VkImage image = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-    int width = 0;
-    int height = 0;
-    bool ready = false;
+    VkImage image = VK_NULL_HANDLE;  // Vulkan 图像对象，纹理像素数据的载体
+    VkImageView view = VK_NULL_HANDLE;  // 图像视图，着色器访问图像时的解释方式
+    VkDeviceMemory memory = VK_NULL_HANDLE;  // 绑定到图像的设备显存，需手动释放
+    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;  // ImGui 描述符集，作为 ImTextureID 供 UI 采样
+    int width = 0;  // 纹理宽度（像素）
+    int height = 0;  // 纹理高度（像素）
+    bool ready = false;  // 纹理已创建且有有效帧数据、可供渲染使用的标志
 };
 
 // LinuxDynamicTextureSet —— 双缓冲视频纹理集合：轮换使用两张纹理避免上传与渲染相互阻塞。
 struct LinuxDynamicTextureSet {
-    std::array<LinuxVideoTexture, 2> textures;
-    int current_index = 0;
-    int next_index = 1;
+    std::array<LinuxVideoTexture, 2> textures;  // 两张轮换使用的视频纹理（双缓冲）
+    int current_index = 0;  // 当前用于渲染显示的那张纹理下标
+    int next_index = 1;  // 下一帧待写入上传数据的纹理下标
 };
 
 // LinuxPlatformBackend —— PlatformBackend 的 Linux 实现：GLFW 窗口 + Vulkan，承载所有 Vulkan 资源管理。
@@ -820,6 +820,9 @@ private:
         return true;
     }
 
+    // 功能：销毁一张 Vulkan 纹理占用的全部资源（描述符集、视图、图像、显存），并复位结构体字段。
+    // 思路：逐项判空后调用对应 vkDestroy*/vkFree*，最后把句柄置回 VK_NULL_HANDLE、宽高归零、ready 置 false，
+    //       保证 texture 回到「未创建」状态可安全复用。
     void DestroyVulkanTexture(LinuxVideoTexture &texture) {
         if (texture.descriptor_set != VK_NULL_HANDLE) {
             ImGui_ImplVulkan_RemoveTexture(texture.descriptor_set);
@@ -843,6 +846,9 @@ private:
         texture.ready = false;
     }
 
+    // 功能：为已创建好的 Vulkan 图像视图登记 ImGui 描述符集，使其可作为纹理被 ImGui 绘制。
+    // 思路：调用 ImGui_ImplVulkan_AddTexture，指定图像布局为 SHADER_READ_ONLY_OPTIMAL（只读采样），
+    //       返回的 VkDescriptorSet 即 ImGui 绘制时使用的纹理句柄。
     void CreateVideoDescriptorSet(LinuxVideoTexture &texture) {
         texture.descriptor_set = ImGui_ImplVulkan_AddTexture(
                 texture.view,
@@ -879,6 +885,8 @@ private:
         return true;
     }
 
+    // 功能：销毁纹理组中的全部纹理（双缓冲的两张），用于后端析构或重建时释放显存。
+    // 思路：遍历 textures 数组逐个调用 DestroyVulkanTexture，不重置索引（对象即将被丢弃）。
     void DestroyDynamicTextureSet(LinuxDynamicTextureSet &texture_set) {
         for (auto &texture: texture_set.textures) {
             DestroyVulkanTexture(texture);
@@ -894,34 +902,37 @@ private:
         return texture_view;
     }
 
-    VkAllocationCallbacks *allocator_ = nullptr;
-    VkInstance instance_ = VK_NULL_HANDLE;
-    VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
-    VkDevice device_ = VK_NULL_HANDLE;
-    uint32_t queue_family_ = static_cast<uint32_t>(-1);
-    VkQueue queue_ = VK_NULL_HANDLE;
-    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
-    VkCommandPool texture_upload_command_pool_ = VK_NULL_HANDLE;
-    VkSampler video_texture_sampler_ = VK_NULL_HANDLE;
+    VkAllocationCallbacks *allocator_ = nullptr;  // Vulkan 内存分配回调，为空表示使用驱动默认分配器
+    VkInstance instance_ = VK_NULL_HANDLE;  // Vulkan 实例，应用与 Vulkan 驱动的顶层连接句柄
+    VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;  // 选中的物理设备（GPU）
+    VkDevice device_ = VK_NULL_HANDLE;  // 逻辑设备，创建/销毁各类 Vulkan 资源的句柄
+    uint32_t queue_family_ = static_cast<uint32_t>(-1);  // 选中队列族的索引，static_cast<uint32_t>(-1) 表示尚未选定
+    VkQueue queue_ = VK_NULL_HANDLE;  // 图形/呈现队列，用于提交命令缓冲
+    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;  // 描述符池，分配 ImGui 与视频纹理的描述符集
+    VkCommandPool texture_upload_command_pool_ = VK_NULL_HANDLE;  // 命令池，分配视频纹理上传用的临时命令缓冲
+    VkSampler video_texture_sampler_ = VK_NULL_HANDLE;  // 采样器，定义视频纹理的过滤与寻址方式
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-    VkDebugReportCallbackEXT debug_report_ = VK_NULL_HANDLE;
+    VkDebugReportCallbackEXT debug_report_ = VK_NULL_HANDLE;  // 调试报告回调，用于接收验证层的告警与错误
 #endif
-    GLFWwindow *window_ = nullptr;
-    ImGui_ImplVulkanH_Window main_window_data_ = {};
-    uint32_t min_image_count_ = 2;
-    bool swap_chain_rebuild_ = false;
-    float main_scale_ = 1.0f;
-    LinuxDynamicTextureSet udp_video_textures_;
-    LinuxDynamicTextureSet custom_video_textures_;
-    LinuxVideoTexture mini_map_texture_;
-    bool initialized_ = false;
-    bool game_input_captured_ = false;
+    GLFWwindow *window_ = nullptr;  // GLFW 主窗口句柄
+    ImGui_ImplVulkanH_Window main_window_data_ = {};  // 交换链窗口数据，含表面、交换链、渲染通道与帧缓冲
+    uint32_t min_image_count_ = 2;  // 交换链最小图像数，2 表示双缓冲
+    bool swap_chain_rebuild_ = false;  // 交换链需重建标志，窗口尺寸变化或呈现失败时置位
+    float main_scale_ = 1.0f;  // 主显示器 DPI 内容缩放因子，用于窗口尺寸与字号缩放
+    LinuxDynamicTextureSet udp_video_textures_;  // UDP 图传视频流的双缓冲纹理
+    LinuxDynamicTextureSet custom_video_textures_;  // 自定义客户端视频流的双缓冲纹理
+    LinuxVideoTexture mini_map_texture_;  // 小地图静态纹理
+    bool initialized_ = false;  // 后端已完成 Vulkan/ImGui 初始化并可销毁资源的标志
+    bool game_input_captured_ = false;  // 游戏输入捕获状态，启用时窗口独占键鼠输入
 };
 
 }// namespace
 
 namespace RoboGo::platform {
 
+// 功能：平台后端工厂函数，创建 Linux 平台对应的后端实例（Linux 构建下返回 LinuxPlatformBackend）。
+// 思路：返回基类 unique_ptr 以隐藏具体实现；Windows 构建由 windows_platform_backend.cpp 提供同名函数，
+//       主程序只依赖本接口，从而实现跨平台同源代码。
 std::unique_ptr<PlatformBackend> CreatePlatformBackend() {
     return std::make_unique<LinuxPlatformBackend>();
 }

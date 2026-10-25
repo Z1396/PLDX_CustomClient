@@ -1,3 +1,4 @@
+// rgba_image_transform.h：RGBA 图像变换工具——对像素缓冲做 180° 旋转，用于翻转 UDP 图传画面的显示朝向。
 #pragma once
 
 #include <pch.h>

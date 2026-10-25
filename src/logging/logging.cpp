@@ -1,3 +1,4 @@
+// logging.cpp：日志模块实现——spdlog 初始化与关闭、日志目录与会话 ID 管理，以及网络报文按自定义二进制格式的抓取与落盘。
 #include "logging.h"
 #include "embedded_messages_proto.h"
 #include "network_capture_format.h"
@@ -65,6 +66,7 @@ std::string make_session_id() {
     const std::tm local_tm = local_time(time_point);
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     std::ostringstream stream;
+    // 格式化时间部分（年月日_时分秒）
     stream << std::put_time(&local_tm, "%Y%m%d_%H%M%S")
            << "_"
            << std::setw(3)
@@ -76,9 +78,11 @@ std::string make_session_id() {
 // 功能：解析日志根目录。
 // 思路：优先读取环境变量 ROBOGO_LOG_ROOT，未设置或为空则回退默认 "logs"。
 std::filesystem::path resolve_log_root_directory() {
+    // 优先读取环境变量 ROBOGO_LOG_ROOT
     if (const char *env_value = std::getenv("ROBOGO_LOG_ROOT"); env_value != nullptr && env_value[0] != '\0') {
         return std::filesystem::path(env_value);
     }
+    // 回退默认 "logs"
     return std::filesystem::path(kDefaultLogRootDirectory);
 }
 
@@ -243,13 +247,24 @@ void network_capture_loop() {
 // 思路：解析根目录与生成会话 ID，建立会话目录；保存当前 proto 定义便于旧日志解析；配置 spdlog 异步双 sink；
 //       打开抓包文件并写入文件头（魔数/版本/标志）；启动抓包后台线程。
 void initialize(std::string_view application_name, const bool invert_udp_video) {
+    //std::call_once表示调用一次，后续调用不会执行
     std::call_once(g_initialize_once, [application_name, invert_udp_video]() {
+        // 解析日志根目录
+        // 日志根目录：应用安装目录下的 log 子目录
+        // 会话 ID：当前时间戳（毫秒级）
         g_log_root_directory = resolve_log_root_directory();
+        // 生成会话 ID
+        // 会话 ID：当前时间戳（毫秒级）
+        // 用于区分不同运行实例的日志文件
         g_session_id = make_session_id();
+        // 会话目录：日志根目录下的会话 ID 子目录
+        // 用于存储该会话的所有日志文件
         g_log_directory = g_log_root_directory / g_session_id;
 
-        // 创建根目录与会话目录
+        // 创建根目录(就是项目根目录下的logs目录)
+        // 用于存储该会话的所有日志文件
         std::filesystem::create_directories(g_log_root_directory);
+        // 会话目录(会话 ID(当前时间戳（毫秒级）))
         std::filesystem::create_directories(g_log_directory);
 
         const auto app_log_path = g_log_directory / "robogo.log";
@@ -351,14 +366,17 @@ const std::filesystem::path &log_root_directory() {
     return g_log_root_directory;
 }
 
+// 功能：返回本次运行的日志目录（logs/ 下的会话子目录），供外部写附加文件。
 const std::filesystem::path &log_directory() {
     return g_log_directory;
 }
 
+// 功能：返回网络抓包文件路径（network_capture.bin 等），由网络模块在记录报文时使用。
 const std::filesystem::path &network_capture_path() {
     return g_network_capture_path;
 }
 
+// 功能：返回本次运行的唯一会话 ID（用于日志目录命名与抓包文件关联）。
 const std::string &session_id() {
     return g_session_id;
 }

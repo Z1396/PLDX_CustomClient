@@ -10,8 +10,8 @@ void ShowBottomPanel(const State &state) {
 
     // 单行状态：文本 + 颜色，便于统一渲染
     struct StatusLine {
-        std::string text;
-        ImVec4 color;
+        std::string text;  // 该行要显示的文字内容
+        ImVec4 color;      // 该行文字颜色（按状态区分，如警告橙、错误红）
     };
 
     std::vector<StatusLine> status_lines;  // 收集所有待显示的状态行

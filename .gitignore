@@ -8,3 +8,4 @@ protoc.exe
 protoc
 vulkan_pipeline_cache.bin
 __pycache__/
+.workbuddy/memory/

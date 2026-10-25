@@ -1,3 +1,4 @@
+// custom_byte_block_video_decoder.cpp：自定义字节块解码器实现——解析序列化包与传输包束两种线格式，按 H.264 解码并转换为 RGBA 帧。
 #include "custom_byte_block_video_decoder.h"
 
 namespace RoboGo::video {
@@ -14,15 +15,15 @@ constexpr std::uint16_t kSequenceResyncBackwardThreshold = 2048;               /
 
 // 线格式枚举：未知 / 单条序列化包 / 多条打包的传输包束。
 enum class WireFormat {
-    Unknown,
-    SerializedPacket,
-    TransportBundle,
+    Unknown,          // 尚未识别：首包到达后按特征判定，判定前不解码
+    SerializedPacket, // 单条序列化包：2 字节序列号 + 净负载，一包即一个子包
+    TransportBundle,  // 传输包束：一包内含有多个「2 字节长度前缀 + 子包」，需逐段拆分
 };
 
 // 反序列化后的单条序列化包：序列号 + 净负载。
 struct SerializedPacket {
-    std::uint16_t sequence_id = 0;
-    std::vector<std::uint8_t> payload;
+    std::uint16_t sequence_id = 0;          // 包序列号（大端），用于乱序重排与丢包检测
+    std::vector<std::uint8_t> payload;      // 净负载：去掉 2 字节包头后的实际码流数据
 };
 
 // 功能：按大端序读取 2 字节无符号整数（网络字节序）。
@@ -213,6 +214,8 @@ bool access_unit_has_idr(const std::uint8_t *data, const std::size_t size) {
 
 }// namespace
 
+// 解码器实现体（PIMPL 的 Impl）：集中持有全部 FFmpeg 资源与解码中间状态，
+// 目的是让公开头文件不暴露 FFmpeg 类型，避免调用方被 FFmpeg 头文件污染。
 struct CustomByteBlockVideoDecoder::Impl {
     // 待匹配的解码帧元数据：解码器异步出帧时按顺序回补到 CustomByteBlockDecodedFrame。
     struct PendingFrame {
@@ -241,6 +244,9 @@ struct CustomByteBlockVideoDecoder::Impl {
 
 namespace {
 
+// 功能：判断 lhs * rhs 是否会超出 size_t 表示范围（乘法溢出检测）。
+// 思路：用除法反向校验——若 rhs 大于 max/lhs 则乘积必然溢出；lhs 为 0 时不会溢出，直接排除。
+// 用途：分配帧缓冲前先做该检查，防止恶意尺寸数据导致整数溢出进而分配过小的缓冲造成越界写。
 bool multiplication_would_overflow(const std::size_t lhs, const std::size_t rhs) {
     return lhs != 0U && rhs > (std::numeric_limits<std::size_t>::max() / lhs);
 }

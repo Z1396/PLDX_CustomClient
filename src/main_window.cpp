@@ -1,3 +1,4 @@
+// main_window.cpp：主窗口实现——MQTT 下行消息分发与状态刷新、各面板布局调度、自定义控制包下发，以及本车/系统日志的维护。
 #include "main_window.h"
 #include "keyboard_mouse_state_manager.h"
 #include "logging/logging.h"
