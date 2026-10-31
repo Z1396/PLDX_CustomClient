@@ -18,7 +18,7 @@ using RoboGo::app::TextureView;
 using RoboGo::app::UiLogMessage;
 using RoboGo::app::VideoFrame;
 
-constexpr bool kDefaultInvertUdpVideo = true; // UDP 视频是否默认做 180 度旋转
+constexpr bool kDefaultInvertUdpVideo = false; // UDP 视频是否默认做 180 度旋转
 
 // 功能：返回默认的 MQTT 服务器地址。
 // 思路：以 RoboSouls 本地 broker 为默认值，另保留正式比赛与自部署地址作为注释备用。
@@ -396,7 +396,7 @@ namespace RoboGo::app {
 // 思路：先填入默认值(默认 MQTT 地址、默认视频端口、默认旋转)，再识别
 //       --mqtt_server 与 --video_port 两个参数覆盖默认值，最后解析网络端点。
 LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {
-    LaunchOptions options;
+    LaunchOptions options;  // 初始化选项结构体
     options.mqtt_server = DefaultMqttServer(); // 默认 MQTT 服务器地址
     options.video_port = "3334"; // 默认 UDP 视频端口
     options.invert_udp_video = kDefaultInvertUdpVideo; // 默认是否旋转
@@ -426,13 +426,13 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     SPDLOG_INFO("程序启动");
     // 打印解析后的启动参数，便于排查配置问题。
     SPDLOG_INFO("解析启动参数 mqtt_server={} video_port={} invert_udp_video={}",
-                options.mqtt_server,
-                options.video_port,
-                options.invert_udp_video);
+                options.mqtt_server,// MQTT 服务器地址
+                options.video_port,// UDP 视频端口
+                options.invert_udp_video);// 是否旋转 UDP 视频
     SPDLOG_INFO("网络端点已解析 mqtt_host={} mqtt_port={} video_port={}",
-                options.mqtt_host,
-                options.mqtt_port,
-                options.parsed_video_port);
+                options.mqtt_host,// MQTT 服务器主机名
+                options.mqtt_port,// MQTT 服务器端口
+                options.parsed_video_port);// 解析后的 UDP 视频端口
 
     if (!platform_backend.Initialize()) { // 初始化窗口/图形设备/ImGui
         return 1; // 初始化失败直接退出
@@ -459,7 +459,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
         SPDLOG_ERROR("创建小地图纹理失败 width={} height={}", mini_map_image->width, mini_map_image->height);
     }
 
-    { // 用作用域包裹后台服务，保证退出时先析构(停止线程)再继续收尾
+    { 
+        // 用作用域包裹后台服务，保证退出时先析构(停止线程)再继续收尾
         BackgroundServices background_services(options); // 启动 IO 线程、MQTT、视频流等
         // 记录两路视频最近一次出帧的时间，初值 min() 表示"尚未收到帧"。
         std::chrono::steady_clock::time_point last_udp_frame_time = std::chrono::steady_clock::time_point::min();

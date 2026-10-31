@@ -1,6 +1,7 @@
 // custom_video_panel.cpp：自定义字节块视频画面面板的实现。
 #include "custom_video_panel.h"
 
+// 无名命名空间：本面板内部使用的辅助函数（图像等比缩放、居中文本），不对外暴露。
 namespace {
 
 // 功能：在给定可用区域内按比例缩放图像，保持宽高比完整显示（letterbox）。

@@ -61,25 +61,40 @@ std::tm local_time(std::time_t time_point) {
 // 功能：生成会话 ID（"年月日_时分秒_毫秒"），保证每次启动目录唯一。
 // 思路：取系统时钟，拆分为本地日历时间与毫秒尾数，格式化拼接。
 std::string make_session_id() {
+    // 获取当前系统时钟的时间点（C++ chrono 时间对象）
     const auto now = std::chrono::system_clock::now();
+
+    // 把 chrono 的时间点转成老式 time_t（秒级时间戳）
     const std::time_t time_point = std::chrono::system_clock::to_time_t(now);
+
+    // time_t → tm结构体，tm里面拆开存年、月、日、时、分、秒（本地时区时间）
     const std::tm local_tm = local_time(time_point);
+
+    // 拿到从纪元开始到现在总毫秒数，对1000取模，单独取出【毫秒部分 0~999】
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+    // 字符串流，用来拼接字符串，类似printf但是输出到string
     std::ostringstream stream;
-    // 格式化时间部分（年月日_时分秒）
-    stream << std::put_time(&local_tm, "%Y%m%d_%H%M%S")
-           << "_"
-           << std::setw(3)
-           << std::setfill('0')
-           << milliseconds.count();
+
+    // 格式化输出%Y-%m-%d_%H-%M-%S 就是 年-月-日_时-分-秒
+    // 注意：Windows 目录名不允许冒号(':')与空格，故用下划线/减号替代，避免日志目录创建失败导致启动崩溃
+        stream << std::put_time(&local_tm, "%Y-%m-%d_%H-%M-%S")
+            << "."
+            << std::setw(3) // 确保毫秒部分有3位，不足补0       
+            << std::setfill('0')    // 不够3位前面补0
+            << milliseconds.count();// 毫秒，比如42 → 变成 042
+
+    // 把流里面拼接好的文本转成std::string返回
     return stream.str();
 }
+
 
 // 功能：解析日志根目录。
 // 思路：优先读取环境变量 ROBOGO_LOG_ROOT，未设置或为空则回退默认 "logs"。
 std::filesystem::path resolve_log_root_directory() {
-    // 优先读取环境变量 ROBOGO_LOG_ROOT
+    // 优先读取环境变量 ROBOGO_LOG_ROOT，若设置且非空则返回其值且[0] != '\0'(非空字符串)
     if (const char *env_value = std::getenv("ROBOGO_LOG_ROOT"); env_value != nullptr && env_value[0] != '\0') {
+        // 返回环境变量值
         return std::filesystem::path(env_value);
     }
     // 回退默认 "logs"
@@ -158,82 +173,124 @@ std::uint32_t crc32(std::span<const std::uint8_t> data) {
     return value ^ 0xFFFFFFFFU;
 }
 
-// 功能：把一条记录序列化为二进制 body。
-// 思路：先对变长字段（channel/peer/payload）做长度截断（uint16/uint32 上限），再按固定顺序以小端写入
-//       时间戳、transport、direction、各长度与变长内容；body 之后由 write_record 追加 CRC。
+// 功能：将 NetworkCaptureRecord 抓包记录，序列化为二进制的 body 载荷（不含CRC，CRC由上层 write_record 后续追加）
+// 协议排布规则（全部小端序）：
+// [uint64 timestamp_us] [uint8 transport] [uint8 direction]
+// [uint16 channel_len] [uint16 peer_len] [uint32 payload_len]
+// [channel字符串字节] [peer字符串字节] [payload原始数据包字节]
+//
+// 变长字段说明：channel、peer、payload 长度不固定，所以先存【长度】，再存【内容】；
+// 长度字段有上限约束，超出上限时直接截断内容，防止越界、溢出：
+//   channel / peer 长度用 uint16 存储 → 最大 65535 字节
+//   payload 长度用 uint32 存储 → 最大 4294967295 字节
+// 所有多字节整数统一按小端写入，保证跨平台解析一致性（不受CPU本机大小端影响）
 std::vector<std::uint8_t> build_record_body(const NetworkCaptureRecord &record) {
+    // 截断 channel 字符串长度：不能超过 uint16 能表示的最大值，然后强转成 uint16
     const auto channel_length = static_cast<std::uint16_t>(std::min<std::size_t>(record.channel.size(), std::numeric_limits<std::uint16_t>::max()));
+    // 截断 peer 字符串长度，同上，上限 uint16
     const auto peer_length = static_cast<std::uint16_t>(std::min<std::size_t>(record.peer.size(), std::numeric_limits<std::uint16_t>::max()));
+    // 截断 payload 裸数据长度，上限 uint32
     const auto payload_length = static_cast<std::uint32_t>(std::min<std::size_t>(record.payload.size(), std::numeric_limits<std::uint32_t>::max()));
 
     std::vector<std::uint8_t> body;
+    // 预分配内存：提前算好总字节数，避免vector多次扩容拷贝，提升序列化性能
     body.reserve(sizeof(std::uint64_t) + sizeof(std::uint8_t) * 2 + sizeof(std::uint16_t) * 2 + sizeof(std::uint32_t)
                  + channel_length + peer_length + payload_length);
+
+    // 1. 写入 微秒级时间戳 uint64（小端）
     append_little_endian<std::uint64_t>(body, record.timestamp_us);
+    // 2. 写入传输层类型（uint8，比如TCP/UDP）
     body.push_back(record.transport);
+    // 3. 写入流向标记（uint8：入包/出包）
     body.push_back(record.direction);
+    // 4. 写入 channel 长度 uint16（小端）
     append_little_endian<std::uint16_t>(body, channel_length);
+    // 5. 写入 peer 长度 uint16（小端）
     append_little_endian<std::uint16_t>(body, peer_length);
+    // 6. 写入 payload 长度 uint32（小端）
     append_little_endian<std::uint32_t>(body, payload_length);
+
+    // 7. 拷贝 channel 的字节内容（只拷贝截断后的长度）
     body.insert(body.end(), record.channel.begin(), record.channel.begin() + static_cast<std::ptrdiff_t>(channel_length));
+    // 8. 拷贝 peer 的字节内容
     body.insert(body.end(), record.peer.begin(), record.peer.begin() + static_cast<std::ptrdiff_t>(peer_length));
+    // 9. 拷贝抓包原始payload（UDP/TCP裸报文）
     body.insert(body.end(), record.payload.begin(), record.payload.begin() + static_cast<std::ptrdiff_t>(payload_length));
+
     return body;
 }
 
-// 功能：把一条记录按文件格式写入流（魔数 + body 长度 + CRC + body）。
-// 思路：由 build_record_body 得到 body，计算长度与 CRC32，依次写入首部字段与正文，供复盘精确还原。
+// 功能：把一条抓包记录，按照自定义二进制文件格式写入输出流
+// 文件单条记录整体格式（顺序全部小端）：
+// [魔数 kRecordMagic] [uint32 body_size] [uint32 body_crc32] [body二进制数据]
+// 思路：先调用 build_record_body 生成 body 二进制，算出body长度、CRC校验值，
+//       按协议依次写入头部信息 + body；后续复盘读文件时，依靠魔数同步、CRC校验判断数据是否损坏
 void write_record(std::ofstream &stream, const NetworkCaptureRecord &record) {
+    // 序列化record，生成body二进制载荷（body内部格式见build_record_body）
     const std::vector<std::uint8_t> body = build_record_body(record);
+    // body字节长度，强转为uint32存入文件头
     const std::uint32_t body_size = static_cast<std::uint32_t>(body.size());
+    // 对body完整数据计算crc32，用于回放解析时校验数据完整性
     const std::uint32_t body_crc = crc32(body);
 
+    // 写入魔数：用来解析的时候做帧同步，快速定位一条记录的起始位置，防止粘包/错位
     stream.write(kRecordMagic.data(), static_cast<std::streamsize>(kRecordMagic.size()));
+    // 写入body长度（小端uint32），解析时用来读取后面body的字节数
     write_little_endian<std::uint32_t>(stream, body_size);
+    // 写入body的crc校验值（小端uint32）
     write_little_endian<std::uint32_t>(stream, body_crc);
+    // 写入body原始二进制；ofstream::write入参是const char*，所以用reinterpret_cast做二进制重解释转换
     stream.write(reinterpret_cast<const char *>(body.data()), static_cast<std::streamsize>(body.size()));
 }
 
-// 功能：按需 flush 抓包文件。
-// 思路：强制 flush 或累计记录达到 32 条时落盘，平衡性能与崩溃丢数。
+// 功能：按需把缓冲区数据刷入磁盘，落盘抓包文件
+// 思路：磁盘IO很慢，不写一条刷一次；策略：强制刷新标志 或者 累计写满32条记录再flush
+//       平衡磁盘性能（减少频繁系统调用）和崩溃丢数据风险，防止程序异常退出时数据还留在页缓存里没写到硬盘
 void flush_capture_stream(bool force_flush) {
+    // 文件没有打开，直接返回
     if (!g_network_capture_stream.is_open()) {
         return;
     }
+    // 满足条件：主动强制刷新 或者 已经累计写了32条记录
     if (force_flush || g_records_since_flush >= 32) {
-        g_network_capture_stream.flush();
-        g_records_since_flush = 0;
+        g_network_capture_stream.flush();  // 把C++流缓冲区的数据提交给操作系统页缓存
+        g_records_since_flush = 0;         // 清空计数，重新开始累计
     }
 }
 
-// 功能：后台抓包写线程主循环。
-// 思路：带超时地阻塞取队列；收到停止请求且队列空则退出。每取一批记录写盘，并按阈值 flush。
+// 功能：网络抓包后台写盘线程主循环
+// 思路：阻塞式从无锁队列取抓包记录；收到停止信号并且队列已经空了，线程才退出。
+//       每次取到一条后，一次性把队列里积压的全部记录批量写完，减少多次flush、减少线程切换开销；写完按阈值触发落盘
 void network_capture_loop() {
     SPDLOG_INFO("网络抓包线程已启动");
 
-    NetworkCaptureRecord record;
+    NetworkCaptureRecord record;  // 临时变量，存放从队列取出的单条抓包记录
     for (;;) {
-        // 最多等 1ms，超时则检查停止标志，避免退出延迟
+        // 带超时阻塞等待队列数据：最多阻塞等待 kNetworkCaptureWaitTimeout(1ms)
+        // wait_dequeue_timed：超时没拿到数据返回false；拿到数据返回true
         if (!g_network_capture_queue.wait_dequeue_timed(record, kNetworkCaptureWaitTimeout)) {
+            // 超时的时候，检查停止标记（acquire内存序，保证能看到其他线程设置的停止信号）
             if (g_network_stop_requested.load(std::memory_order_acquire)) {
-                break;
+                break; // 收到停止请求，跳出循环准备退出
             }
-            continue;
+            continue; // 单纯超时、没数据，回到循环继续等待
         }
 
-        // 取出一条即写入并计数
+        // 成功取出一条记录，写入文件，计数+1
         write_record(g_network_capture_stream, record);
         g_records_since_flush += 1;
 
-        // 一次性尽量清空队列，减少线程切换
+        // 【批量消费优化】：继续尝试非阻塞取队列剩下积压的所有记录，一次性写完
+        // 避免队列短时间涌入大量包时，多次进入等待、多次触发flush，降低IO压力
         while (g_network_capture_queue.try_dequeue(record)) {
             write_record(g_network_capture_stream, record);
             g_records_since_flush += 1;
         }
+        // 批量写完一批，尝试flush（非强制，满足32条阈值才真正刷盘）
         flush_capture_stream(false);
     }
 
-    // 退出前强制落盘并关闭文件
+    // 线程退出前：强制刷盘，保证剩余缓存数据交给OS；关闭文件流
     flush_capture_stream(true);
     if (g_network_capture_stream.is_open()) {
         g_network_capture_stream.close();
@@ -274,9 +331,15 @@ void initialize(std::string_view application_name, const bool invert_udp_video) 
         // 即使 proto 文件后续变更，旧日志仍可基于保存的 proto 进行解析
         {
             const auto proto_path = g_log_directory / "messages.proto";
+            // std::ios::binary 以二进制模式打开入文件，std::ios::trunc 以截断模式打开文件，如果文件存在则先删除文件内容
             std::ofstream proto_stream(proto_path, std::ios::binary | std::ios::trunc);
             if (proto_stream.is_open()) {
                 // 把内嵌的 proto 文本原样写入，供离线解析历史日志
+                // 内入二进制数据，避免被解释为文本
+                // 例如：42 → 042
+                // 123 → 0123
+                // reinterpret_cast 将 void* 转换为 const char*，确保二进制数据不被解释为文本,粗暴二进制重新解释，完全不做类型检查，只改编译器对这块内存的解读方式，非常危险
+                // static_cast 将 size_t 转换为 std::streamsize，确保与文件流类型兼容
                 proto_stream.write(reinterpret_cast<const char *>(embedded_messages_proto_data),
                                    static_cast<std::streamsize>(embedded_messages_proto_data_len));
                 proto_stream.close();
@@ -308,7 +371,7 @@ void initialize(std::string_view application_name, const bool invert_udp_video) 
                 spdlog::async_overflow_policy::block);
         app_logger->set_level(spdlog::level::trace);  // 记录全部级别
         app_logger->flush_on(spdlog::level::info);    // 遇到 info 及以上立即 flush
-        spdlog::set_default_logger(app_logger);
+        spdlog::set_default_logger(app_logger);       // 设置为默认 logger，后续未指定 logger 的日志会使用该 logger
 
         // 打开二进制抓包文件（截断），失败则抛异常
         g_network_capture_stream.open(g_network_capture_path, std::ios::binary | std::ios::trunc);
@@ -323,10 +386,10 @@ void initialize(std::string_view application_name, const bool invert_udp_video) 
         g_network_capture_stream.flush();
 
         // 复位状态并启动抓包线程
-        g_network_stop_requested.store(false, std::memory_order_release);
-        g_records_since_flush = 0;
-        g_network_capture_thread = std::thread(network_capture_loop);
-        g_is_initialized = true;
+        g_network_stop_requested.store(false, std::memory_order_release);// 重置抓包线标志
+        g_records_since_flush = 0;          // 重置抓包记录数
+        g_network_capture_thread = std::thread(network_capture_loop);// 启动抓包线程
+        g_is_initialized = true;            /// 标志已初始化
 
         SPDLOG_INFO("日志系统已初始化 application={} session={} log_root={} log_dir={}",
                     application_name,

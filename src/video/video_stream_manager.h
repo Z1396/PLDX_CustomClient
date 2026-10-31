@@ -6,6 +6,7 @@
 #include "video/video_shards_manager.h"
 #include <pch.h>
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
     // 视频流管理器：用 Boost.Asio 接收 UDP 视频分片，重组为完整帧后交由解码器解码，并独占一个解码线程。

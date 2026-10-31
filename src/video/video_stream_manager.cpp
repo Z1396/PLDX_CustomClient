@@ -1,5 +1,6 @@
 #include "video_stream_manager.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
     // 功能：构造管理器，搭建「UDP 接收 → 分片重组 → 解码」链路并启动解码线程。

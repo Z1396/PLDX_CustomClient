@@ -12,6 +12,8 @@
 #define APP_USE_VULKAN_DEBUG_REPORT
 #endif
 
+// 匿名命名空间 —— 仅本编译单元可见的实现细节：视频纹理结构体、LinuxPlatformBackend 类定义及所有 Vulkan/GLFW
+// 辅助工具函数（如扩展查询、内存类型选择、实例/交换链创建等）；不对外暴露，避免污染全局符号。
 namespace {
 
 // LinuxVideoTexture —— 单张视频纹理：Vulkan 图像、图像视图、显存、ImGui 描述符集与尺寸状态。
@@ -35,6 +37,9 @@ struct LinuxDynamicTextureSet {
 // LinuxPlatformBackend —— PlatformBackend 的 Linux 实现：GLFW 窗口 + Vulkan，承载所有 Vulkan 资源管理。
 class LinuxPlatformBackend final : public RoboGo::platform::PlatformBackend {
 public:
+    // 功能：返回本后端的平台标识名称。
+    // 思路：直接返回编译期字面量 "RoboGo-linux"，用于日志/调试区分当前运行平台。
+    // 返回值：C 字符串形式的应用名（静态存储，生命周期安全）。
     [[nodiscard]] const char *application_name() const override {
         return "RoboGo-linux";
     }
@@ -196,6 +201,7 @@ public:
 
     // 功能：渲染并提交本帧，同时清理颜色为不透明黑。
     // 思路：尺寸非法时直接返回；否则设置清屏色并调用 FrameRender/FramePresent。
+    // 参数：draw_data —— 当前帧 ImGui 绘制数据。
     void RenderFrame(ImDrawData *draw_data) override {
         if (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f) {
             return;
@@ -212,6 +218,7 @@ public:
 
     // 功能：切换游戏输入捕获模式（隐藏并锁定鼠标）。
     // 思路：enabled 为真时把 GLFW 光标模式设为 DISABLED（隐藏并捕获），否则恢复为 NORMAL。
+    // 参数：enabled —— true 隐藏并锁定光标（游戏操控），false 恢复普通光标。
     void SetGameInputCapture(const bool enabled) override {
         if (window_ == nullptr || game_input_captured_ == enabled) {
             return;
@@ -228,6 +235,8 @@ public:
 
     // 功能：从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
     // 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
+    // 参数：slot —— 目标纹理槽；frame —— 视频帧像素数据（RGBA 缓冲 + 宽高）。
+    // 返回值：true 上传成功，false 槽位不支持或上传失败。
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::app::VideoFrame &frame) override {
         switch (slot) {
             case RoboGo::app::TextureSlot::UdpVideo:
@@ -242,6 +251,8 @@ public:
 
     // 功能：从解码后的图像上传纹理（仅小地图槽支持该重载）。
     // 思路：仅 MiniMap 槽接受 DecodedImage，其余槽直接拒绝。
+    // 参数：slot —— 目标纹理槽（仅 MiniMap）；image —— 已解码图像像素数据。
+    // 返回值：true 上传成功，false 槽位不支持或上传失败。
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) override {
         if (slot != RoboGo::app::TextureSlot::MiniMap) {
             return false;
@@ -251,6 +262,8 @@ public:
 
     // 功能：获取指定纹理槽当前应显示的纹理视图。
     // 思路：动态纹理取 current_index 指向的一张，静态纹理直接取 mini_map_texture_。
+    // 参数：slot —— 目标纹理槽。
+    // 返回值：TextureView（描述符集句柄 + 尺寸）；若无有效纹理返回空视图。
     [[nodiscard]] RoboGo::app::TextureView GetTextureView(const RoboGo::app::TextureSlot slot) const override {
         switch (slot) {
             case RoboGo::app::TextureSlot::UdpVideo:
@@ -270,6 +283,7 @@ private:
     }
 
     // 功能：检查 Vulkan 调用结果，非成功则记录错误，错误(<0)时直接终止进程。
+    // 参数：err —— Vulkan 返回码；VK_SUCCESS 直接返回，非成功记日志，<0（错误）时调用 std::abort 终止。
     static void CheckVkResult(const VkResult err) {
         if (err == VK_SUCCESS) {
             return;
@@ -314,6 +328,8 @@ private:
 
     // 功能：依据类型过滤位与所需内存属性，找到合适的物理设备内存类型索引。
     // 思路：遍历物理设备内存类型，同时满足属性标志与类型过滤位则返回索引。
+    // 参数：type_filter —— 资源要求的内存类型位掩码；properties —— 期望的内存属性（如 DEVICE_LOCAL / HOST_VISIBLE）。
+    // 返回值：匹配的内存类型索引；若都不匹配返回 (uint32_t)-1（调用方应视为错误）。
     [[nodiscard]] uint32_t FindMemoryType(const uint32_t type_filter, const VkMemoryPropertyFlags properties) const {
         VkPhysicalDeviceMemoryProperties memory_properties;
         vkGetPhysicalDeviceMemoryProperties(physical_device_, &memory_properties);
@@ -328,6 +344,7 @@ private:
 
     // 功能：创建 Vulkan 实例、物理/逻辑设备、描述符池、纹理上传命令池与采样器。
     // 思路：枚举可用扩展后创建实例（按需加验证层/可移植位），选取物理设备与队列族，再创建逻辑设备及相关资源。
+    // 参数：instance_extensions —— GLFW 要求的实例级扩展列表（会被按需追加校验扩展），以值传递并在内部补充。
     void SetupVulkan(ImVector<const char *> instance_extensions) {
         VkResult err;
 
@@ -458,6 +475,7 @@ private:
 
     // 功能：校验表面支持并创建交换链窗口数据（选择表面格式/呈现模式/建立交换链）。
     // 思路：先确认队列族支持该表面，再选择 RGBA 表面格式与 FIFO 呈现模式，最后创建或调整交换链窗口。
+    // 参数：surface —— 由 GLFW 窗口创建的 Vulkan 表面；width/height —— 初始帧缓冲尺寸。
     void SetupVulkanWindow(const VkSurfaceKHR surface, const int width, const int height) {
         VkBool32 result = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(physical_device_, queue_family_, surface, &result);
@@ -530,6 +548,7 @@ private:
 
     // 功能：渲染一帧——获取交换链图像、录制命令缓冲、提交渲染命令。
     // 思路：获取下一图像（过期则标记重建并返回），等待/重置 fence 与命令池，开渲染通道绘制后提交命令。
+    // 参数：draw_data —— 当前帧 ImGui 绘制数据。
     void FrameRender(ImDrawData *draw_data) {
         // 取当前信号量，并请求交换链中下一帧可用图像。
         VkSemaphore image_acquired_semaphore = main_window_data_.FrameSemaphores[main_window_data_.SemaphoreIndex].ImageAcquiredSemaphore;
@@ -630,6 +649,8 @@ private:
 
     // 功能：从内存 RGBA 像素创建 Vulkan 图像并上传（经暂存缓冲 + 命令缓冲拷贝，含布局屏障转换）。
     // 思路：建设备本地图像并分配显存，建图像视图；再用可映射的暂存缓冲写入像素，提交拷贝与屏障命令后等待完成。
+    // 参数：data —— 源像素（RGBA8）；width/height —— 尺寸；texture —— 输出纹理（引用，成功时填充图像/视图/显存）。
+    // 返回值：true 创建并上传成功，false 任一步（图像/显存/视图/缓冲/映射）失败。
     [[nodiscard]] bool CreateVulkanImage(const uint8_t *data, const int width, const int height, LinuxVideoTexture &texture) {
         VkResult err;
 
@@ -823,6 +844,7 @@ private:
     // 功能：销毁一张 Vulkan 纹理占用的全部资源（描述符集、视图、图像、显存），并复位结构体字段。
     // 思路：逐项判空后调用对应 vkDestroy*/vkFree*，最后把句柄置回 VK_NULL_HANDLE、宽高归零、ready 置 false，
     //       保证 texture 回到「未创建」状态可安全复用。
+    // 参数：texture —— 目标纹理（引用，所有句柄会被复位为空句柄）。
     void DestroyVulkanTexture(LinuxVideoTexture &texture) {
         if (texture.descriptor_set != VK_NULL_HANDLE) {
             ImGui_ImplVulkan_RemoveTexture(texture.descriptor_set);
@@ -849,12 +871,17 @@ private:
     // 功能：为已创建好的 Vulkan 图像视图登记 ImGui 描述符集，使其可作为纹理被 ImGui 绘制。
     // 思路：调用 ImGui_ImplVulkan_AddTexture，指定图像布局为 SHADER_READ_ONLY_OPTIMAL（只读采样），
     //       返回的 VkDescriptorSet 即 ImGui 绘制时使用的纹理句柄。
+    // 参数：texture —— 已创建图像视图的纹理（引用，其 descriptor_set 会被写入）。
     void CreateVideoDescriptorSet(LinuxVideoTexture &texture) {
         texture.descriptor_set = ImGui_ImplVulkan_AddTexture(
                 texture.view,
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
+    // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引（Vulkan 版）。
+    // 思路：先销毁 next 槽旧图像，创建新 Vulkan 图像并上传，登记 ImGui 描述符集；成功后切换 current/next 索引。
+    // 参数：texture_set —— 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
+    // 返回值：true 上传与轮换成功，false 创建/上传失败。
     [[nodiscard]] bool UploadDynamicTexture(LinuxDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) {
         LinuxVideoTexture &next_texture = texture_set.textures[texture_set.next_index];
         if (next_texture.image != VK_NULL_HANDLE) {
@@ -871,6 +898,10 @@ private:
         return true;
     }
 
+    // 功能：向静态纹理（小地图）上传一次像素数据（Vulkan 版）。
+    // 思路：先销毁旧图像与视图，创建新 Vulkan 图像并上传，再登记 ImGui 描述符集。
+    // 参数：texture —— 目标纹理（引用，会被更新）；data —— 源像素；width/height —— 尺寸。
+    // 返回值：true 上传成功，false 创建/上传失败。
     [[nodiscard]] bool UploadStaticTexture(LinuxVideoTexture &texture,
                                            const uint8_t *data,
                                            const int width,
@@ -887,12 +918,17 @@ private:
 
     // 功能：销毁纹理组中的全部纹理（双缓冲的两张），用于后端析构或重建时释放显存。
     // 思路：遍历 textures 数组逐个调用 DestroyVulkanTexture，不重置索引（对象即将被丢弃）。
+    // 参数：texture_set —— 目标双缓冲纹理集合（引用，其两张纹理均被销毁）。
     void DestroyDynamicTextureSet(LinuxDynamicTextureSet &texture_set) {
         for (auto &texture: texture_set.textures) {
             DestroyVulkanTexture(texture);
         }
     }
 
+    // 功能：由视频纹理构建供 ImGui 使用的 TextureView（描述符集句柄 + 像素尺寸）。
+    // 思路：把 ImGui 描述符集（VkDescriptorSet）转为 ImTextureID 填入纹理引用，并携带宽高。
+    // 参数：texture —— 源视频纹理（含描述符集与宽高）。
+    // 返回值：TextureView；若描述符集为空则返回仅含尺寸 0 的视图。
     [[nodiscard]] static RoboGo::app::TextureView BuildTextureView(const LinuxVideoTexture &texture) {
         RoboGo::app::TextureView texture_view;
         if (texture.descriptor_set != VK_NULL_HANDLE) {

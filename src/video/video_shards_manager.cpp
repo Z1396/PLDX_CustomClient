@@ -1,5 +1,6 @@
 #include "video_shards_manager.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
     // 功能：析构时复位流状态并清空队列，确保分片占用内存被释放。

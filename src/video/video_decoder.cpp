@@ -1,6 +1,7 @@
 #include "video_decoder.h"
 #include "logging/logging.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
     // 功能：构造解码器，按优先级选择 HEVC 解码器并初始化解析器与缓存。

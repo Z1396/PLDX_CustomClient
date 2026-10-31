@@ -1,3 +1,13 @@
+// ============================================================================
+// 文件：src/io/video_stream_receiver.cpp
+// 层级：业务功能层 - 网络 IO
+// 职责：实现 VideoStreamReceiver 的构造、stop() 与接收主协程 receive_loop()。
+//       receive_loop() 在共用的 Boost.Asio io_context 上以 detached 协程持续接收图传 UDP 包，
+//       按 network_capture 格式记录原始负载后回调 on_receive_packet（交给 FFmpeg 解码 Worker）。
+// 异步模型：与 MQTT 共用同一 IO 线程；收包为 async_receive_from awaitable，停止时关闭 socket
+//       使挂起的异步等待立即出错返回，循环据此退出。
+// 依赖：Boost.Asio（UDP + 协程）、spdlog、RoboGo::logging（网络抓包）。
+// ============================================================================
 #include "video_stream_receiver.h"
 #include "logging/logging.h"
 
@@ -6,6 +16,9 @@ namespace RoboGo::io {
     // 功能：构造视频流接收器并启动后台接收协程。
     // 思路：以给定 endpoint 打开并绑定 UDP socket，调大接收缓冲区（20MB）以承受高码率图传；
     //       启动 detached 的 receive_loop 持续收包，每个包回调 on_receive_packet。
+    // 参数 io_context：外部 Asio 执行上下文（与 MQTT 共用 IO 线程）；endpoint：监听的本地地址:端口；
+    //      on_receive_packet：每收到一个 UDP 包的回调（数据指针 + 长度）。
+    // 返回值：无。
     VideoStreamReceiver::VideoStreamReceiver(boost::asio::io_context &io_context,
                                              const boost::asio::ip::udp::endpoint &endpoint,
                                              const std::function<void(const uint8_t *data, size_t size)> &on_receive_packet)
@@ -22,6 +35,8 @@ namespace RoboGo::io {
 
     // 功能：停止接收器。
     // 思路：置 is_running=false 并通过关闭 socket 使正在进行的 async_receive_from 立即返回错误，从而退出循环。
+    // 参数：无。
+    // 返回值：无。
     void VideoStreamReceiver::stop() {
         SPDLOG_INFO("收到视频流接收器停止请求");
         is_running.store(false, std::memory_order_relaxed);
@@ -35,8 +50,12 @@ namespace RoboGo::io {
     // 功能：UDP 接收主协程：循环接收图传数据包并投递给解码管线。
     // 思路：用固定 64KB 缓冲接收每个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；
     //       收包异常时区分“主动停止”与“运行异常”，停止则正常退出。
+    // 参数：无（使用类成员 socket / on_receive_packet / is_running）。
+    // 返回值：awaitable<void>，随 stop() 关闭 socket 后从异常分支退出。
     boost::asio::awaitable<void> VideoStreamReceiver::receive_loop() {
         // UDP 单包最大 64KB（以太网 MTU 常见上限的保守值）
+        // 注意：该缓冲在循环内复用，每次迭代覆盖写入；on_receive_packet 必须在本次回调内完成拷贝/解析，
+        //       不可跨迭代持有 data 指针，否则下一包到达后内容即被覆盖。
         std::vector<uint8_t> buffer(65535);
         boost::asio::ip::udp::endpoint sender_endpoint;
         try {

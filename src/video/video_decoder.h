@@ -3,6 +3,7 @@
 
 #include <pch.h>
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
     // 视频解码器：封装 FFmpeg 的 HEVC 解码器与码流解析器，把编码后的比特流解析并解码为 AVFrame。

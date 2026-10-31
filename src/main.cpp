@@ -4,6 +4,8 @@
 #include "logging/logging.h"
 #include "platform/platform_backend.h"
 
+// 文件内部匿名命名空间：集中存放与平台相关的命令行参数收集(Windows 标准 WinMain / 非 Windows 标准 main)
+// 以及统一的 RunMain 主流程封装；这些内容仅本编译单元使用，不对外暴露接口。
 namespace {
 
 #ifdef _WIN32

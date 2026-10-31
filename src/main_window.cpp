@@ -12,6 +12,7 @@
 #include "panel/robot_status_panel.h"
 #include "panel/start_panel.h"
 
+// 无名命名空间：本文件内部使用的 UI 辅助函数集合（字符串解析、日志缓存、视频缩放、标尺绘制），不对外暴露。
 namespace {
 
     // 功能：把形如 "a,b" 的字符串按首个逗号拆成两段的键值对。
@@ -88,6 +89,7 @@ namespace {
         return ImVec2(available_size.y * image_aspect, available_size.y);
     }
 
+    // 英雄部署模式下叠加在视频主画面上的辅助标尺参数：像素间隔、刻度线色、标签色。
     constexpr float kHeroRulerSpacingPx = 200.0f;
     constexpr ImU32 kRulerLineColor = IM_COL32(180, 80, 255, 120);
     constexpr ImU32 kRulerLabelColor = IM_COL32(255, 255, 255, 180);

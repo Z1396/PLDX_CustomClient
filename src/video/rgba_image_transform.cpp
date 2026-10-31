@@ -1,5 +1,6 @@
 #include "rgba_image_transform.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
 // 功能：对 RGBA 缓冲执行 180° 旋转，并对输入尺寸做防溢出校验。

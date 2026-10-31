@@ -3,6 +3,7 @@
 
 #include <pch.h>
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
 // 功能：对 RGBA 像素缓冲做 180° 旋转（首尾对称交换像素），enabled 为 false 时原样返回。

@@ -1,5 +1,6 @@
 #include "custom_byte_block_video_decoder_worker.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
 // 功能：构造工作线程，保存回调与配置并立即启动 run() 线程。

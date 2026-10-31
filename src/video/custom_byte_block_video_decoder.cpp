@@ -1,8 +1,10 @@
 // custom_byte_block_video_decoder.cpp：自定义字节块解码器实现——解析序列化包与传输包束两种线格式，按 H.264 解码并转换为 RGBA 帧。
 #include "custom_byte_block_video_decoder.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
+// 匿名命名空间：仅本编译单元可见的线格式解析、序列号处理与解码辅助纯函数，不污染对外符号。
 namespace {
 
 // 协议常量：自定义字节块有两种线格式，包上限统一 300 字节（受传输限制）。

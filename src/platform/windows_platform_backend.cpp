@@ -21,6 +21,8 @@
 // 声明 ImGui 自带的 Win32 窗口过程处理函数，供本后端在 WndProc 中转发 ImGui 相关消息。
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+// 匿名命名空间 —— 仅本编译单元可见的实现细节：常量、内部结构体（帧上下文、描述符堆分配器、视频纹理等）
+// 以及具体的 WindowsPlatformBackend 类定义；不对外暴露，避免污染全局符号。
 namespace {
 
 // kFramesInFlight —— 同时“在飞行中”的帧数量（CPU 可提前提交、GPU 异步完成的帧数）。
@@ -108,6 +110,9 @@ struct WindowsDynamicTextureSet {
 // WindowsPlatformBackend —— PlatformBackend 的 Windows 实现：Win32 窗口 + DirectX12，承载所有 DX12 资源管理。
 class WindowsPlatformBackend final : public RoboGo::platform::PlatformBackend {
 public:
+    // 功能：返回本后端的平台标识名称。
+    // 思路：直接返回编译期字面量 "RoboGo-windows"，用于日志/调试区分当前运行平台。
+    // 返回值：C 字符串形式的应用名（静态存储，生命周期安全）。
     [[nodiscard]] const char *application_name() const override {
         return "RoboGo-windows";
     }
@@ -169,36 +174,39 @@ public:
         }
         SPDLOG_INFO("Direct3D初始化成功");
 
-        ::ShowWindow(hwnd_, SW_SHOWDEFAULT);
-        ::UpdateWindow(hwnd_);
+        ::ShowWindow(hwnd_, SW_SHOWDEFAULT); // 显示窗口
+        ::UpdateWindow(hwnd_); // 更新窗口状态
 
         // 初始化本应用通用的 ImGui 样式/配置，再初始化 Win32 与 DX12 两个 ImGui 后端。
         RoboGo::app::InitializeCommonImGui(main_scale_);
 
+        // 初始化 Win32 后端：绑定窗口句柄、设置 DPI 缩放比例。
         ImGui_ImplWin32_Init(hwnd_);
 
         // 组装 DX12 后端初始化信息：填入设备、命令队列、飞行帧数、RTV/SRV 格式以及 SRV 描述符分配回调。
         ImGui_ImplDX12_InitInfo init_info = {};
-        init_info.Device = device_;
-        init_info.CommandQueue = command_queue_;
-        init_info.NumFramesInFlight = kFramesInFlight;
-        init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-        init_info.DSVFormat = DXGI_FORMAT_UNKNOWN;
-        init_info.SrvDescriptorHeap = srv_descriptor_heap_;
-        init_info.UserData = this;
+        init_info.Device = device_; // DX12 设备             
+        init_info.CommandQueue = command_queue_; // 命令队列
+        init_info.NumFramesInFlight = kFramesInFlight; // 飞行帧数
+        init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // RTV 格式
+        init_info.DSVFormat = DXGI_FORMAT_UNKNOWN; // DSV 格式
+        init_info.SrvDescriptorHeap = srv_descriptor_heap_; // SRV 描述符堆
+        init_info.UserData = this; // 用户数据指针，用于在回调中回取后端指针
         // 提供 SRV 描述符的分配/释放回调：让 ImGui 通过后端自己的堆分配器获取/归还描述符。
-        init_info.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo *info,
-                                            D3D12_CPU_DESCRIPTOR_HANDLE *out_cpu_handle,
+        init_info.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo *info,          // 初始化信息指针
+                                            D3D12_CPU_DESCRIPTOR_HANDLE *out_cpu_handle, // 输出 CPU 描述符句柄指针
                                             D3D12_GPU_DESCRIPTOR_HANDLE *out_gpu_handle) {
             auto *backend = static_cast<WindowsPlatformBackend *>(info->UserData);
             backend->srv_descriptor_heap_allocator_.Alloc(out_cpu_handle, out_gpu_handle);
         };
+        // 提供 SRV 描述符的释放回调：让 ImGui 通过后端自己的堆分配器归还描述符。
         init_info.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo *info,
                                            const D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle,
                                            const D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) {
             auto *backend = static_cast<WindowsPlatformBackend *>(info->UserData);
             backend->srv_descriptor_heap_allocator_.Free(cpu_handle, gpu_handle);
         };
+        // 初始化 ImGui 的 DX12 后端：绑定设备、命令队列、飞行帧数、RTV/SRV 格式以及 SRV 描述符分配/释放回调。
         ImGui_ImplDX12_Init(&init_info);
 
         // 加载内嵌的 ImGui 字体，并预先从 SRV 堆分配各视频纹理所需的描述符。
@@ -267,6 +275,7 @@ public:
 
     // 功能：将本帧 ImGui 绘制数据渲染到后台缓冲并提交呈现。
     // 思路：等待可用帧上下文，把后台缓冲从 PRESENT 态转为 RENDER_TARGET 态后清屏、绘制，再转回 PRESENT 态并呈现。
+    // 参数：draw_data —— 当前帧 ImGui 绘制数据，包含全部图元命令与顶点缓冲。
     void RenderFrame(ImDrawData *draw_data) override {
         // 获取下一帧上下文（必要时等待 GPU 完成上一帧或等待交换链可呈现）。
         WindowsFrameContext *frame_context = WaitForNextFrameContext();
@@ -310,6 +319,7 @@ public:
 
     // 功能：切换游戏输入捕获模式（将鼠标光标限制在窗口客户区内并隐藏光标）。
     // 思路：enabled 为真时把鼠标裁剪到窗口屏幕坐标矩形并隐藏光标；为假时恢复。重复设置直接返回。
+    // 参数：enabled —— true 锁定并隐藏鼠标（游戏操控），false 恢复普通光标。
     void SetGameInputCapture(const bool enabled) override {
         if (hwnd_ == nullptr || game_input_captured_ == enabled) {
             return;
@@ -317,16 +327,16 @@ public:
 
         if (enabled) {
             // 取窗口客户区，并将其左上/右下角换算为屏幕坐标，得到鼠标裁剪矩形。
-            RECT rect;
-            GetClientRect(hwnd_, &rect);
-            POINT top_left = {rect.left, rect.top};
-            POINT bottom_right = {rect.right, rect.bottom};
-            ClientToScreen(hwnd_, &top_left);
-            ClientToScreen(hwnd_, &bottom_right);
-            rect.left = top_left.x;
-            rect.top = top_left.y;
-            rect.right = bottom_right.x;
-            rect.bottom = bottom_right.y;
+            RECT rect;              // 窗口客户区矩形
+            GetClientRect(hwnd_, &rect); // 获取窗口客户区矩形
+            POINT top_left = {rect.left, rect.top}; // 左上角屏幕坐标
+            POINT bottom_right = {rect.right, rect.bottom}; // 右下角屏幕坐标
+            ClientToScreen(hwnd_, &top_left); // 转换为屏幕坐标
+            ClientToScreen(hwnd_, &bottom_right); // 转换为屏幕坐标
+            rect.left = top_left.x; // 更新矩形左边界
+            rect.top = top_left.y; // 更新矩形上边界
+            rect.right = bottom_right.x; // 更新矩形右边界
+            rect.bottom = bottom_right.y; // 更新矩形下边界
             // 把鼠标锁定在该矩形内并隐藏光标，避免操作手误移出窗口。
             ClipCursor(&rect);
             ShowCursor(FALSE);
@@ -341,12 +351,14 @@ public:
             ShowCursor(TRUE);
             SPDLOG_DEBUG("已解除Windows鼠标光标锁定");
         }
-
+        // 更新游戏输入捕获状态
         game_input_captured_ = enabled;
     }
 
     // 功能：从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
     // 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
+    // 参数：slot —— 目标纹理槽；frame —— 视频帧像素数据（RGBA 缓冲 + 宽高）。
+    // 返回值：true 上传成功，false 槽位不支持或上传失败。
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::app::VideoFrame &frame) override {
         switch (slot) {
             case RoboGo::app::TextureSlot::UdpVideo:
@@ -361,6 +373,8 @@ public:
 
     // 功能：从解码后的图像上传纹理（仅小地图槽支持该重载）。
     // 思路：仅 MiniMap 槽接受 DecodedImage，其余槽直接拒绝。
+    // 参数：slot —— 目标纹理槽（仅 MiniMap）；image —— 已解码图像像素数据。
+    // 返回值：true 上传成功，false 槽位不支持或上传失败。
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) override {
         if (slot != RoboGo::app::TextureSlot::MiniMap) {
             return false;
@@ -370,6 +384,8 @@ public:
 
     // 功能：获取指定纹理槽当前应显示的纹理视图。
     // 思路：动态纹理取 current_index 指向的一张，静态纹理直接取 mini_map_texture_。
+    // 参数：slot —— 目标纹理槽。
+    // 返回值：TextureView（GPU 句柄 + 尺寸）；若无有效纹理返回空视图。
     [[nodiscard]] RoboGo::app::TextureView GetTextureView(const RoboGo::app::TextureSlot slot) const override {
         switch (slot) {
             case RoboGo::app::TextureSlot::UdpVideo:
@@ -387,14 +403,14 @@ private:
     // 思路：先填交换链描述并按需开启调试层，再创建设备，随后依次创建 RTV/SRV 堆、命令队列与飞行帧资源。
     bool CreateDeviceD3D() {
         // 配置交换链：双缓冲、RGBA8 格式、可等待延迟对象、翻转丢弃交换效果。
-        DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
-        swap_chain_desc.BufferCount = kBackBuffers;
-        swap_chain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        swap_chain_desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-        swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swap_chain_desc.SampleDesc.Count = 1;
-        swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        swap_chain_desc.Scaling = DXGI_SCALING_STRETCH;
+        DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};              // 交换链描述
+        swap_chain_desc.BufferCount = kBackBuffers;              // 双缓冲
+        swap_chain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;      // RGBA8 格式
+        swap_chain_desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT; // 可等待延迟对象
+        swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; // 渲染目标输出
+        swap_chain_desc.SampleDesc.Count = 1;                          // 1x 抗样
+        swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;     // 翻转丢弃交换效果
+        swap_chain_desc.Scaling = DXGI_SCALING_STRETCH;                // 拉伸缩放
 
 #ifdef DX12_ENABLE_DEBUG_LAYER
         // 调试层：获取调试接口并开启，用于运行时校验 D3D12 调用。
@@ -625,6 +641,7 @@ private:
 
     // 功能：阻塞等待所有已提交但尚未完成的 GPU 命令执行完毕。
     // 思路：向 fence 发信号、设置完成事件，再用 WaitForSingleObject 等待该事件。
+    // 返回值：无（当设备/围栏/事件任一为空时直接返回，避免非法等待）。
     void WaitForPendingOperations() {
         if (command_queue_ == nullptr || fence_ == nullptr || fence_event_ == nullptr) {
             return;
@@ -636,6 +653,7 @@ private:
 
     // 功能：获取当前帧对应的帧上下文，并在必要时等待其上一轮 GPU 工作结束或交换链可呈现。
     // 思路：用帧索引对飞行帧数取模选取上下文；若 GPU 未完成该帧则同时等待 fence 与交换链可等待对象。
+    // 返回值：指向选中帧上下文的指针（其命令分配器将被本帧复用）；该指针生命周期与后端一致，调用方无需释放。
     WindowsFrameContext *WaitForNextFrameContext() {
         WindowsFrameContext *frame_context = &frame_context_[frame_index_ % kFramesInFlight];
         if (fence_->GetCompletedValue() < frame_context->fence_value) {
@@ -650,6 +668,10 @@ private:
 
     // 功能：从内存中的 RGBA 像素数据创建 D3D12 纹理并完成上传（含临时上传缓冲与一次性拷贝命令）。
     // 思路：在 DEFAULT 堆建目标纹理（初始 COPY_DEST），在 UPLOAD 堆建暂存缓冲并写入像素，再用独立命令列表拷贝并屏障转态，最后建 SRV。
+    // 参数：data —— 源像素指针（RGBA8，行宽=width*4）；width/height —— 纹理尺寸；
+    //       srv_cpu_handle —— 用于创建 SRV 的 CPU 描述符句柄（由调用方从分配器取得）；
+    //       out_texture_resource —— 输出参数，成功时写入新建的 D3D12 纹理资源指针。
+    // 返回值：true 创建并上传成功，false 任意一步（设备/缓冲/映射）失败。
     [[nodiscard]] bool LoadTextureFromMemory(const uint8_t *data,
                                              const int width,
                                              const int height,
@@ -827,6 +849,8 @@ private:
 
     // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引。
     // 思路：先释放旧纹理，上传新帧到 next 槽；上传成功后把 current 指向它、next 轮转，并将刚写入帧标记为非就绪。
+    // 参数：texture_set —— 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
+    // 返回值：true 上传与轮换成功，false 纹理创建失败。
     [[nodiscard]] bool UploadDynamicTexture(WindowsDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) const {
         WindowsVideoTexture &next_texture = texture_set.textures[texture_set.next_index];
         if (next_texture.texture != nullptr) {
@@ -847,6 +871,8 @@ private:
 
     // 功能：向静态纹理（小地图）上传一次像素数据。
     // 思路：先释放旧纹理再上传新数据，并记录尺寸；静态纹理内容不频繁变化。
+    // 参数：texture —— 目标纹理（引用，会被更新）；data —— 源像素；width/height —— 尺寸。
+    // 返回值：true 上传成功，false 失败。
     [[nodiscard]] bool UploadStaticTexture(WindowsVideoTexture &texture,
                                            const uint8_t *data,
                                            const int width,
@@ -889,6 +915,8 @@ private:
 
     // 功能：由视频纹理构建供 ImGui 使用的 TextureView（GPU 句柄 + 像素尺寸）。
     // 思路：把 SRV 的 GPU 句柄转为 ImTextureID 填入纹理引用，并携带宽高。
+    // 参数：texture —— 源视频纹理（含 SRV GPU 句柄与宽高）。
+    // 返回值：TextureView；若纹理为空则返回仅含尺寸 0 的视图。
     [[nodiscard]] static RoboGo::app::TextureView BuildTextureView(const WindowsVideoTexture &texture) {
         RoboGo::app::TextureView texture_view;
         if (texture.texture != nullptr) {

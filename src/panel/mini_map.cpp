@@ -2,6 +2,7 @@
 #include "mini_map.h"
 #include "keyboard_mouse_state_manager.h"
 
+// 无名命名空间：小地图内部使用的坐标/尺寸常量、边框取色、UV 裁剪等辅助函数，不对外暴露。
 namespace {
 
 // 地图逻辑尺寸（与雷达坐标系一致，单位为地图坐标），用于坐标换算

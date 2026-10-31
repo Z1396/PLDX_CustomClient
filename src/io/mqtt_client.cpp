@@ -1,3 +1,14 @@
+// ============================================================================
+// 文件：src/io/mqtt_client.cpp
+// 层级：业务功能层 - 网络 IO
+// 职责：实现 MqttClient 的构造、参数设置与协程主循环 run()，以及与 broker 交互的若干辅助协程：
+//       WaitForMqttOperationTimeout（超时定时器）、CloseMqttClientNoThrow（安全关连）、
+//       RunMqttOperationWithTimeout（超时包裹器）、PublishMqttMessage（上行发布）。
+// 异步模型：所有网络操作均为 async_mqtt 的 awaitable，跑在共用的 Boost.Asio io_context 上；
+//       run() 以 detached 协程常驻，内部「连接→订阅→recv 循环→异常重连」，并通过
+//       原子修订号(endpoint_revision)与标志(is_client_id_updated)感知主线程的参数变更并重建连接。
+// 依赖：async_mqtt、Boost.Asio 协程、spdlog、RoboGo::logging（网络抓包）。
+// ============================================================================
 #include "mqtt_client.h"
 #include "logging/logging.h"
 
@@ -16,6 +27,8 @@ namespace {
 
     // 功能：等待一次 MQTT 操作超时（用定时器协程实现）。
     // 思路：创建一个 steady_timer，时长 mqtt_operation_timeout；到点若未被取消则抛出异常，从而打断等待中的 MQTT 操作。
+    // 参数：无（超时时长取全局常量 mqtt_operation_timeout）。
+    // 返回值：awaitable<void>；到点后抛 boost::system::system_error，由 RunMqttOperationWithTimeout 的超时分支捕获。
     boost::asio::awaitable<void> WaitForMqttOperationTimeout() {
         // 取当前协程所在执行器，定时器需要在同一执行器上运行
         auto executor = co_await boost::asio::this_coro::executor;
@@ -30,6 +43,8 @@ namespace {
 
     // 功能：安全关闭 MQTT 客户端连接，忽略“已中断/未连接/描述符失效”等可预期的关闭错误。
     // 思路：调用 async_close，对特定错误码（operation_aborted / not_connected / bad_descriptor）不告警，其余才记录 WARN。
+    // 参数 client：要关闭的连接；peer：用于日志的“地址:端口”；reason：触发关闭的原因（如操作名）。
+    // 返回值：awaitable<void>；正常无异常，预期内错误被吞掉。
     boost::asio::awaitable<void> CloseMqttClientNoThrow(MqttAsyncClient &client, std::string_view peer, std::string_view reason) {
         try {
             co_await client.async_close(boost::asio::use_awaitable);
@@ -52,6 +67,7 @@ namespace {
     //       若超时分支先完成（result.index()==1），记录告警并可选地关闭客户端后抛出 timed_out。
     // 参数：client 客户端；peer 用于日志的“地址:端口”；operation_name 操作名；operation_factory 返回协程的可调用对象；
     //       close_client_on_timeout 超时后是否主动关闭连接（publish 等轻量操作传 false）。
+    // 返回值：awaitable<void>；成功则正常返回，超时或业务异常则抛出 system_error（timed_out 或原错误）。
     template <typename OperationFactory>
     boost::asio::awaitable<void> RunMqttOperationWithTimeout(MqttAsyncClient &client,
                                                              std::string_view peer,
@@ -82,6 +98,9 @@ namespace {
     // 功能：发布一条 MQTT 消息（QoS1，至少一次）。
     // 思路：先取得唯一 packet_id（会话未就绪则跳过），按 network_capture 格式记录发送负载，再用超时包裹的 publish 发出；
     //       捕获 system_error 仅记录错误，不向上抛（发布失败不应中断主循环）。
+    // 参数 client：目标连接（共享指针，跨协程保活）；topic：上行话题；message：已序列化负载；
+    //      peer：日志用的“地址:端口”。
+    // 返回值：awaitable<void>；成功或会话未就绪/失败都正常返回，不向外抛异常。
     boost::asio::awaitable<void> PublishMqttMessage(std::shared_ptr<MqttAsyncClient> client,
                                                     std::string topic,
                                                     std::string message,
@@ -324,11 +343,11 @@ namespace RoboGo::io {
                                                      peer,
                                                      "connect",
                                                      [&]() -> boost::asio::awaitable<void> {
-                                                         co_await client->async_start(
-                                                                 async_mqtt::v3_1_1::connect_packet{
-                                                                         true,
-                                                                         mqtt_keep_alive_seconds,
-                                                                         std::move(client_id_cloned)},
+                                                                 co_await client->async_start(
+                                                                         async_mqtt::v3_1_1::connect_packet{
+                                                                                 true, // clean_session=true：断开后 broker 不保留本会话的订阅与未确认报文，重连即全新会话
+                                                                                 mqtt_keep_alive_seconds,
+                                                                                 std::move(client_id_cloned)},
                                                                  boost::asio::use_awaitable);
                                                      });
                 SPDLOG_INFO("MQTT连接成功 peer={}", peer);
@@ -342,41 +361,43 @@ namespace RoboGo::io {
                 }
 
                 // 发送要订阅的话题
+                // 订阅策略：裁判系统下行话题统一用 QoS0（at_most_once）。状态/图传类消息本就高频且允许丢包，
+                // 不重传可降低延迟与抖动，也避免 broker 积压未确认报文。
                 SPDLOG_INFO("MQTT开始订阅话题 peer={}", peer);
                 std::vector<async_mqtt::topic_subopts> sub_entry{
-                        {"GameStatus", async_mqtt::qos::at_most_once},
-                        {"GlobalUnitStatus", async_mqtt::qos::at_most_once},
-                        {"GlobalLogisticsStatus", async_mqtt::qos::at_most_once},
-                        {"GlobalSpecialMechanism", async_mqtt::qos::at_most_once},
-                        {"Event", async_mqtt::qos::at_most_once},
-                        {"RobotInjuryStat", async_mqtt::qos::at_most_once},
-                        {"RobotRespawnStatus", async_mqtt::qos::at_most_once},
-                        {"RobotStaticStatus", async_mqtt::qos::at_most_once},
-                        {"RobotDynamicStatus", async_mqtt::qos::at_most_once},
-                        {"RobotModuleStatus", async_mqtt::qos::at_most_once},
-                        {"RobotPosition", async_mqtt::qos::at_most_once},
-                        {"Buff", async_mqtt::qos::at_most_once},
-                        {"PenaltyInfo", async_mqtt::qos::at_most_once},
-                        {"RobotPathPlanInfo", async_mqtt::qos::at_most_once},
-                        {"RadarInfoToClient", async_mqtt::qos::at_most_once},
-                        {"MapClickInfo", async_mqtt::qos::at_most_once},
-                        {"CustomByteBlock", async_mqtt::qos::at_most_once},
-                        {"TechCoreMotionStateSync", async_mqtt::qos::at_most_once},
-                        {"RobotPerformanceSelectionSync", async_mqtt::qos::at_most_once},
-                        {"DeployModeStatusSync", async_mqtt::qos::at_most_once},
-                        {"RuneStatusSync", async_mqtt::qos::at_most_once},
-                        {"SentryStatusSync", async_mqtt::qos::at_most_once},
-                        {"DartSelectTargetStatusSync", async_mqtt::qos::at_most_once},
-                        {"SentryCtrlResult", async_mqtt::qos::at_most_once},
-                        {"AirSupportStatusSync", async_mqtt::qos::at_most_once}};
+                        {"GameStatus", async_mqtt::qos::at_most_once},                       // 比赛整体状态（阶段、胜负、倒计时）
+                        {"GlobalUnitStatus", async_mqtt::qos::at_most_once},                 // 全队单位状态汇总
+                        {"GlobalLogisticsStatus", async_mqtt::qos::at_most_once},           // 全队后勤/补给状态
+                        {"GlobalSpecialMechanism", async_mqtt::qos::at_most_once},          // 全队特殊机关状态
+                        {"Event", async_mqtt::qos::at_most_once},                           // 比赛事件流（击杀、增益、犯规等）
+                        {"RobotInjuryStat", async_mqtt::qos::at_most_once},                 // 机器人受伤/被击中统计
+                        {"RobotRespawnStatus", async_mqtt::qos::at_most_once},              // 机器人复活状态
+                        {"RobotStaticStatus", async_mqtt::qos::at_most_once},               // 机器人静态属性（类型、编号、阵营）
+                        {"RobotDynamicStatus", async_mqtt::qos::at_most_once},              // 机器人动态状态（血量、热量、能量）
+                        {"RobotModuleStatus", async_mqtt::qos::at_most_once},               // 机器人模块状态（射击/底盘/云台等）
+                        {"RobotPosition", async_mqtt::qos::at_most_once},                   // 机器人实时坐标
+                        {"Buff", async_mqtt::qos::at_most_once},                            // 增益/神符触发状态
+                        {"PenaltyInfo", async_mqtt::qos::at_most_once},                     // 惩罚信息
+                        {"RobotPathPlanInfo", async_mqtt::qos::at_most_once},               // 机器人路径规划信息
+                        {"RadarInfoToClient", async_mqtt::qos::at_most_once},               // 雷达站下发给客户端的信息
+                        {"MapClickInfo", async_mqtt::qos::at_most_once},                    // 地图点击交互信息
+                        {"CustomByteBlock", async_mqtt::qos::at_most_once},                 // 自定义字节块（自定义客户端收发通道）
+                        {"TechCoreMotionStateSync", async_mqtt::qos::at_most_once},         // 技术核心运动状态同步
+                        {"RobotPerformanceSelectionSync", async_mqtt::qos::at_most_once},   // 机器人性能方案选择同步
+                        {"DeployModeStatusSync", async_mqtt::qos::at_most_once},            // 部署模式状态同步
+                        {"RuneStatusSync", async_mqtt::qos::at_most_once},                  // 神符状态同步
+                        {"SentryStatusSync", async_mqtt::qos::at_most_once},                // 哨兵机器人状态同步
+                        {"DartSelectTargetStatusSync", async_mqtt::qos::at_most_once},      // 飞镖选择目标状态同步
+                        {"SentryCtrlResult", async_mqtt::qos::at_most_once},                // 哨兵控制结果反馈
+                        {"AirSupportStatusSync", async_mqtt::qos::at_most_once}};           // 空中支援状态同步
                 co_await RunMqttOperationWithTimeout(*client,
                                                      peer,
                                                      "subscribe",
                                                      [&]() -> boost::asio::awaitable<void> {
-                                                         co_await client->async_subscribe(
-                                                                 async_mqtt::v3_1_1::subscribe_packet{
-                                                                         *client->acquire_unique_packet_id(),
-                                                                         async_mqtt::force_move(sub_entry)},
+                                                                 co_await client->async_subscribe(
+                                                                         async_mqtt::v3_1_1::subscribe_packet{
+                                                                                 *client->acquire_unique_packet_id(), // 申请唯一 packet_id 用于匹配 SUBACK
+                                                                                 async_mqtt::force_move(sub_entry)}, // force_move 把订阅表移入报文，避免一次大向量拷贝
                                                                  boost::asio::use_awaitable);
                                                      });
                 SPDLOG_INFO("MQTT话题订阅成功 peer={} topic_count={}", peer, 25);

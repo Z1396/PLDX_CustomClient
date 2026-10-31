@@ -5,6 +5,7 @@
 
 #include "video/custom_byte_block_video_decoder.h"
 
+// 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
 // 自定义字节块解码工作线程：在独立线程中消费线格式包队列，解码为 RGBA 帧并回调，与收包线程解耦。
