@@ -1,12 +1,12 @@
-#pragma once
+#pragma once  // 头文件包含守卫：防止同一头文件被重复包含
 
-#include <pch.h>
+#include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库
 
 // 应用层头文件：声明程序启动参数解析与顶层应用主循环的对外接口。
-#include "app/application_types.h"
-#include "platform/platform_backend.h"
+#include "app/application_types.h"  // 应用层公共数据结构(VideoFrame/LaunchOptions 等)
+#include "platform/platform_backend.h"  // 平台后端抽象(窗口/图形/ImGui 接口)
 
-namespace RoboGo::app {
+namespace RoboGo::app {  // 进入应用层命名空间
 
 // 功能：解析命令行参数为结构化的 LaunchOptions（含 MQTT 服务器地址与视频端口）。
 // 参数 args：从平台收集到的命令行参数字符串列表。

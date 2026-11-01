@@ -1,7 +1,7 @@
 // video_shards_manager.h：视频分片管理器——接收 UDP 视频分片并重组为完整帧，处理帧 ID 回绕、丢帧冲刷与过期分片丢弃。
 #pragma once
 
-#include <pch.h>
+#include <pch.h> // 预编译头：提供 map/array/vector/optional/function 等标准库与 moodycamel 无锁队列
 
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
@@ -13,11 +13,11 @@ namespace RoboGo::video {
         uint32_t frame_bytes = 0; // 整帧期望的总字节数（由包头携带）
         uint32_t collected_frame_bytes = 0; // 已收集到的分片净字节数（不含每片 8 字节头）
         std::map<uint16_t, std::pair<uint8_t *, size_t>> shards; // shard_id -> (数据指针, 含头长度)，按 id 有序便于顺序拼接
-    };
+    }; // 结束 FrameShards：每个缓存槽位对应一帧，收齐 frame_bytes 即可拼接回调
 
     // 视频分片管理器：接收 UDP 视频分片并重组为完整帧，处理帧 ID 回绕、丢帧冲刷与过期分片丢弃。
     class VideoShardsManager {
-    private:
+    private: // 私有区：队列、帧 ID 追踪状态、分片缓存窗口与回调，均不对外暴露
         // 缓存数据包相关
         moodycamel::BlockingReaderWriterQueue<std::pair<uint8_t *, size_t>> packet_queue; // 无锁阻塞队列，UDP 线程入队、解码线程出队
         // 帧 ID 相关
@@ -33,7 +33,7 @@ namespace RoboGo::video {
         std::vector<uint8_t> full_frame; // 重组成功后的完整帧缓存，回调前填充
         std::function<void(const std::vector<uint8_t> &frame)> frame_callback; // 完整帧就绪时回调
 
-    public:
+    public: // 公开区：析构、回调注册、UDP 线程入队接口与解码线程单次处理接口
         // 功能：析构时清理帧序列状态并排空残留队列，释放所有分片内存。
         ~VideoShardsManager();
 
@@ -46,7 +46,7 @@ namespace RoboGo::video {
         // 功能：解码线程循环调用，从队列取一包并解析、重组、必要时回调完整帧。
         void handle_once();
 
-    private:
+    private: // 私有工具区：流状态重置、队列排空与单槽位分片释放，仅供内部实现复用
         // 功能：重置整个流的帧序列状态、缓存窗口与完整帧缓冲。
         void reset_stream_state();
 
@@ -55,6 +55,6 @@ namespace RoboGo::video {
 
         // 功能：释放单个帧槽位内所有分片内存并清零元数据，使其可复用。
         static void reset_frame_shards(FrameShards &frame_shards);
-    };
+    }; // 结束 class VideoShardsManager：对外只暴露收包与单次处理，重组细节全部内部封装
 
 }// namespace RoboGo::video

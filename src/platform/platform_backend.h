@@ -1,10 +1,10 @@
 // platform_backend.h —— 平台抽象层统一接口定义：声明 PlatformBackend 抽象基类与跨平台后端工厂 CreatePlatformBackend()。
 #pragma once
 
-#include <pch.h>
+#include <pch.h>   // 预编译头（集中包含常用头以加速编译）
 
-#include "app/application_types.h"
-#include "resource/resources.h"
+#include "app/application_types.h"   // 应用层类型（TextureSlot / VideoFrame / TextureView 等）
+#include "resource/resources.h"      // 资源层类型（DecodedImage 等）
 
 // RoboGo::platform —— 平台抽象层命名空间：集中存放与渲染/窗口平台无关的后端接口与工厂，
 // 主程序与上层模块只通过此命名空间使用后端，从而对 Windows(DX12) / Linux(Vulkan) 实现透明。
@@ -12,8 +12,8 @@ namespace RoboGo::platform {
 
 // PlatformBackend —— 平台后端抽象基类，定义跨平台（Windows/Linux）统一接口，主程序仅依赖此接口编程。
 class PlatformBackend {
-public:
-    virtual ~PlatformBackend() = default;
+public:  // 公开接口区：主程序仅通过这些虚函数与后端交互
+    virtual ~PlatformBackend() = default;  // 虚析构：保证经基类 unique_ptr 删除派生后端时能正确析构（含私有资源）
 
     // 功能：返回当前后端的名称标识（用于日志/调试区分平台）。
     // 思路：纯虚函数，由各后端返回固定字符串（如 "RoboGo-windows" / "RoboGo-linux"）。
@@ -66,7 +66,7 @@ public:
     // 参数：slot —— 目标纹理槽（UdpVideo/CustomVideo/MiniMap）。
     // 返回值：TextureView（含纹理引用 ImTextureID 与像素尺寸）；若该槽尚无有效纹理则返回空视图。
     [[nodiscard]] virtual app::TextureView GetTextureView(app::TextureSlot slot) const = 0;
-};
+};  // 结束 class PlatformBackend：纯接口，无数据成员，实现全部下放到具体平台后端
 
 // 功能：根据当前编译平台创建对应平台后端实例。
 // 思路：Windows 下返回 WindowsPlatformBackend，Linux 下返回 LinuxPlatformBackend（实现在各自 .cpp 中）。

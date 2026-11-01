@@ -1,9 +1,9 @@
 // 面板布局与通用 ImGui 样式/子窗口工具：供各功能面板复用统一的标题、按钮样式与一行多面板布局。
 #pragma once
 
-#include <pch.h>
+#include <pch.h>  // 预编译头，集中提供 ImGui/标准库依赖
 
-namespace RoboGo::panel {
+namespace RoboGo::panel {  // 面板工具统一放在 RoboGo::panel 命名空间
 
 // 按钮配色与尺寸样式：常态/悬停/按下三色 + 内边距 + 圆角。
 struct ButtonStyle {
@@ -12,23 +12,23 @@ struct ButtonStyle {
     ImVec4 active_color;                   // 鼠标按下时的背景色
     ImVec2 padding = ImVec2(12.0f, 8.0f);  // 按钮内边距（横向、纵向）
     float rounding = 6.0f;                 // 按钮圆角半径
-};
+};  // ButtonStyle 定义结束
 
 // 一行中一个子面板的单元：是否可见 + 渲染回调（接收分配到的宽度）。
 struct PanelRowItem {
     bool visible = false;               // 是否参与排版：false 时该子面板不占宽度
     std::function<void(float)> render;  // 渲染回调，参数为分配到的宽度
-};
+};  // PanelRowItem 定义结束
 
 // RAII 风格的 ImGui 样式栈管理：析构时按计数统一 Pop，避免遗漏。
 class ScopedStyle {
-public:
-    ScopedStyle() = default;
-    ScopedStyle(const ScopedStyle &) = delete;
-    ScopedStyle &operator=(const ScopedStyle &) = delete;
-    ScopedStyle(ScopedStyle &&other) noexcept;
-    ScopedStyle &operator=(ScopedStyle &&other) noexcept;
-    ~ScopedStyle();
+public:  // 公有接口：外部通过这些方法压栈
+    ScopedStyle() = default;  // 默认构造：计数为 0，不压入任何样式
+    ScopedStyle(const ScopedStyle &) = delete;  // 禁止拷贝：计数与 ImGui 样式栈一一对应，拷贝会导致重复 Pop
+    ScopedStyle &operator=(const ScopedStyle &) = delete;  // 禁止拷贝赋值，原因同上
+    ScopedStyle(ScopedStyle &&other) noexcept;  // 移动构造：转移计数并把源对象清零，保证只会 Pop 一次
+    ScopedStyle &operator=(ScopedStyle &&other) noexcept;  // 移动赋值：先弹出自身已压样式，再接管对方计数
+    ~ScopedStyle();  // 析构：按计数自动 Pop，提前 return 也不会泄漏样式栈
 
     // 功能：压入一个颜色样式（如 ImGuiCol_Text / ImGuiCol_Border），并累加颜色计数。
     // 参数 index：ImGui 颜色枚举项；color：要覆盖的 RGBA 颜色。
@@ -40,31 +40,31 @@ public:
     // 参数 index：ImGui 样式枚举项；value：目标二维数值。
     void PushVar(ImGuiStyleVar index, const ImVec2 &value);
 
-private:
+private:  // 私有实现细节
     // 功能：按记录的计数把已压入的样式全部弹出并清零计数（析构与移动赋值时调用），防止样式栈泄漏。
     void Reset();
 
     int color_count_ = 0; // 已压入的颜色数量，析构时按此计数 Pop
     int var_count_ = 0;   // 已压入的样式变量数量，析构时按此计数 Pop
-};
+};  // ScopedStyle 定义结束
 
 // RAII 风格的子窗口：构造 BeginChild，析构 EndChild。
 class ScopedChildWindow {
-public:
-    ScopedChildWindow(const char *name, const ImVec2 &size, bool border = false, ImGuiWindowFlags flags = 0);
-    ScopedChildWindow(const ScopedChildWindow &) = delete;
-    ScopedChildWindow &operator=(const ScopedChildWindow &) = delete;
-    ~ScopedChildWindow();
-};
+public:  // 公有接口
+    ScopedChildWindow(const char *name, const ImVec2 &size, bool border = false, ImGuiWindowFlags flags = 0);  // 构造即 BeginChild：border 控制边框，flags 透传给 ImGui
+    ScopedChildWindow(const ScopedChildWindow &) = delete;  // 禁止拷贝：子窗口必须严格配对 Begin/End
+    ScopedChildWindow &operator=(const ScopedChildWindow &) = delete;  // 禁止拷贝赋值，原因同上
+    ~ScopedChildWindow();  // 析构即 EndChild，保证与构造配对
+};  // ScopedChildWindow 定义结束
 
 // 带标题的命名子面板：构造时先绘制彩色标题，再开启子窗口。
 class ScopedTitledPanel {
-public:
-    ScopedTitledPanel(const char *panel_id, float panel_width, const char *title, const ImVec4 &color);
+public:  // 公有接口
+    ScopedTitledPanel(const char *panel_id, float panel_width, const char *title, const ImVec4 &color);  // 参数：panel_id 子窗口标识；panel_width 面板宽度；title 标题；color 标题颜色
 
-private:
+private:  // 私有成员
     ScopedChildWindow child_;  // 底层子窗口，生命周期与本节面板绑定（构造 BeginChild、析构 EndChild）
-};
+};  // ScopedTitledPanel 定义结束
 
 // 构造仅修改文字颜色的 ScopedStyle。
 ScopedStyle MakeTextColorStyle(const ImVec4 &color);

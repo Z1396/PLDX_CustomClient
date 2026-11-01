@@ -9,11 +9,11 @@
 // 注意：本文件只声明接口；接收循环实现见 video_stream_receiver.cpp。
 // ============================================================================
 // video_stream_receiver.h：图传 UDP 接收器接口——基于 Boost.Asio 监听指定端口，把每个收到的 UDP 包回调给解码管线。
-#pragma once
+#pragma once  // 头文件包含守卫：防止重复包含
 
-#include <pch.h>
+#include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库(async_mqtt/Boost.Asio/spdlog 等)
 
-namespace RoboGo::io {
+namespace RoboGo::io {  // 进入网络 IO 命名空间
 
     // 功能：RoboGo 的图传 UDP 接收器封装。
     // 思路：构造时打开并绑定 UDP socket，detached 启动 receive_loop() 协程持续收包；每个包原样回调给解码管线，
@@ -21,13 +21,13 @@ namespace RoboGo::io {
     // 参数：构造时传入 io_context（共用 IO 线程）、endpoint（监听地址:端口，默认 0.0.0.0:3334）、
     //      on_receive_packet（每收到一个 UDP 包的回调）。
     // 返回值：无（类类型）。
-    class VideoStreamReceiver {
-    private:
+    class VideoStreamReceiver {  // 无虚函数、不可拷贝（持有 socket 与协程），仅作为后台服务成员长期存活
+    private:  // 内部状态：socket 句柄、包回调与运行标志，外部无需感知
         boost::asio::ip::udp::socket socket;  // 用于接收图传 UDP 流的 socket
         std::function<void(const uint8_t *data, size_t size)> on_receive_packet;  // 收到数据包后的回调（交给解码器）
         std::atomic<bool> is_running = true;  // 运行标志，stop() 置 false 退出接收循环
 
-    public:
+    public:  // 对外只暴露"构造即开始收包"和"stop 停止"两个动作
         // 功能：构造接收器——绑定并打开 UDP socket，随后启动接收协程循环。
         // 思路：以 endpoint 在 io_context 上打开并绑定 UDP socket，调大接收缓冲区以承受高码率图传，
         //       再 co_spawn 启动 detached 的 receive_loop() 协程开始收包。
@@ -35,18 +35,18 @@ namespace RoboGo::io {
         //      endpoint：要监听的本地地址与端口（图传默认 0.0.0.0:3334）；
         //      on_receive_packet：每收到一个 UDP 包的回调（数据指针 + 长度），通常接解码器。
         // 返回值：无。
-        explicit VideoStreamReceiver(boost::asio::io_context &io_context,
-                                     const boost::asio::ip::udp::endpoint &endpoint,
-                                     const std::function<void(const uint8_t *data, size_t size)> &on_receive_packet);
+        explicit VideoStreamReceiver(boost::asio::io_context &io_context,  // explicit：禁止隐式转换构造，避免误传端点
+                                     const boost::asio::ip::udp::endpoint &endpoint,  // 监听的本地地址与端口
+                                     const std::function<void(const uint8_t *data, size_t size)> &on_receive_packet);  // 每个 UDP 数据报的消费回调
 
         // 功能：停止接收器。
         // 思路：置 is_running=false，并关闭 socket——正在进行的 async_receive_from 会立即以错误返回，
         //       使 receive_loop 从异常分支干净退出，无需额外通知机制。
         // 参数：无。
         // 返回值：无。
-        void stop();
+        void stop();  // 幂等停止：重复调用仅关闭已关闭的 socket，不会抛异常(使用 error_code 版本)
 
-    private:
+    private:  // 接收循环为内部实现细节，外部只能通过构造/stop 间接驱动
         // 功能：UDP 接收主协程——循环接收图传数据报并投递给解码管线。
         // 思路：在 is_running 下反复 async_receive_from 阻塞等待下一个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；
         //       收包异常时区分「主动停止（socket 被关闭）」与「运行异常」，前者属预期退出。复用同一接收缓冲，
@@ -54,6 +54,6 @@ namespace RoboGo::io {
         // 参数：无（使用类成员）。
         // 返回值：awaitable<void>，由 co_spawn(detached) 驱动，随 stop() 退出。
         boost::asio::awaitable<void> receive_loop();  // 持续接收 UDP 包的主协程
-    };
+    };  // VideoStreamReceiver 类定义结束
 
-}// namespace RoboGo::io
+}// namespace RoboGo::io  // 网络 IO 命名空间结束

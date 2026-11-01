@@ -1,9 +1,9 @@
 // 主窗口与全局状态定义：本文件声明主界面入口 ShowMainWindow 及共享的比赛状态 State。
 #pragma once
 
-#include <pch.h>
-#include "custom_control_payload.h"
-#include "io/mqtt_client.h"
+#include <pch.h>// 预编译头：集中引入 STL/protobuf/ImGui 等第三方头，加速整体编译
+#include "custom_control_payload.h"// 自定义控制包(custom_control_payload.proto 生成)的构建/状态辅助声明
+#include "io/mqtt_client.h"// MQTT 客户端封装：提供 publish/subscribe 等接口，用于与裁判系统通信
 
 // 一条日志记录的存储结构（用于本车日志与系统日志）。
 struct LogEntry {
@@ -11,27 +11,27 @@ struct LogEntry {
     std::string text;// 日志正文。
     int type;// 0: INFO, 1: WARNING, 2: ERROR
     uint64_t sequence = 0;// 单调递增序号，用于排序与去重。
-};
+};// LogEntry 结构结束
 
 // 单个机器人的血量/弹量状态（UI 展示用）。
 struct RobotStatus {
     uint32_t health = 0;// 当前血量。
     uint32_t max_health = 0;// 历史最大血量（用于计算血条比例，仅在刷新时向上更新）。
     int32_t bullets = 0;// 允许发弹量（剩余弹药兑换额度）。
-};
+};// RobotStatus 结构结束
 
 // 地图点位坐标（ID + 归一化/像素坐标）。
 struct MapPosition {
     int id;   // 点位编号，用于标识场地上预定义的位置（如出生点、资源点）
     float x;  // 归一化/像素横坐标
     float y;  // 归一化/像素纵坐标
-};
+};// MapPosition 结构结束
 
 // 带更新时间戳的 Buff，用于计算剩余有效时间并自动过期清理。
 struct BuffWithTimestamp {
     Buff buff;  // 协议下发的增益本体（类型、增益值、剩余时间等）
     std::chrono::steady_clock::time_point update_time;// 收到该 Buff 的本地时刻。
-};
+};// BuffWithTimestamp 结构结束
 
 // 全局比赛状态：聚合所有裁判系统/模拟器 MQTT 话题解析后的最新快照，供各面板读取显示。
 struct State {
@@ -158,7 +158,7 @@ struct State {
     uint64_t next_log_sequence = 1;        // 下一条日志将使用的全局自增序号（两个日志列表共用，保证可统一排序）
     std::vector<LogEntry> vehicle_logs;    // 本车日志：操作手视角的事件记录
     std::vector<LogEntry> system_logs;     // 系统日志：裁判系统事件、判罚、解析异常等
-};
+};// State 全局状态结构结束
 
 // 自定义字节块数据包回调：当收到 CustomByteBlock 话题且携带数据时被调用，转发给视频解码器。
 using CustomByteBlockPacketHandler = std::function<void(std::span<const uint8_t> packet_bytes)>;
@@ -173,18 +173,18 @@ State CreateInitialState();
 
 // 主界面绘制入口：按布局顺序组织各面板，并返回用户是否请求切换 UDP 视频上下翻转。
 bool ShowMainWindow(const State &state,
-                    RoboGo::io::MqttClient &mqtt_client,
-                    ImTextureRef video_texture_ref,
-                    const ImVec2 &video_size,
-                    ImTextureRef custom_video_texture_ref,
-                    const ImVec2 &custom_video_size,
-                    bool using_custom_video_as_main,
-                    bool prefer_custom_video_as_main,
-                    bool udp_video_display_ready,
-                    bool custom_video_display_ready,
-                    bool udp_video_inverted,
-                    ImTextureRef mini_map_texture_ref,
-                    const ImVec2 &mini_map_texture_size);
+                    RoboGo::io::MqttClient &mqtt_client,// MQTT 客户端引用(开局面板下发选型/开始比赛指令用)
+                    ImTextureRef video_texture_ref,// 主/次视频纹理句柄(UDP 视频源，交给 ImGui 背景绘制层贴图)
+                    const ImVec2 &video_size,// UDP 视频原始像素尺寸，用于保持宽高比缩放
+                    ImTextureRef custom_video_texture_ref,// CustomByteBlock 自定义视频流的纹理句柄
+                    const ImVec2 &custom_video_size,// 自定义视频流原始像素尺寸
+                    bool using_custom_video_as_main,// 当前是否把自定义视频当作主画面(否则 UDP 视频为主)
+                    bool prefer_custom_video_as_main,// 用户偏好是否希望自定义视频为主画面(用于切换策略判断)
+                    bool udp_video_display_ready,// UDP 视频当前是否有可显示帧(超时未刷新则为 false)
+                    bool custom_video_display_ready,// 自定义视频当前是否有可显示帧
+                    bool udp_video_inverted,// UDP 视频当前是否处于上下翻转状态(展示勾选态)
+                    ImTextureRef mini_map_texture_ref,// 小地图底图纹理句柄(场地俯视图)
+                    const ImVec2 &mini_map_texture_size); // 小地图底图像素尺寸，用于坐标换算
 
 // 每帧调用：清理已过期的 Buff 等需要基于时间推进的本地状态。
 void UpdateState(State &state);
@@ -195,10 +195,10 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
 // 处理从 MQTT 收到的裁判系统/模拟器消息：
 // 按 topic 解析对应 protobuf，刷新 UI 状态，必要时生成系统日志或透传自定义字节块。
 void HandleMqttMessage(State &state,
-                       RoboGo::io::MqttClient &mqtt_client,
-                       const std::string &topic,
-                       const std::string &payload,
-                       const CustomByteBlockPacketHandler &custom_byte_block_packet_handler = {});
+                       RoboGo::io::MqttClient &mqtt_client,// MQTT 客户端引用(下行分发目前未直接使用，保留以统一签名)
+                       const std::string &topic,// 消息话题名，即裁判系统协议里的消息类型(如 "GameStatus")
+                       const std::string &payload,// 消息原始字节串，交给对应 protobuf 的 ParseFromString 反序列化
+                       const CustomByteBlockPacketHandler &custom_byte_block_packet_handler = {}); // 自定义字节块回调(默认空，空则丢弃视频帧数据)
 
 // 追加一条本车（操作手视角）日志，同时输出到终端日志。
 void AppendVehicleLog(State &state, int type, const std::string &text);

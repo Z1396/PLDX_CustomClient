@@ -1,6 +1,6 @@
-#pragma once
+#pragma once // 头文件防重包含：#pragma 语义由编译器保证，只被预处理一次
 
-#include <pch.h>
+#include <pch.h> // 预编译头：集中引入标准库与第三方头，加速整体编译
 
 // 键鼠状态管理头文件：声明全局键鼠采集、比赛/标记模式控制及 MQTT 上报相关接口。
 #include "io/mqtt_client.h"

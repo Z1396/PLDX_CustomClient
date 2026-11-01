@@ -6,155 +6,155 @@
 void ShowProgressBar(const ImVec4 &bar_color, float ratio, float width, float height) {
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bar_color);  // 临时设置进度条颜色
     ImGui::ProgressBar(ratio, ImVec2(width, height), "");  // 空标签避免显示百分比文本
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor();   // 恢复进度条配色，避免影响后续控件
     ImGui::Spacing();  // 条与条之间留白
-}
+}   // 结束 ShowProgressBar
 
 // 功能：展示己方机器人血量/能量/经验/发弹量/模式指示灯/设备连接状态。详见头文件。
 // 思路：优先读取静态+动态状态，缺失时回退为全零；各项用彩色文本+进度条呈现。
 void ShowRobotStatusPanel(const State &state) {
     // 无装饰/不可移动/无背景/不保存设置的浮动窗口
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings;
-    if (!ImGui::Begin("VehicleStatusPanel", nullptr, window_flags)) {
-        ImGui::End();
-        return;
-    }
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings; // 浮动覆盖层：无交互背景
+    if (!ImGui::Begin("VehicleStatusPanel", nullptr, window_flags)) { // 开窗口（被裁剪则跳过）
+        ImGui::End();                                                // 结束窗口
+        return;                                                      // 提前返回
+    }   // 结束 Begin 失败分支
 
     // 获取可用内容区域大小
     ImVec2 content_avail = ImGui::GetContentRegionAvail();  // 内容区宽度，用于进度条满宽
-    float progress_bar_height = 4.0f;  // 进度条高度
+    float progress_bar_height = 4.0f;  // 进度条高度（统一）
 
     // Panel 标题
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));  // 白色标题
-    ImGui::Text("机器人状态");
-    ImGui::PopStyleColor();
+    ImGui::Text("机器人状态");   // 面板标题文字
+    ImGui::PopStyleColor();   // 恢复默认文字颜色
     ImGui::Separator();  // 分隔线
-    ImGui::Spacing();
+    ImGui::Spacing();   // 标题与内容之间的留白
 
     // TODO show buffer energy bar
-    uint32_t current_health, max_health, current_energy, max_energy, current_experience, experience_for_upgrade, level;
-    float health_ratio, energy_ratio, experience_ratio;
-    if (state.robot_static_status.has_value() && state.robot_dynamic_status.has_value()) {
+    uint32_t current_health, max_health, current_energy, max_energy, current_experience, experience_for_upgrade, level; // 待填充的血/能量/经验/等级
+    float health_ratio, energy_ratio, experience_ratio;               // 三项比例（0~1）
+    if (state.robot_static_status.has_value() && state.robot_dynamic_status.has_value()) {   // 静态状态（上限/等级）与动态状态（当前值）都有才计算比例
         current_health = state.robot_dynamic_status->current_health();  // 当前血量
         max_health = state.robot_static_status->max_health();  // 最大血量
         health_ratio = static_cast<float>(current_health) / static_cast<float>(max_health);  // 血量比例
         current_energy = state.robot_dynamic_status->current_chassis_energy();  // 当前底盘能量
-        max_energy = state.robot_static_status->max_chassis_energy();
-        energy_ratio = static_cast<float>(current_energy) / static_cast<float>(max_energy);
+        max_energy = state.robot_static_status->max_chassis_energy();   // 底盘能量上限
+        energy_ratio = static_cast<float>(current_energy) / static_cast<float>(max_energy);   // 底盘能量比例 = 当前 / 上限
         current_experience = state.robot_dynamic_status->current_experience();  // 当前经验
         experience_for_upgrade = state.robot_dynamic_status->experience_for_upgrade();  // 升级所需经验
         level = state.robot_static_status->level();  // 等级
-        experience_ratio = static_cast<float>(current_experience) / static_cast<float>(experience_for_upgrade);
+        experience_ratio = static_cast<float>(current_experience) / static_cast<float>(experience_for_upgrade);   // 经验比例 = 当前经验 / 升级所需经验
     } else {  // 状态缺失时全部置零，避免异常
-        current_health = 0;
-        max_health = 0;
-        current_energy = 0;
-        max_energy = 0;
-        current_experience = 0;
-        experience_for_upgrade = 0;
-        level = 0;
-        health_ratio = 0.0f;
-        energy_ratio = 0.0f;
-        experience_ratio = 0.0f;
-    }
+        current_health = 0;                                          // 血量置零
+        max_health = 0;                                              // 最大血量置零
+        current_energy = 0;                                          // 能量置零
+        max_energy = 0;                                              // 最大能量置零
+        current_experience = 0;                                      // 经验置零
+        experience_for_upgrade = 0;                                  // 升级所需经验置零
+        level = 0;                                                   // 等级置零
+        health_ratio = 0.0f;                                         // 血量比例置零
+        energy_ratio = 0.0f;                                         // 能量比例置零
+        experience_ratio = 0.0f;                                     // 经验比例置零
+    }   // 结束状态读取分支
 
     // 血条
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));  // 红色文本
-    ImGui::Text("血量: %d/%d", current_health, max_health);
-    ImGui::PopStyleColor();
+    ImGui::Text("血量: %d/%d", current_health, max_health);   // 血量数值文本（当前/上限）
+    ImGui::PopStyleColor();   // 恢复默认文字颜色
     ShowProgressBar(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), health_ratio, content_avail.x, progress_bar_height);  // 红色血条
 
     // 能量条
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));  // 蓝色文本
-    ImGui::Text("能量: %d/%d", current_energy, max_energy);
-    ImGui::PopStyleColor();
+    ImGui::Text("能量: %d/%d", current_energy, max_energy);   // 能量数值文本
+    ImGui::PopStyleColor();   // 恢复默认文字颜色
     ShowProgressBar(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), energy_ratio, content_avail.x, progress_bar_height);  // 蓝色能量条
 
     // 经验条
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.3f, 1.0f));  // 金色文本
-    ImGui::Text("经验: %d/%d (等级: %d)", current_experience, experience_for_upgrade, level);
-    ImGui::PopStyleColor();
+    ImGui::Text("经验: %d/%d (等级: %d)", current_experience, experience_for_upgrade, level);   // 经验数值文本，附带当前等级
+    ImGui::PopStyleColor();   // 恢复默认文字颜色
     ShowProgressBar(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), experience_ratio, content_avail.x, progress_bar_height);  // 金色经验条
 
     // 允许发弹量
-    uint32_t remaining_ammo;
-    if (state.robot_dynamic_status.has_value()) {
+    uint32_t remaining_ammo;                                        // 剩余可发弹数（待填充）
+    if (state.robot_dynamic_status.has_value()) {                     // 有动态状态时
         remaining_ammo = state.robot_dynamic_status->remaining_ammo();  // 剩余可发弹数
-    } else {
-        remaining_ammo = 0;
-    }
+    } else {   // 无动态状态时无弹药数据
+        remaining_ammo = 0;   // 允许发弹量按 0 处理
+    }   // 结束弹药读取分支
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));  // 浅蓝文本
-    ImGui::Text("允许发弹量: %d", remaining_ammo);
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
+    ImGui::Text("允许发弹量: %d", remaining_ammo);   // 允许发弹量数值文本
+    ImGui::PopStyleColor();   // 恢复默认文字颜色
+    ImGui::Spacing();   // 与下方指示灯区留白
 
     // 指示灯
     bool is_auto_aim = state.auto_aim;  // 自瞄开关
     bool is_gyro = state.gyro;  // 小陀螺开关
-    bool is_deploy_mode;
-    if (state.deploy_mode_status_sync.has_value()) {
+    bool is_deploy_mode;                                        // 部署模式（待填充）
+    if (state.deploy_mode_status_sync.has_value()) {   // 已收到部署模式同步
         is_deploy_mode = state.deploy_mode_status_sync->status() == 1;  // 部署模式(状态为 1)
-    } else {
-        is_deploy_mode = false;
-    }
+    } else {   // 尚未同步部署模式
+        is_deploy_mode = false;   // 未知状态按未部署处理
+    }   // 结束部署模式判断
 
-    float text_width1 = ImGui::CalcTextSize("指示灯: ").x;
-    float text_width2 = ImGui::CalcTextSize("自瞄").x;
-    float text_width3 = ImGui::CalcTextSize("小陀螺").x;
-    float text_width4 = ImGui::CalcTextSize("部署模式").x;
+    float text_width1 = ImGui::CalcTextSize("指示灯: ").x;            // "指示灯: " 文本宽度
+    float text_width2 = ImGui::CalcTextSize("自瞄").x;                // "自瞄" 文本宽度
+    float text_width3 = ImGui::CalcTextSize("小陀螺").x;              // "小陀螺" 文本宽度
+    float text_width4 = ImGui::CalcTextSize("部署模式").x;            // "部署模式" 文本宽度
     float indicator_spacing = (content_avail.x - text_width1 - text_width2 - text_width3 - text_width4) / 4.0f;  // 在四项间均分剩余宽度
     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "指示灯: ");  // 标签
     ImGui::SameLine(text_width1 + indicator_spacing);  // 首项后偏移，开始排列指示灯
     ImGui::TextColored(is_auto_aim ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "自瞄");  // 开启绿/关闭灰
-    ImGui::SameLine(text_width1 + text_width2 + indicator_spacing * 2);
-    ImGui::TextColored(is_gyro ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "小陀螺");
-    ImGui::SameLine(text_width1 + text_width2 + text_width3 + indicator_spacing * 3);
-    ImGui::TextColored(is_deploy_mode ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "部署模式");
-    ImGui::Spacing();
+    ImGui::SameLine(text_width1 + text_width2 + indicator_spacing * 2);   // 「自瞄」之后的第三个位置：累计三个已用宽度 + 3 份间距
+    ImGui::TextColored(is_gyro ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "小陀螺");   // 小陀螺指示灯：开启绿、关闭灰
+    ImGui::SameLine(text_width1 + text_width2 + text_width3 + indicator_spacing * 3);   // 「部署模式」位置：累计四个已用宽度 + 4 份间距
+    ImGui::TextColored(is_deploy_mode ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "部署模式");   // 部署模式指示灯：开启绿、关闭灰
+    ImGui::Spacing();   // 指示灯与设备状态之间留白
 
     // 设备连接状态
     const char *module_names[] = {  // 11 个模块的中文名（与下方状态数组一一对应）
-            "主控", "电源管理", "图传", "RFID", "UWB",
-            "装甲板", "小弹丸", "大弹丸", "超级电容", "灯条",
-            "激光检测"};
+            "主控", "电源管理", "图传", "RFID", "UWB",   // 模块名第 1 行（与状态数组前 5 项对应）
+            "装甲板", "小弹丸", "大弹丸", "超级电容", "灯条",   // 模块名第 2 行（对应第 6~10 项）
+            "激光检测"};   // 模块名第 3 行（对应第 11 项）
 
     ImGui::SameLine(0, 0);  // 与标题同行紧接
     ImGui::TextColored(ImVec4(0.8f, 0.4f, 1.0f, 1.0f), "未连接设备: ");  // 紫色标签
 
-    if (state.robot_module_status.has_value()) {
+    if (state.robot_module_status.has_value()) {   // 已收到模块连接状态
         uint32_t module_status[] = {  // 各模块连接状态（1=已连接，非 1=未连接）
-                state.robot_module_status->main_controller(),
-                state.robot_module_status->power_manager(),
-                state.robot_module_status->video_transmission(),
-                state.robot_module_status->rfid(),
-                state.robot_module_status->uwb(),
-                state.robot_module_status->armor(),
-                state.robot_module_status->small_shooter(),
-                state.robot_module_status->big_shooter(),
-                state.robot_module_status->capacitor(),
-                state.robot_module_status->light_strip(),
-                state.robot_module_status->laser_detection_module()};
+                state.robot_module_status->main_controller(),   // 主控连接状态
+                state.robot_module_status->power_manager(),   // 电源管理连接状态
+                state.robot_module_status->video_transmission(),   // 图传连接状态
+                state.robot_module_status->rfid(),   // RFID 连接状态
+                state.robot_module_status->uwb(),   // UWB 定位连接状态
+                state.robot_module_status->armor(),   // 装甲板连接状态
+                state.robot_module_status->small_shooter(),   // 小弹丸发射机构连接状态
+                state.robot_module_status->big_shooter(),   // 大弹丸发射机构连接状态
+                state.robot_module_status->capacitor(),   // 超级电容连接状态
+                state.robot_module_status->light_strip(),   // 灯条连接状态
+                state.robot_module_status->laser_detection_module()};   // 激光检测模块连接状态
         static_assert(std::size(module_names) == std::size(module_status));  // 编译期保证两数组长度一致
 
-        ImGui::SameLine(0, 0);
-        ImGuiTextBuffer buffer;
-        for (size_t i = 0; i < std::size(module_names); i++) {
+        ImGui::SameLine(0, 0);   // 紧跟标签同行继续输出未连接列表
+        ImGuiTextBuffer buffer;                                      // 拼接未连接模块名的临时缓冲区
+        for (size_t i = 0; i < std::size(module_names); i++) {   // 遍历全部 11 个模块
             if (module_status[i] != 1) {  // 仅收集未连接的模块
-                if (!buffer.empty()) {
+                if (!buffer.empty()) {   // 不是第一个未连接项时先补分隔符
                     buffer.append(", ");  // 多模块用逗号分隔
-                }
-                buffer.appendf("%s", module_names[i]);
-            }
-        }
-        if (buffer.empty()) {
+                }   // 结束分隔符判断
+                buffer.appendf("%s", module_names[i]);   // 把未连接模块名追加到缓冲区
+            }   // 结束未连接判断
+        }   // 结束模块遍历
+        if (buffer.empty()) {   // 没有任何未连接模块
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "（无）");  // 全部已连接
-        } else {
+        } else {   // 存在未连接模块
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", buffer.c_str());  // 标红列出未连接项
-        }
-    } else {
-        ImGui::SameLine(0, 0);
+        }   // 结束未连接列表输出
+    } else {   // 尚未收到模块状态
+        ImGui::SameLine(0, 0);   // 紧跟标签同行输出
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "未知");  // 无模块状态数据时
-    }
+    }   // 结束模块状态分支
 
-    ImGui::End();
-}
+    ImGui::End();                                                    // 结束窗口
+}   // 结束 ShowRobotStatusPanel
