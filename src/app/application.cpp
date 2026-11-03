@@ -422,6 +422,10 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     {   // 作用域块
         // 用作用域包裹后台服务，保证退出时先析构(停止线程)再继续收尾
         BackgroundServices background_services(options); // 启动 IO 线程、MQTT、视频流等
+
+        // 键鼠上报线程：与渲染帧率解耦，固定周期发送 KeyboardMouseControl（2027 协议上限 75Hz）。
+        // 必须在这里启动（早于主循环）且在 background_services.Stop() 之前停止，保证线程不会用到已析构的客户端。
+        start_keyboard_mouse_publisher(background_services.mqtt_client());
         
         // 记录两路视频最近一次出帧的时间，初值 min() 表示"尚未收到帧"。
         std::chrono::steady_clock::time_point last_udp_frame_time = std::chrono::steady_clock::time_point::min();  // UDP 从未收到帧
@@ -500,6 +504,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
         }  // 主循环结束
 
         SPDLOG_INFO("开始执行图形资源清理");  // 进入收尾阶段
+        // 先停键鼠上报线程：它每 14ms 会调用一次 mqtt_client.publish，必须早于 MQTT 停止/客户端析构。
+        stop_keyboard_mouse_publisher();  // 幂等，重复调用安全
         platform_backend.Shutdown(); // 先释放图形资源(纹理/设备/窗口)
 
         SPDLOG_INFO("开始关闭网络与后台线程");  // 再停后台服务：此时纹理已释放，避免回调里再上传纹理

@@ -15,9 +15,17 @@ void enter_game_mode();
 // 参数 handler：回调函数，参数为是否启用输入捕获。
 void set_game_input_capture_handler(std::function<void(bool enabled)> handler);
 
-// 功能：每帧采集并(按约 75Hz)上报键鼠状态到裁判系统。
-// 参数 mqtt_client：用于发布 KeyboardMouseControl 消息的 MQTT 客户端。
+// 功能：每帧由 UI 线程调用，采集键鼠状态并写入跨线程共享的原子变量。
+// 说明：真正的上报由 start_keyboard_mouse_publisher 启动的独立线程按固定周期完成，
+//       本函数只做采样（ImGui 的状态只能在 UI 线程读），因此不会再受渲染帧率影响。
+// 参数 mqtt_client：保留形参以稳定调用点（发布已移到上报线程）。
 void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client);
+
+// 功能：启动/停止固定周期的键鼠上报线程（进程内只启动一次，stop 可重复调用）。
+// 参数 mqtt_client：发布用的客户端，其生命周期必须长于上报线程
+//        （application 里先 stop_keyboard_mouse_publisher，再停 MQTT）。
+void start_keyboard_mouse_publisher(RoboGo::io::MqttClient &mqtt_client);
+void stop_keyboard_mouse_publisher();
 
 // 功能：获取当前鼠标灵敏度系数。
 float get_mouse_sensitivity();

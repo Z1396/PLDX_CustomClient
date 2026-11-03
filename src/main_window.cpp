@@ -526,16 +526,16 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     break;// 跳出 switch
                 }// case 2 结束
                 case 3: {// 3 = 大能量机关激活成功
-                    // TODO 暂时不处理
-                    return;// 直接返回，本事件暂不写日志(注意：后续语句不可达，保留以备将来启用)
                     // 当前大能量机关被成功激活的灯臂数量、平均环数（仅大能量机关被激活时触发该事件，参数值为激活成功臂数，平均环数(浮点数)，比如”10,9.6”代表激活十个灯臂，平均环数为 9.6）
-                    auto parts = SplitByComma(event.param());// (不可达)把 "臂数,平均环数" 拆开
-                    if (parts.has_value()) {// (不可达)拆分成功
-                        log_entry.text = "大能量机关激活成功: " + parts->first + "个灯臂，平均环数" + parts->second;// (不可达)拼出激活详情
-                    } else {// (不可达)参数格式异常
-                        log_entry.text = "大能量机关激活: " + event.param();// (不可达)退化为原始参数
-                    }// (不可达)if-else 结束
-                    break;// (不可达)跳出 switch
+                    // 说明：此处原有一句 `return;`（TODO 暂时不处理），会把整条事件吞掉——连后面的
+                    //       系统日志都写不进去。现已改为正常分支，只写日志、不弹提示（PushEventToast 未给 3 定级）。
+                    auto parts = SplitByComma(event.param());// 把 "臂数,平均环数" 拆开
+                    if (parts.has_value()) {// 拆分成功
+                        log_entry.text = "大能量机关激活成功: " + parts->first + "个灯臂，平均环数" + parts->second;// 拼出激活详情
+                    } else {// 参数格式异常
+                        log_entry.text = "大能量机关激活: " + event.param();// 退化为原始参数
+                    }// if-else 结束
+                    break;// 跳出 switch
                 }// case 3 结束
                 case 4: {// 4 = 能量机关进入已激活状态
                     // 能量机关进入已激活状态（激活类型 1：小能量机关，2：大能量机关）
@@ -637,11 +637,11 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     break;// 跳出 switch
                 }// case 10 结束
                 case 11: {// 11 = 基地遭到攻击
-                    // TODO 暂时不处理
-                    return;// 暂不处理，直接返回
                     // 基地遭到攻击（无参数值，每次触发存在 5s 内置冷却）
-                    log_entry.text = "基地遭到攻击";// (不可达)固定文案
-                    break;// (不可达)跳出 switch
+                    // 说明：此处原有一句 `return;`（TODO 暂时不处理），导致这条"危急"事件既不写日志、
+                    //       也不弹顶部提示（PushEventToast 给 11 定级为 level 2）。现已改为正常分支。
+                    log_entry.text = "基地遭到攻击";// 固定文案
+                    break;// 跳出 switch
                 }// case 11 结束
                 case 12: {// 12 = 对方前哨站停转
                     // 对方前哨站停转（无参数）
@@ -904,7 +904,15 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         SentryCtrlResult sentry_ctrl_result;// 构造消息对象
         if (sentry_ctrl_result.ParseFromString(payload)) {// 反序列化成功
             log_parse_success(topic, sentry_ctrl_result);// 调试日志
-            // TODO 需要添加相关UI
+            // 写入全局状态，供开局面板/指挥台的"上一条指令 → 结果"回显使用。
+            // 2027 协议只推"指令编号 + 结果码"，不推失败原因，所以这里同时补一条日志：
+            // 成功走普通级、失败走警告级，操作手不用盯面板也能看到指令到底有没有生效。
+            state.sentry_ctrl_result = sentry_ctrl_result;// 保存最近一次回执
+            const std::string result_text = "哨兵指令 " + std::to_string(sentry_ctrl_result.command_id()) +
+                                            (sentry_ctrl_result.result_code() == 0
+                                                     ? " 执行成功"
+                                                     : " 执行失败，结果码 " + std::to_string(sentry_ctrl_result.result_code()));// 组装回执文案
+            AppendSystemLog(state, sentry_ctrl_result.result_code() == 0 ? 0 : 1, result_text);// 成功=INFO，失败=WARNING
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
