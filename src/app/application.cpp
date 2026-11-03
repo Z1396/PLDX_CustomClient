@@ -409,6 +409,16 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只
         options.capture_mode = capture_env; // 读取环境变量档位
     } // 结束环境变量判断
 
+    // --dev：本地联调快捷开关。客户端默认连 2027 裁判系统（192.168.12.1），
+    // 而 tools/mock_rm_server.py 监听的是 127.0.0.1；加这个开关就不用每次手改地址。
+    // 注意放在下面的参数循环之前：显式 --mqtt_server 仍然优先于 --dev。
+    for (const auto &arg: args) {
+        if (arg == "--dev") { // 命中开发模式开关
+            options.mqtt_server = "tcp://127.0.0.1:3333"; // 指向本地模拟器
+            break; // 只需要命中一次
+        } // 结束开关判断
+    } // 结束预扫描
+
     // 遍历命令行参数，识别需要携带一个值的启动选项。
     for (size_t i = 0; i < args.size(); ++i) {  // 顺序扫描，遇到带值选项时额外 ++i 跳过其值
         if (args[i] == "--mqtt_server" && i + 1 < args.size()) { // --mqtt_server <addr>

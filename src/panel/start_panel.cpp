@@ -820,21 +820,38 @@ void ShowLoginRobotSelection(TeamRobotSelectionState &selection_state) {
     }   // 结束机器人按钮遍历
 }   // 结束 ShowLoginRobotSelection
 
-// 功能：渲染 MQTT 服务端地址输入框，并在解析错误时显示红色错误提示。
+// 功能：渲染 MQTT 服务端地址输入框，并在解析错误/连接失败时给出提示。
+// 设计说明：2027 正式地址是 192.168.12.1，但本地跑 tools/mock_rm_server.py 时监听的是 127.0.0.1，
+//           两者只差一个 IP，现场/开发切换时极容易只改一半。这里放一个"本地"快捷按钮 + 失败提示，
+//           点一下就能把地址切成 127.0.0.1:3333，不用手敲。
 void ShowMqttServerEndpointInput(RoboGo::io::MqttClient &mqtt_client) {
     MqttServerAddressState &mqtt_server_state = GetMqttServerAddressState(mqtt_client); // 取全局地址输入状态
     ImGui::TextDisabled("MQTT 服务端");                               // 灰色标题
     ImGui::Dummy(ImVec2(0.0f, kLoginMqttInputTopMargin * ImGui::GetScale())); // 顶部留白
     {   // 局部作用域：输入框样式只在此块内生效
         ScopedStyle input_style = MakeInputStyle();                   // 套用输入框样式
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);    // 输入框宽度撑满可用区
+        const float local_button_width = ImGui::CalcTextSize("本地").x + ImGui::GetStyle().FramePadding.x * 2.0f; // "本地"按钮宽度
+        const float input_width = ImGui::GetContentRegionAvail().x - local_button_width - ImGui::GetStyle().ItemSpacing.x; // 输入框让出按钮宽度
+        ImGui::SetNextItemWidth(input_width > 80.0f ? input_width : ImGui::GetContentRegionAvail().x); // 输入框宽度（极窄窗口下退回整行）
         if (ImGui::InputText("##mqtt_server_address", &mqtt_server_state.input)) { // 绑定到输入串
             mqtt_server_state.error_message.clear();                  // 用户编辑即清除旧错误提示
         }   // 结束用户编辑处理
+        ImGui::SameLine();                                            // "本地"按钮与输入框同行
+        if (ImGui::Button("本地")) {                                   // 一键切到本地模拟器地址
+            mqtt_server_state.input = "127.0.0.1:3333";               // mock_rm_server.py 的默认监听地址
+            mqtt_server_state.error_message.clear();                  // 清掉旧的解析错误
+            SPDLOG_INFO("MQTT 地址已切换为本地模拟器 127.0.0.1:3333");   // 记录操作，便于复盘
+        }   // 结束本地按钮判断
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {      // 悬停说明
+            ImGui::SetTooltip("填入本地模拟器地址 127.0.0.1:3333\n比赛时用 192.168.12.1:3333"); // 两种地址都写清楚
+        }   // 结束悬停提示
     }   // 结束作用域（ScopedStyle 析构自动弹样式）
     if (!mqtt_server_state.error_message.empty()) {                   // 存在解析错误
         ScopedStyle error_style = MakeTextColorStyle(ImVec4(1.0f, 0.45f, 0.45f, 1.0f)); // 红色文本样式
         ImGui::TextWrapped("%s", mqtt_server_state.error_message.c_str()); // 自动换行显示错误
+    } else if (mqtt_client.get_connection_state() == RoboGo::io::MqttClient::ConnectionState::Failed) { // 地址合法但连不上
+        ScopedStyle hint_style = MakeTextColorStyle(ImVec4(1.0f, 0.72f, 0.3f, 1.0f)); // 橙色提示
+        ImGui::TextUnformatted("连不上：本地模拟器用 127.0.0.1:3333");  // 最常见的错配原因，直接写在这里
     } else {   // 无解析错误
         ImGui::TextDisabled(" ");                                     // 无错误时用空格占位保持布局
     }   // 结束错误提示分支

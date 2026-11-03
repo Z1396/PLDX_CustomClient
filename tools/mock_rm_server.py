@@ -1454,7 +1454,7 @@ def main() -> int:
         pass
     parser = argparse.ArgumentParser(description="RoboGo 2027 本地假数据源（内置最小 MQTT broker）")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
-    parser.add_argument("--port", type=int, default=3333, help="监听端口，默认 3333（与客户端默认一致）")
+    parser.add_argument("--port", type=int, default=3333, help="监听端口，默认 3333（客户端请填 127.0.0.1:3333，或用 RoboGo.exe --dev 启动）")
     parser.add_argument("--robot-id", type=int, default=3, help="伪装的机器人编号，<100 红方、>=100 蓝方，默认 3")
     parser.add_argument("--selftest", action="store_true", help="只做 broker 自检，不进入模拟循环")
     parser.add_argument("--no-custom-byte", action="store_true",
