@@ -26,7 +26,8 @@ namespace RoboGo::video {
     // 功能：处理一个分片包：背压控制、解析包头、维护帧 ID 序列、入窗重组并输出完整帧。
     // 思路：先按队列水位丢弃陈旧分片；再解析「帧ID/分片ID/整帧长度」头；用归一化帧 ID 计算相对窗口偏移，
     //       处理 16 位帧 ID 回绕、过期丢弃、整体丢帧冲刷；最后把分片放入窗口，凑齐即拼接回调并滑窗。
-    void VideoShardsManager::handle_once() {
+    // 返回值：true 表示可继续处理；false 表示收到 wake() 的唤醒哨兵，调用方应退出循环。
+    bool VideoShardsManager::handle_once() {
         // 如果数据包过多导致阻塞，就丢弃旧的数据包
         if (packet_queue.size_approx() >= 512) { // 队列积压过多则触发背压丢弃
             std::size_t trimmed_count = 0; // 统计丢弃数量
@@ -40,18 +41,21 @@ namespace RoboGo::video {
                 SPDLOG_WARN("UDP 视频分片队列堆积，已丢弃旧 {} 个分片", trimmed_count); // 记录本批丢弃的分片数量
             } // 确有丢弃的告警分支结束
         } // 背压控制分支结束
-        // 获取一个数据包
+        // 获取一个数据包。
+        // 这里改成真正的阻塞等待（原来是 1µs 超时的轮询）：无数据时线程被内核挂起，不再空转，
+        // 实测可省下一个物理核（原来解码线程恒定 100% 占用，笔记本风扇会全程满转、后段降频）。
+        // 退出时由 wake() 投递一个 {nullptr, 0} 哨兵把线程叫醒，不会卡在 join 上。
         std::pair<uint8_t *, size_t> packet; // 出队暂存一个包
-        // 阻塞极短时间(1us)，既响应新数据又不过度占用 CPU
-        if (!packet_queue.wait_dequeue_timed(packet, std::chrono::microseconds(1))) {
-            return; // 超时无数据，返回等待下次
-        } // 取包超时分支结束
+        packet_queue.wait_dequeue(packet); // 阻塞直到有分片或收到唤醒哨兵
+        if (packet.first == nullptr) { // 哨兵：调用方要求退出
+            return false; // 通知循环结束
+        } // 结束哨兵判断
         auto [data, size] = packet; // 解包出指针与长度
         // 解析包头：每片前 8 字节依次为 帧ID(2)/分片ID(2)/整帧字节数(4)，不足 8 字节视为无效
         if (size <= 8) [[unlikely]] { // 不足包头长度则无效
             SPDLOG_WARN("收到无效视频分片 bytes={}", size); // 记录无效分片（包头不足 8 字节）
             delete[] data; // 释放无效包内存
-            return; // 丢弃无效包
+            return true; // 丢弃无效包，继续处理下一个
         } // 无效包分支结束
         uint16_t frame_id = ntohs(*reinterpret_cast<const uint16_t *>(data));       // 网络字节序转主机，帧 ID
         uint16_t shard_id = ntohs(*reinterpret_cast<const uint16_t *>(data + 2));   // 分片序号
@@ -92,7 +96,7 @@ namespace RoboGo::video {
                 SPDLOG_WARN("丢弃过期视频分片 frame_id={} shard_id={} current_frame_id={}",
                             fixed_frame_id, shard_id, current_frame_id); // 日志参数：当前基准帧 ID
                 delete[] data; // 释放过期分片
-                return; // 丢弃过期分片
+                return true; // 丢弃过期分片，继续处理下一个
             } // 过期分片丢弃分支结束
         } // 收到旧帧时的处理分支结束
 
@@ -181,7 +185,14 @@ namespace RoboGo::video {
             reset_frame_shards(cache_frames[cache_frame_size - 1]); // 清空末尾旧槽位
             current_frame_id += 1; // 窗口前进一帧
         } // 完整帧处理分支结束
+        return true; // 正常处理完一个分片
     } // handle_once 结束
+
+    // 功能：投递一个唤醒哨兵，让阻塞在 wait_dequeue 上的处理线程立即返回。
+    // 说明：moodycamel 的阻塞队列没有 abort 接口，用"空指针包"当哨兵是最简单可靠的做法。
+    void VideoShardsManager::wake() {
+        packet_queue.emplace(nullptr, 0); // 哨兵：handle_once 见到 first==nullptr 即返回 false
+    } // wake 结束
 
     // 功能：复位整个流的帧序列与缓存，用于初次启动或检测到流重置时。
     void VideoShardsManager::reset_stream_state() {

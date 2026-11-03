@@ -53,19 +53,27 @@ namespace RoboGo::video { // 进入视频模块命名空间
         // 为视频解码单独创建一个线程
         decode_thread = std::thread([this]() { // 启动独立解码线程
             SPDLOG_INFO("视频解码线程已启动"); // 记录线程启动
-            // 循环驱动分片重组与解码，直到被要求停止
+            // 循环驱动分片重组与解码，直到被要求停止；handle_once 内部阻塞等待分片，不再忙等
             while (is_running.load(std::memory_order_relaxed)) { // 运行标志为真则持续驱动
-                video_shards_manager.handle_once(); // 每轮处理一个分片包（重组/解码）
+                if (!video_shards_manager.handle_once()) { // 返回 false 表示收到唤醒哨兵
+                    break; // 退出循环（stop() 已经置位 is_running，这里只是加速）
+                } // 结束哨兵判断
             } // 运行标志循环结束
             SPDLOG_INFO("视频解码线程已退出"); // 记录线程退出
         }); // 解码线程 lambda 结束
     } // 构造函数结束
+
+    // 功能：析构时确保解码线程已回收（防止忘记调用 stop() 时 std::thread 析构直接 terminate）。
+    VideoStreamManager::~VideoStreamManager() {
+        stop(); // 幂等停止
+    } // 析构函数结束
 
     // 功能：停止视频流管线，回收线程资源。
     void VideoStreamManager::stop() { // 停止入口（可由外部主动调用）
         SPDLOG_INFO("收到视频流管理器停止请求"); // 记录停止请求
         video_stream_receiver.stop(); // 停止 UDP 接收
         is_running.store(false, std::memory_order_relaxed); // 通知解码线程退出循环
+        video_shards_manager.wake(); // 投递唤醒哨兵：解码线程可能正阻塞在 wait_dequeue 上
         if (decode_thread.joinable()) { // 线程可连接才需 join
             decode_thread.join(); // 等待解码线程结束，确保资源安全回收
         } // joinable 检查结束

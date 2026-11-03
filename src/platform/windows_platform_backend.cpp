@@ -96,7 +96,7 @@ struct WindowsVideoTexture {
     D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = {};  // 该纹理 SRV 的 GPU 句柄，交给 ImGui 采样绘制
     int width = 0;  // 纹理像素宽度，未上传时为 0
     int height = 0;  // 纹理像素高度，未上传时为 0
-    bool ready = false;                 // 该纹理是否已上传完成、可安全采样。
+    bool uploaded_once = false;         // 是否已经至少上传过一帧：决定复用前是否需要 PSR -> COPY_DEST 屏障
     bool descriptor_allocated = false;  // 对应的 SRV 描述符是否已从该后端堆中分配。
 };  // WindowsVideoTexture 结构体定义结束
 
@@ -106,6 +106,21 @@ struct WindowsDynamicTextureSet {
     int current_index = 0;  // 当前正在被显示/采样的一张。
     int next_index = 1;     // 下一次上传写入的一张（写完成后再切换 current）。
 };  // WindowsDynamicTextureSet 结构体定义结束
+
+// TextureUploadContext —— 视频帧上传用的常驻资源集合。
+// 为什么要常驻：原实现每帧都新建命令队列/分配器/命令列表/fence/event + 8MB 上传缓冲，
+// 1080p60 下每秒要创建销毁上百个 D3D12 对象、约 475MiB 的资源分配，既卡顿又容易触发驱动抖动。
+// 这里把它们做成一次性创建、按需扩容、循环复用，每帧只做 Map/拷贝/提交/等待。
+struct TextureUploadContext {
+    ID3D12CommandQueue *queue = nullptr;      // 专用拷贝队列（与渲染队列解耦，避免打乱主渲染节奏）
+    ID3D12CommandAllocator *allocator = nullptr;  // 命令分配器
+    ID3D12GraphicsCommandList *list = nullptr;    // 命令列表
+    ID3D12Fence *fence = nullptr;             // 上传完成围栏
+    HANDLE event = nullptr;                   // 围栏完成事件
+    ID3D12Resource *upload_buffer = nullptr;  // 常驻上传缓冲（按最大帧尺寸扩容）
+    UINT64 upload_capacity = 0;               // 上传缓冲当前容量（字节）
+    UINT64 fence_value = 0;                   // 围栏单调递增值
+};  // TextureUploadContext 结构体定义结束
 
 // WindowsPlatformBackend —— PlatformBackend 的 Windows 实现：Win32 窗口 + DirectX12，承载所有 DX12 资源管理。
 class WindowsPlatformBackend final : public RoboGo::platform::PlatformBackend {
@@ -231,6 +246,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         ReleaseDynamicTextureSet(udp_video_textures_, true);
         ReleaseDynamicTextureSet(custom_video_textures_, true);  // 释放自定义视频的双缓冲纹理并归还描述符
         ReleaseTexture(mini_map_texture_, true);  // 释放小地图静态纹理并归还其描述符
+        ReleaseTextureUploadContext();  // 释放常驻的上传队列/分配器/命令列表/fence/上传缓冲
 
         // 关闭 ImGui 的 DX12/Win32 后端并销毁 ImGui 上下文。
         ImGui_ImplDX12_Shutdown();
@@ -879,25 +895,227 @@ private:  // 以下为内部实现细节，不对外暴露
         mini_map_texture_.descriptor_allocated = true;  // 标记已分配
     }  // 结束 AllocateVideoTextureDescriptors 函数
 
+    // 功能：确保上传上下文（队列/分配器/命令列表/fence/事件/上传缓冲）已创建，且上传缓冲容量足够。
+    // 参数：required_size 本帧需要写入的字节数（行距已对齐）。
+    // 返回值：true 表示可以开始上传。
+    [[nodiscard]] bool EnsureTextureUploadContext(const UINT required_size) const {
+        TextureUploadContext &context = texture_upload_;  // 常驻上下文（mutable，const 方法里也能更新）
+        if (context.queue == nullptr) {  // 首次使用：把一次性对象都建好
+            D3D12_COMMAND_QUEUE_DESC queue_desc = {};  // 队列描述
+            queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;  // 直接队列（拷贝 + 屏障）
+            if (FAILED(device_->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&context.queue)))) {  // 创建专用拷贝队列
+                SPDLOG_ERROR("创建纹理上传队列失败");  // 记录失败
+                return false;  // 交给上层丢弃该帧
+            }  // 结束队列创建
+            if (FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context.allocator)))) {  // 创建分配器
+                SPDLOG_ERROR("创建纹理上传分配器失败");  // 记录失败
+                return false;  // 放弃
+            }  // 结束分配器创建
+            if (FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, context.allocator, nullptr,
+                                                  IID_PPV_ARGS(&context.list)))) {  // 创建命令列表
+                SPDLOG_ERROR("创建纹理上传命令列表失败");  // 记录失败
+                return false;  // 放弃
+            }  // 结束命令列表创建
+            context.list->Close();  // 新建的命令列表处于打开状态，必须先关闭才能 Reset
+            if (FAILED(device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&context.fence)))) {  // 创建围栏
+                SPDLOG_ERROR("创建纹理上传围栏失败");  // 记录失败
+                return false;  // 放弃
+            }  // 结束围栏创建
+            context.event = CreateEvent(nullptr, FALSE, FALSE, nullptr);  // 自动重置事件
+            if (context.event == nullptr) {  // 事件创建失败
+                SPDLOG_ERROR("创建纹理上传事件失败");  // 记录失败
+                return false;  // 放弃
+            }  // 结束事件创建
+        }  // 结束首次初始化
+
+        if (context.upload_capacity >= required_size) {  // 容量够用：直接复用
+            return true;  // 无需扩容
+        }  // 结束容量判断
+
+        if (context.upload_buffer != nullptr) {  // 容量不够：先释放旧缓冲
+            context.upload_buffer->Release();  // 释放旧上传缓冲
+            context.upload_buffer = nullptr;  // 置空
+            context.upload_capacity = 0;  // 清零容量
+        }  // 结束旧缓冲释放
+
+        D3D12_HEAP_PROPERTIES properties = {};  // 堆属性
+        properties.Type = D3D12_HEAP_TYPE_UPLOAD;  // 上传堆：CPU 可写、GPU 只读
+        D3D12_RESOURCE_DESC description = {};  // 资源描述
+        description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;  // 一维缓冲
+        description.Width = required_size;  // 总字节数
+        description.Height = 1;  // 缓冲高度固定 1
+        description.DepthOrArraySize = 1;  // 深度/数组为 1
+        description.MipLevels = 1;  // 单 Mip
+        description.Format = DXGI_FORMAT_UNKNOWN;  // 缓冲没有像素格式
+        description.SampleDesc.Count = 1;  // 缓冲必须为 1 采样
+        description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;  // 行主序
+        if (FAILED(device_->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &description,
+                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                    IID_PPV_ARGS(&context.upload_buffer)))) {  // 创建上传缓冲
+            SPDLOG_ERROR("创建纹理上传缓冲失败 bytes={}", required_size);  // 记录失败与请求大小
+            return false;  // 放弃
+        }  // 结束上传缓冲创建
+        context.upload_capacity = required_size;  // 记录新容量
+        return true;  // 扩容成功
+    }  // EnsureTextureUploadContext 结束
+
+    // 功能：按帧尺寸创建（或重建）目标纹理，并创建对应的 SRV。
+    // 说明：纹理只在尺寸变化时重建；尺寸不变时复用同一张，避免每帧 8MB 的显存分配。
+    [[nodiscard]] bool CreateDynamicTexture(WindowsVideoTexture &texture, const int width, const int height) const {
+        if (texture.texture != nullptr) {  // 已有旧纹理（尺寸变了）
+            texture.texture->Release();  // 释放旧资源
+            texture.texture = nullptr;  // 置空
+        }  // 结束旧纹理释放
+
+        D3D12_HEAP_PROPERTIES properties = {};  // 堆属性
+        properties.Type = D3D12_HEAP_TYPE_DEFAULT;  // 默认堆（显存）
+        D3D12_RESOURCE_DESC description = {};  // 资源描述
+        description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;  // 2D 纹理
+        description.Width = static_cast<UINT64>(width);  // 宽度
+        description.Height = static_cast<UINT>(height);  // 高度
+        description.DepthOrArraySize = 1;  // 单层
+        description.MipLevels = 1;  // 单 Mip
+        description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // RGBA8
+        description.SampleDesc.Count = 1;  // 单采样
+        description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;  // 未知布局
+        ID3D12Resource *created = nullptr;  // 新建的纹理
+        if (FAILED(device_->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &description,
+                                                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                    IID_PPV_ARGS(&created)))) {  // 初始态为拷贝目标
+            SPDLOG_ERROR("创建视频纹理失败 width={} height={}", width, height);  // 记录尺寸便于排查显存
+            return false;  // 放弃
+        }  // 结束纹理创建
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv_description = {};  // SRV 描述
+        srv_description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // 与纹理格式一致
+        srv_description.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;  // 2D 纹理视图
+        srv_description.Texture2D.MipLevels = 1;  // 单 Mip
+        srv_description.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;  // 默认通道映射
+        device_->CreateShaderResourceView(created, &srv_description, texture.cpu_handle);  // 在已分配的句柄上创建 SRV
+
+        texture.texture = created;  // 交给纹理结构持有
+        texture.width = width;  // 记录宽度
+        texture.height = height;  // 记录高度
+        texture.uploaded_once = false;  // 新纹理当前处于 COPY_DEST 状态
+        return true;  // 创建成功
+    }  // CreateDynamicTexture 结束
+
+    // 功能：把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
+    // 思路：尺寸校验 -> 必要时重建纹理 -> 确保上传上下文 -> 写映射内存 -> 录制「屏障 + 拷贝 + 屏障」-> 提交并等待完成。
+    [[nodiscard]] bool UploadFrameToTexture(WindowsVideoTexture &texture, const RoboGo::app::VideoFrame &frame) const {
+        if (frame.width <= 0 || frame.height <= 0) {  // 尺寸非法
+            return false;  // 丢弃
+        }  // 结束尺寸校验
+        const std::size_t row_bytes = static_cast<std::size_t>(frame.width) * 4u;  // 源数据每行字节数
+        if (frame.buffer.size() < row_bytes * static_cast<std::size_t>(frame.height)) {  // 缓冲不够一整帧
+            SPDLOG_ERROR("视频帧缓冲长度不足 expect={} actual={}", row_bytes * static_cast<std::size_t>(frame.height),
+                         frame.buffer.size());  // 记录期望与实际
+            return false;  // 丢弃，避免越界读
+        }  // 结束长度校验
+
+        if (texture.texture == nullptr || texture.width != frame.width || texture.height != frame.height) {  // 首次或尺寸变化
+            if (!CreateDynamicTexture(texture, frame.width, frame.height)) {  // 重建纹理（内部会释放旧的）
+                return false;  // 创建失败
+            }  // 结束纹理重建
+        }  // 结束重建判断
+
+        const UINT pitch = (static_cast<UINT>(frame.width) * 4u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u)
+                           & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);  // 行距按 256 字节对齐
+        const UINT upload_size = static_cast<UINT>(frame.height) * pitch;  // 本次需要写入的字节数
+        if (!EnsureTextureUploadContext(upload_size)) {  // 确保上下文与上传缓冲就绪
+            return false;  // 失败则丢弃本帧
+        }  // 结束上下文准备
+
+        TextureUploadContext &context = texture_upload_;  // 取常驻上下文
+        D3D12_RANGE read_range = {0, 0};  // 声明 CPU 不会读这段内存（走只写快路径）
+        void *mapped = nullptr;  // 映射后的 CPU 地址
+        if (FAILED(context.upload_buffer->Map(0, &read_range, &mapped))) {  // 映射上传缓冲
+            SPDLOG_ERROR("映射纹理上传缓冲失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束映射失败分支
+        auto *mapped_bytes = static_cast<uint8_t *>(mapped);  // 以字节指针使用
+        for (int y = 0; y < frame.height; ++y) {  // 逐行拷贝（目标按对齐行距前进，源按实际行宽前进）
+            memcpy(mapped_bytes + static_cast<std::size_t>(y) * pitch,
+                   frame.buffer.data() + static_cast<std::size_t>(y) * row_bytes,
+                   row_bytes);  // 拷贝一行像素
+        }  // 结束逐行拷贝
+        context.upload_buffer->Unmap(0, nullptr);  // 解除映射：nullptr 表示 CPU 可能写了整段
+
+        if (FAILED(context.allocator->Reset())) {  // 复位分配器
+            SPDLOG_ERROR("复位纹理上传分配器失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束分配器复位
+        if (FAILED(context.list->Reset(context.allocator, nullptr))) {  // 复位命令列表
+            SPDLOG_ERROR("复位纹理上传命令列表失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束命令列表复位
+
+        if (texture.uploaded_once) {  // 复用中的纹理当前处于"着色器可采样"状态
+            D3D12_RESOURCE_BARRIER to_copy_dest = {};  // 先转回拷贝目标
+            to_copy_dest.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;  // 状态转换屏障
+            to_copy_dest.Transition.pResource = texture.texture;  // 目标纹理
+            to_copy_dest.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;  // 全部子资源
+            to_copy_dest.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;  // 转换前：可采样
+            to_copy_dest.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;  // 转换后：拷贝目标
+            context.list->ResourceBarrier(1, &to_copy_dest);  // 提交屏障
+        }  // 结束复用屏障
+
+        D3D12_TEXTURE_COPY_LOCATION source_location = {};  // 拷贝源（上传缓冲）
+        source_location.pResource = context.upload_buffer;  // 源资源
+        source_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;  // 缓冲侧用放置足迹描述
+        source_location.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // 足迹格式与纹理一致
+        source_location.PlacedFootprint.Footprint.Width = static_cast<UINT>(frame.width);  // 足迹宽度
+        source_location.PlacedFootprint.Footprint.Height = static_cast<UINT>(frame.height);  // 足迹高度
+        source_location.PlacedFootprint.Footprint.Depth = 1;  // 深度 1
+        source_location.PlacedFootprint.Footprint.RowPitch = pitch;  // 行距必须与写入时一致
+
+        D3D12_TEXTURE_COPY_LOCATION destination_location = {};  // 拷贝目标（纹理子资源）
+        destination_location.pResource = texture.texture;  // 目标纹理
+        destination_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;  // 纹理侧用子资源索引
+        destination_location.SubresourceIndex = 0;  // 第 0 级 Mip
+
+        context.list->CopyTextureRegion(&destination_location, 0, 0, 0, &source_location, nullptr);  // 录制拷贝
+
+        D3D12_RESOURCE_BARRIER to_shader_resource = {};  // 拷贝完成后再转回可采样
+        to_shader_resource.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;  // 状态转换屏障
+        to_shader_resource.Transition.pResource = texture.texture;  // 目标纹理
+        to_shader_resource.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;  // 全部子资源
+        to_shader_resource.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;  // 转换前：拷贝目标
+        to_shader_resource.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;  // 转换后：可采样
+        context.list->ResourceBarrier(1, &to_shader_resource);  // 提交屏障
+
+        if (FAILED(context.list->Close())) {  // 关闭命令列表
+            SPDLOG_ERROR("关闭纹理上传命令列表失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束关闭失败分支
+
+        ID3D12CommandList *command_lists[] = {context.list};  // 提交时需要的接口数组
+        context.queue->ExecuteCommandLists(1, command_lists);  // 提交到专用拷贝队列
+        const UINT64 signal_value = ++context.fence_value;  // 本轮围栏值（单调递增）
+        if (FAILED(context.queue->Signal(context.fence, signal_value))) {  // 提交围栏信号
+            SPDLOG_ERROR("纹理上传围栏信号失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束信号提交
+        if (FAILED(context.fence->SetEventOnCompletion(signal_value, context.event))) {  // 绑定完成事件
+            SPDLOG_ERROR("纹理上传围栏事件绑定失败");  // 记录失败
+            return false;  // 丢弃
+        }  // 结束事件绑定
+        WaitForSingleObject(context.event, INFINITE);  // 等这一帧真正拷完（下一帧要复用同一块上传缓冲）
+        texture.uploaded_once = true;  // 标记纹理已进入"可采样"状态
+        return true;  // 上传成功
+    }  // UploadFrameToTexture 结束
+
     // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引。
-    // 思路：先释放旧纹理，上传新帧到 next 槽；上传成功后把 current 指向它、next 轮转，并将刚写入帧标记为非就绪。
+    // 思路：复用目标槽的纹理与共用的上传缓冲（只在尺寸变化时重建），上传成功后把 current 指向它、next 轮转。
     // 参数：texture_set —— 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
-    // 返回值：true 上传与轮换成功，false 纹理创建失败。
+    // 返回值：true 上传与轮换成功，false 纹理创建/上传失败。
     [[nodiscard]] bool UploadDynamicTexture(WindowsDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) const {
         WindowsVideoTexture &next_texture = texture_set.textures[texture_set.next_index];  // 取出下一张待写入的纹理槽
-        if (next_texture.texture != nullptr) {  // 该槽已有旧纹理则先释放
-            next_texture.texture->Release();  // 释放旧的 D3D12 纹理资源
-            next_texture.texture = nullptr;  // 置空，防止后续误用
-        }  // 结束旧纹理释放
-        if (!LoadTextureFromMemory(frame.buffer.data(), frame.width, frame.height, next_texture.cpu_handle, &next_texture.texture)) {  // 用本帧像素创建并上传新纹理
-            return false;  // 纹理创建/上传失败，返回失败
-        }  // 结束上传失败分支
-        next_texture.width = frame.width;  // 记录纹理宽度
-        next_texture.height = frame.height;  // 记录纹理高度
-        next_texture.ready = true;  // 标记该纹理已有有效帧
+        if (!UploadFrameToTexture(next_texture, frame)) {  // 复用纹理上传本帧
+            return false;  // 上传失败，保持显示上一帧
+        }  // 结束上传
         texture_set.current_index = texture_set.next_index;  // 把显示索引切到刚写好的这一张
         texture_set.next_index = (texture_set.next_index + 1) % 2;  // 下一张写入槽在 0/1 之间轮转
-        next_texture.ready = false;  // 刚写入的这帧尚未就绪（待切换）
         return true;  // 动态纹理上传与轮换成功
     }  // 结束 UploadDynamicTexture 函数
 
@@ -923,6 +1141,38 @@ private:  // 以下为内部实现细节，不对外暴露
 
     // 功能：释放动态纹理集合中的两张纹理。
     // 思路：遍历集合，按指定是否归还描述符的标记逐个释放。
+    // 功能：释放常驻的纹理上传上下文（退出时调用一次）。
+    // 说明：必须在所有上传都停止之后调用，否则会释放仍在被 GPU 读取的上传缓冲。
+    void ReleaseTextureUploadContext() {
+        TextureUploadContext &context = texture_upload_;  // 常驻上下文
+        if (context.list != nullptr) {  // 命令列表
+            context.list->Release();  // 释放
+            context.list = nullptr;  // 置空
+        }  // 结束命令列表释放
+        if (context.allocator != nullptr) {  // 命令分配器
+            context.allocator->Release();  // 释放
+            context.allocator = nullptr;  // 置空
+        }  // 结束分配器释放
+        if (context.queue != nullptr) {  // 拷贝队列
+            context.queue->Release();  // 释放
+            context.queue = nullptr;  // 置空
+        }  // 结束队列释放
+        if (context.fence != nullptr) {  // 围栏
+            context.fence->Release();  // 释放
+            context.fence = nullptr;  // 置空
+        }  // 结束围栏释放
+        if (context.event != nullptr) {  // 完成事件
+            CloseHandle(context.event);  // 关闭句柄
+            context.event = nullptr;  // 置空
+        }  // 结束事件关闭
+        if (context.upload_buffer != nullptr) {  // 上传缓冲
+            context.upload_buffer->Release();  // 释放
+            context.upload_buffer = nullptr;  // 置空
+        }  // 结束上传缓冲释放
+        context.upload_capacity = 0;  // 清零容量
+        context.fence_value = 0;  // 清零围栏值
+    }  // ReleaseTextureUploadContext 结束
+
     void ReleaseDynamicTextureSet(WindowsDynamicTextureSet &texture_set, const bool free_descriptor) {
         for (auto &texture: texture_set.textures) {  // 遍历双缓冲中的两张纹理
             ReleaseTexture(texture, free_descriptor);  // 逐张释放，是否归还描述符由参数决定
@@ -942,7 +1192,7 @@ private:  // 以下为内部实现细节，不对外暴露
         }  // 结束描述符归还
         texture.width = 0;  // 宽度归零，表示当前没有内容
         texture.height = 0;  // 高度归零
-        texture.ready = false;  // 标记不可用
+        texture.uploaded_once = false;  // 新纹理尚未上传过任何一帧
     }  // 结束 ReleaseTexture 函数
 
     // 功能：由视频纹理构建供 ImGui 使用的 TextureView（GPU 句柄 + 像素尺寸）。
@@ -1041,6 +1291,9 @@ private:  // 以下为内部实现细节，不对外暴露
     WindowsDynamicTextureSet udp_video_textures_;  // UDP 视频流的双缓冲纹理集合
     WindowsDynamicTextureSet custom_video_textures_;  // 自定义视频流的双缓冲纹理集合
     WindowsVideoTexture mini_map_texture_;  // 小地图静态纹理，内容变化不频繁
+    // 常驻的纹理上传上下文：命令队列/分配器/命令列表/fence/事件/上传缓冲只创建一次，之后逐帧复用。
+    // mutable 是因为上传发生在 const 成员函数里（UploadDynamicTexture 声明为 const）。
+    mutable TextureUploadContext texture_upload_;
     bool initialized_ = false;  // 后端是否已完成初始化，防止重复初始化或重复释放
     bool should_close_ = false;  // 是否已收到退出请求，决定主循环是否结束
     bool game_input_captured_ = false;  // 是否处于游戏输入捕获态(锁定并隐藏鼠标光标)

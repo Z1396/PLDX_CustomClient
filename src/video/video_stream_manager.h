@@ -26,6 +26,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
                                     boost::asio::ip::udp::endpoint endpoint, // 监听的 UDP 地址与端口
                                     const std::function<void(const AVFrame *frame)> &frame_callback); // 解出 AVFrame 后的回调
 
+        // 功能：析构时确保解码线程已回收（幂等调用 stop）。
+        ~VideoStreamManager();
+
         // 功能：停止接收、置停止标志并等待解码线程退出，完成资源回收。
         void stop(); // 幂等停止：先停收包，再通知线程退出并 join
     }; // 管理器类定义结束

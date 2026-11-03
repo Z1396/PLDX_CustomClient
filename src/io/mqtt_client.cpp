@@ -193,6 +193,9 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
     //       底层握手→connect→subscribe→循环 recv；任意阶段检测到参数变更或异常则关闭并重连。
     boost::asio::awaitable<void> MqttClient::run() {  // 由构造函数 co_spawn(detached) 启动，全程在 IO 线程执行
         auto executor = co_await boost::asio::this_coro::executor;  // 获取当前协程所绑定的 Asio 执行器，后续定时器与异步操作都需在同一执行器上运行
+        // "等待登录"只在状态变化时提示一次：这段循环每 100ms 跑一轮，原来每次都打一条 DEBUG，
+        // 赛前挂 30 分钟就是 1.8 万行同样的日志（SPDLOG_ACTIVE_LEVEL=TRACE 时真的会落盘）。
+        bool waiting_for_client_id_logged = false;
         // 外层循环：只要仍在运行就不断尝试连接、收消息、重连
         while (is_running.load(std::memory_order_relaxed)) {  // stop() 置 false 后，下一轮不再进入
             // 记录本轮 endpoint 修订号快照，用于后续“是否发生变化”的快速比对
@@ -241,11 +244,15 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                 if (client_id_cloned.empty()) {  // 没有 client_id 就无法 CONNECT
                     // 尚未配置 client_id，停在 Idle 稍后重试
                     connection_state.store(ConnectionState::Idle, std::memory_order_release);  // 对外为空闲
-                    SPDLOG_DEBUG("MQTT尚未设置客户端ID，等待后重试 peer={}", peer);  // DEBUG 级别：这是常见的等待状态
+                    if (!waiting_for_client_id_logged) {  // 只在进入等待态时提示一次，避免 10Hz 刷屏
+                        SPDLOG_INFO("MQTT 尚未设置客户端 ID，等待登录（本提示只出现一次）");  // INFO 级：现场知道"还没登录"就够了
+                        waiting_for_client_id_logged = true;  // 记住已提示
+                    }  // 结束首次提示
                     boost::asio::steady_timer timer(executor, std::chrono::milliseconds(100));  // 同样 100ms 轮询
                     co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // 让出 IO 线程；不抛异常
                     continue;  // 重新开始一轮
                 }  // if 结束
+                waiting_for_client_id_logged = false;  // 已经有 ID：下次再回到等待态时重新提示一次
                 if (connection_state.load(std::memory_order_acquire) != ConnectionState::Failed) {  // Failed 是对外暴露的"上次失败"提示，不要立刻覆盖
                     // 非失败态则标记为“连接中”
                     connection_state.store(ConnectionState::Connecting, std::memory_order_release);  // UI 显示"连接中"
