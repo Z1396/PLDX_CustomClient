@@ -1,6 +1,7 @@
 // application.cpp：应用程序核心——解析启动参数、搭建后台服务(MQTT / UDP 视频流 / 字节块解码线程)，驱动主渲染循环、视频纹理上传与键鼠上报。
 #include "application.h"  // 本编译单元的主头文件(声明 ParseLaunchOptions / RunApplication)
 
+#include "config.h"  // 应用级配置：MQTT 服务端地址的持久化读写
 #include "keyboard_mouse_state_manager.h"  // 键鼠状态采集与管理(供 update_keyboard_mouse_state 使用)
 #include "main_window.h"  // 主窗口/主界面绘制(ShowMainWindow)
 #include "video/custom_byte_block_video_decoder_worker.h"  // 自定义字节块解码 worker(后台线程)
@@ -20,31 +21,73 @@ using RoboGo::app::VideoFrame;      // 视频帧结构体，包含视频数据�
 
 constexpr bool kDefaultInvertUdpVideo = false; // UDP 视频是否默认做 180 度旋转
 
+// 功能：去掉字符串首尾的 ASCII 空白（命令行/配置文件输入都可能带空格）。
+std::string TrimAscii(std::string_view text) {
+    const auto is_space = [](char character) {  // 只认空格/制表/回车/换行，避免 locale 依赖
+        return character == ' ' || character == '\t' || character == '\r' || character == '\n';
+    };
+    std::size_t begin = 0;  // 左边界
+    std::size_t end = text.size();  // 右边界（开区间）
+    while (begin < end && is_space(text[begin])) {  // 跳过左侧空白
+        ++begin;  // 右移
+    }  // 结束左侧裁剪
+    while (end > begin && is_space(text[end - 1])) {  // 跳过右侧空白
+        --end;  // 左移
+    }  // 结束右侧裁剪
+    return std::string(text.substr(begin, end - begin));  // 返回裁剪后的副本
+}  // TrimAscii 结束
+
 // 功能：返回默认的 MQTT 服务器地址。
-// 思路：以 RoboSouls 本地 broker 为默认值，另保留正式比赛与自部署地址作为注释备用。
+// 思路：优先用上次成功登录后保存到用户配置里的地址；没有配置时用 2027 赛季的裁判系统地址。
+//       联调本地 mock 时，在登录面板把地址改成 127.0.0.1:3333 即可，登录成功后会覆盖配置。
 std::string DefaultMqttServer() {  // 返回 std::string 而非 string_view：调用方要存进 LaunchOptions 持有
-    return "tcp://127.0.0.1:3333";// RoboSouls 本地 broker（联调默认）
-    // return "tcp://192.168.12.1:3333";// 正式比赛裁判系统
-    // return "tcp://192.168.1.2:3333";// 自己部署的裁判系统
+    const std::string configured = RoboGo::app::LoadConfiguredMqttServer();  // 读取持久化配置（可能为空）
+    if (!configured.empty()) {  // 有历史配置
+        // 注意：本函数在日志系统初始化之前被调用，这里不能写日志（会落到 spdlog 默认 logger 上、且进不了日志文件）。
+        // 实际使用的地址由 RunApplication 的"解析启动参数"一行统一打印。
+        return "tcp://" + configured;  // 统一补上 tcp:// 前缀，交给后面的解析
+    }  // 结束历史配置分支
+    return "tcp://192.168.12.1:3333";  // 2027 赛季裁判系统固定地址（自定义终端 IP 为 192.168.12.2）
 }  // DefaultMqttServer 结束
 
 // 功能：从原始 MQTT 服务器字符串与视频端口字符串中解析出可用的网络端点。
-// 思路：先给出主机/端口默认值，若服务器地址以 "tcp://" 开头则剥离协议头并按 ':' 拆分
-//       主机与端口；最后将视频端口字符串转为整数。
+// 思路：兼容 "tcp://host:port" / "host:port" / "host"（端口缺省 3333）三种写法；
+//       原先只认带 tcp:// 的形式，写成 "192.168.12.1:3333" 会静默回落到 127.0.0.1，现场极难排查。
 // 参数 options：启动选项(读入 mqtt_server/video_port，写出 mqtt_host/mqtt_port/parsed_video_port)。
-void ParseNetworkEndpoints(LaunchOptions &options) {  // 就地写入 options，无返回值
-    options.mqtt_host = "127.0.0.1"; // 主机默认值(本地回环)
-    options.mqtt_port = "3333"; // 端口默认值
-    if (options.mqtt_server.starts_with("tcp://")) { // 仅处理 tcp 协议形式的地址
-        std::string address = options.mqtt_server.substr(6); // 剥离 "tcp://" 前缀
-        const size_t colon_pos = address.find(':'); // 查找主机与端口的分隔符
-        if (colon_pos != std::string::npos) {  // 找到 ':' 才继续拆分，否则保留默认值
-            options.mqtt_host = address.substr(0, colon_pos); // 取 ':' 之前为主机
-            options.mqtt_port = address.substr(colon_pos + 1); // 取 ':' 之后为端口
-        }  // if 结束
-    }  // if 结束(非 tcp:// 前缀则沿用默认端点)
-    //std::stoi表示将字符串转换为整数，将options.video_port转换为整数
-    options.parsed_video_port = std::stoi(options.video_port); // 视频端口字符串转整数
+void ParseNetworkEndpoints(LaunchOptions &options) {
+    options.mqtt_host = "192.168.12.1";  // 主机默认值（2027 裁判系统）
+    options.mqtt_port = "3333";  // 端口默认值
+    std::string address = TrimAscii(options.mqtt_server);  // 去掉首尾空白
+    if (address.starts_with("tcp://")) {  // 剥离可选的协议前缀
+        address = TrimAscii(address.substr(6));  // 去掉 "tcp://" 并再次裁剪
+    }  // 结束前缀剥离
+    if (address.empty()) {  // 地址为空（理论上不会，默认值非空）
+        // 保留默认端点；解析结果由 RunApplication 在日志初始化后统一打印，这里不写日志。
+    } else {  // 地址非空
+        const std::size_t colon_pos = address.rfind(':');  // 用最后一个冒号分隔端口（兼容 IPv6 的 [::1]:3333 写法）
+        if (colon_pos != std::string::npos) {  // 找到冒号才拆分
+            const std::string host_part = TrimAscii(address.substr(0, colon_pos));  // 冒号之前为主机
+            const std::string port_part = TrimAscii(address.substr(colon_pos + 1));  // 冒号之后为端口
+            if (!host_part.empty()) {  // 主机非空才采用
+                options.mqtt_host = host_part;  // 写入主机
+            }  // 结束主机非空判断
+            if (!port_part.empty()) {  // 端口非空才采用
+                options.mqtt_port = port_part;  // 写入端口
+            }  // 结束端口非空判断
+        } else {  // 没有冒号：整串视为主机，端口用默认值
+            options.mqtt_host = address;  // 只改主机
+        }  // 结束拆分分支
+    }  // 结束地址非空分支
+
+    // 视频端口：非法输入不再让程序抛异常退出，回落默认 3334。
+    try {  // std::stoi 在非法输入时会抛 invalid_argument/out_of_range
+        options.parsed_video_port = std::stoi(options.video_port);  // 视频端口字符串转整数
+    } catch (const std::exception &) {  // 非数字/溢出
+        options.parsed_video_port = 3334;  // 使用协议默认端口（解析结果稍后由启动日志打印）
+    }  // 结束异常处理
+    if (options.parsed_video_port <= 0 || options.parsed_video_port > 65535) {  // 端口越界
+        options.parsed_video_port = 3334;  // 使用协议默认端口
+    }  // 结束越界判断
 }  // ParseNetworkEndpoints 结束
 
 // AvFrameRgbaConverter —— 将 FFmpeg 解码得到的 AVFrame(YUV) 转换为 RGBA 像素缓冲，
@@ -356,9 +399,15 @@ namespace RoboGo::app {  // 进入应用层命名空间
 //       --mqtt_server 与 --video_port 两个参数覆盖默认值，最后解析网络端点。
 LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只读入参，返回按值构造的选项
     LaunchOptions options;  // 初始化选项结构体
-    options.mqtt_server = DefaultMqttServer(); // 默认 MQTT 服务器地址
+    options.mqtt_server = DefaultMqttServer(); // 默认 MQTT 服务器地址（配置优先，其次 192.168.12.1）
     options.video_port = "3334"; // 默认 UDP 视频端口
     options.invert_udp_video = kDefaultInvertUdpVideo; // 默认是否旋转
+    options.capture_mode = "mqtt"; // 默认只抓 MQTT（图传全量抓包每场约 1GB，见 logging.h 的档位说明）
+
+    // 抓包档位：环境变量先给一个默认值，命令行随后可覆盖（便于比赛现场临时切换）
+    if (const char *capture_env = std::getenv("ROBOGO_CAPTURE"); capture_env != nullptr && capture_env[0] != '\0') {
+        options.capture_mode = capture_env; // 读取环境变量档位
+    } // 结束环境变量判断
 
     // 遍历命令行参数，识别需要携带一个值的启动选项。
     for (size_t i = 0; i < args.size(); ++i) {  // 顺序扫描，遇到带值选项时额外 ++i 跳过其值
@@ -367,6 +416,9 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只
             ++i; // 跳过已消费的值
         } else if (args[i] == "--video_port" && i + 1 < args.size()) { // --video_port <port>
             options.video_port = args[i + 1]; // 取下一个参数作为端口
+            ++i; // 跳过已消费的值
+        } else if (args[i] == "--capture" && i + 1 < args.size()) { // --capture off|mqtt|all
+            options.capture_mode = args[i + 1]; // 取下一个参数作为抓包档位
             ++i; // 跳过已消费的值
         }  // if-else-if 结束(其它参数忽略)
     }  // for 结束
@@ -384,10 +436,11 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     const auto main_start = std::chrono::steady_clock::now(); // 记录启动时刻(用于统计耗时)
     SPDLOG_INFO("程序启动");  // 第一条日志，便于在日志里定位一次启动
     // 打印解析后的启动参数，便于排查配置问题。
-    SPDLOG_INFO("解析启动参数 mqtt_server={} video_port={} invert_udp_video={}",  // 原始参数
+    SPDLOG_INFO("解析启动参数 mqtt_server={} video_port={} invert_udp_video={} capture={}",  // 原始参数
                 options.mqtt_server,// MQTT 服务器地址
                 options.video_port,// UDP 视频端口
-                options.invert_udp_video);// 是否旋转 UDP 视频
+                options.invert_udp_video,// 是否旋转 UDP 视频
+                options.capture_mode);// 网络抓包档位（off/mqtt/all）
     SPDLOG_INFO("网络端点已解析 mqtt_host={} mqtt_port={} video_port={}",  // 解析后的端点
                 options.mqtt_host,// MQTT 服务器主机名
                 options.mqtt_port,// MQTT 服务器端口

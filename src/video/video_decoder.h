@@ -15,11 +15,16 @@ namespace RoboGo::video { // 进入视频模块命名空间
         AVFrame *decoded_frame = nullptr;                  // 复用的解码帧缓存，接收解码器输出
         std::function<void(const AVFrame *frame)> frame_callback; // 每解出一帧 AVFrame 时回调通知上层
         bool is_hardware_decoder_ = false; // 当前是否使用 Nvidia 硬解；发送失败时可回退软解
+        bool is_available_ = false; // 解码链路是否初始化成功；false 表示"图传不可用"但不影响其它界面
 
     public: // ---------- 公开接口 ----------
         // 功能：构造解码器，优先尝试 Nvidia 硬解(hevc_cuvid)，失败则回退到 CPU 软解(hevc)。
-        // 参数：frame_callback 为解出 AVFrame 后的回调；找不到任何 HEVC 解码器或解析器会直接终止进程。
+        // 参数：frame_callback 为解出 AVFrame 后的回调。
+        // 说明：找不到解码器/解析器时不再终止进程，而是降级为"无画面"（2027 规则要求图传中断时 UI 仍可用）。
         explicit VideoDecoder(const std::function<void(const AVFrame *frame)> &frame_callback); // 传入帧回调并完成解码器初始化
+
+        // 功能：查询解码链路是否可用（false 时 decode_frame 不会产生任何帧）。
+        [[nodiscard]] bool is_available() const { return is_available_; }
 
         // 功能：析构并释放所有 FFmpeg 资源（解析器、解码器上下文、包与帧缓存）。
         ~VideoDecoder(); // 逆序释放解析器、解码器上下文、包与帧缓存四类资源

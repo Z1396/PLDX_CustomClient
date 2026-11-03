@@ -41,12 +41,13 @@ struct TextureView {  // 每帧从平台后端取出一次的快照，供绘制�
 
 // 启动选项：汇总命令行解析出的运行参数与解析后的网络端点。
 struct LaunchOptions {  // 原始字符串参数与解析结果并存，便于日志打印时对照排查
-    std::string mqtt_server; // 原始 MQTT 服务器地址(形如 tcp://host:port)
+    std::string mqtt_server; // 原始 MQTT 服务器地址(形如 tcp://host:port；也接受不带前缀的 host:port)
     std::string video_port; // 原始 UDP 视频端口字符串
     std::string mqtt_host; // 解析出的 MQTT 主机地址
     std::string mqtt_port; // 解析出的 MQTT 端口字符串
     int parsed_video_port = 0; // 解析出的 UDP 视频端口(整数)
     bool invert_udp_video = false; // 是否将 UDP 视频做 180 度旋转
+    std::string capture_mode = "mqtt"; // 网络抓包档位(off/mqtt/all)，默认只抓 MQTT
 };  // LaunchOptions 定义结束
 
 }// namespace RoboGo::app  // 应用层命名空间结束

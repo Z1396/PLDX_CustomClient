@@ -29,7 +29,9 @@ constexpr std::size_t kNetworkCaptureQueueSize = 8192;  // 抓包无锁队列容
 moodycamel::BlockingReaderWriterQueue<NetworkCaptureRecord> g_network_capture_queue{kNetworkCaptureQueueSize};  // 采集->写的无锁队列
 std::size_t g_records_since_flush = 0;  // 距上次 flush 已写入的记录数
 std::atomic<bool> g_network_stop_requested = false;  // 抓包线程停止请求
+std::atomic<CaptureMode> g_capture_mode{CaptureMode::MqttOnly};  // 当前抓包档位（跨线程读，用原子）
 bool g_is_initialized = false;  // 初始化完成标志
+std::atomic<bool> g_capture_enabled{false};  // 本次运行是否真的在抓包（文件打开成功且档位非 Off）
 
 // 抓包文件头魔数（"RBNCAP1\n"），用于识别文件类型与版本
 constexpr std::array<char, 8> kCaptureMagic = {'R', 'B', 'N', 'C', 'A', 'P', '1', '\n'};  // 8 字节定长文件签名
@@ -302,10 +304,10 @@ void network_capture_loop() {  // 该函数运行在独立线程中
 
 // 功能：初始化日志与抓包子系统（仅执行一次）。
 // 思路：解析根目录与生成会话 ID，建立会话目录；保存当前 proto 定义便于旧日志解析；配置 spdlog 异步双 sink；
-//       打开抓包文件并写入文件头（魔数/版本/标志）；启动抓包后台线程。
-void initialize(std::string_view application_name, const bool invert_udp_video) {  // 进程启动时调用
+//       按抓包档位决定是否打开抓包文件（Off 不创建文件，失败只告警不抛异常）；启动抓包后台线程。
+void initialize(std::string_view application_name, const bool invert_udp_video, const CaptureMode capture_mode) {  // 进程启动时调用
     //std::call_once表示调用一次，后续调用不会执行
-    std::call_once(g_initialize_once, [application_name, invert_udp_video]() {  // 用 once_flag 保证多线程下也只执行一次
+    std::call_once(g_initialize_once, [application_name, invert_udp_video, capture_mode]() {  // 用 once_flag 保证多线程下也只执行一次
         // 解析日志根目录
         // 日志根目录：应用安装目录下的 log 子目录
         // 会话 ID：当前时间戳（毫秒级）
@@ -373,22 +375,35 @@ void initialize(std::string_view application_name, const bool invert_udp_video) 
         app_logger->flush_on(spdlog::level::info);    // 遇到 info 及以上立即 flush
         spdlog::set_default_logger(app_logger);       // 设置为默认 logger，后续未指定 logger 的日志会使用该 logger
 
-        // 打开二进制抓包文件（截断），失败则抛异常
-        g_network_capture_stream.open(g_network_capture_path, std::ios::binary | std::ios::trunc);  // 二进制 + 截断
-        if (!g_network_capture_stream.is_open()) {  // 打开失败说明目录/权限有问题
-            throw std::runtime_error("无法打开网络抓包文件");  // 直接抛异常，避免"看似启用其实没抓包"
-        }  // 结束打开失败分支
-        // 写入文件头：魔数 + 格式版本 + 标志字
-        g_network_capture_stream.write(kCaptureMagic.data(), static_cast<std::streamsize>(kCaptureMagic.size()));  // 8 字节文件签名
-        write_little_endian<std::uint32_t>(g_network_capture_stream, kCaptureVersion);  // 写入抓包文件格式版本号(uint32 小端)
-        const std::uint32_t capture_flags = BuildNetworkCaptureFlags(invert_udp_video);  // 由开关构造标志字
-        write_little_endian<std::uint32_t>(g_network_capture_stream, capture_flags);  // 写入抓包标志字(uint32 小端)
-        g_network_capture_stream.flush();  // 立即刷盘，保证文件头先落地
+        // ---------------- 网络抓包：按档位决定是否落盘 ----------------
+        // 档位为 Off 时连文件都不创建；文件打不开也只告警、不再抛异常
+        //（原实现会 throw → 磁盘满/无写权限时客户端直接起不来，这是能毁掉一场比赛的故障模式）。
+        g_capture_mode.store(capture_mode, std::memory_order_release);  // 记录本次档位，供 log_network_payload 过滤
+        g_capture_enabled.store(false, std::memory_order_release);  // 先假定不抓包，成功打开文件后再置 true
+        if (capture_mode == CaptureMode::Off) {  // 完全关闭抓包
+            SPDLOG_INFO("网络抓包已关闭（档位=off），本次运行不会生成 network_capture.bin");  // 明确告知，避免误以为抓包坏了
+        } else {  // 需要抓包
+            g_network_capture_stream.open(g_network_capture_path, std::ios::binary | std::ios::trunc);  // 二进制 + 截断
+            if (!g_network_capture_stream.is_open()) {  // 打开失败说明目录/权限/磁盘有问题
+                SPDLOG_WARN("无法打开网络抓包文件，本次运行已自动关闭抓包 path={}（日志与界面不受影响）",
+                            g_network_capture_path.string());  // 只告警：绝不能因为抓包失败让客户端起不来
+                g_capture_mode.store(CaptureMode::Off, std::memory_order_release);  // 降级为不抓包
+            } else {  // 打开成功
+                // 写入文件头：魔数 + 格式版本 + 标志字
+                g_network_capture_stream.write(kCaptureMagic.data(), static_cast<std::streamsize>(kCaptureMagic.size()));  // 8 字节文件签名
+                write_little_endian<std::uint32_t>(g_network_capture_stream, kCaptureVersion);  // 写入抓包文件格式版本号(uint32 小端)
+                const std::uint32_t capture_flags = BuildNetworkCaptureFlags(invert_udp_video);  // 由开关构造标志字
+                write_little_endian<std::uint32_t>(g_network_capture_stream, capture_flags);  // 写入抓包标志字(uint32 小端)
+                g_network_capture_stream.flush();  // 立即刷盘，保证文件头先落地
 
-        // 复位状态并启动抓包线程
-        g_network_stop_requested.store(false, std::memory_order_release);// 重置抓包线标志
-        g_records_since_flush = 0;          // 重置抓包记录数
-        g_network_capture_thread = std::thread(network_capture_loop);// 启动抓包线程
+                // 复位状态并启动抓包线程
+                g_network_stop_requested.store(false, std::memory_order_release);  // 重置抓包线标志
+                g_records_since_flush = 0;  // 重置抓包记录数
+                g_network_capture_thread = std::thread(network_capture_loop);  // 启动抓包线程
+                g_capture_enabled.store(true, std::memory_order_release);  // 标记本次运行真的在抓包
+            }  // 结束打开成功分支
+        }  // 结束档位分支
+
         g_is_initialized = true;            /// 标志已初始化
 
         SPDLOG_INFO("日志系统已初始化 application={} session={} log_root={} log_dir={}",  // 输出关键路径，便于运维定位
@@ -397,12 +412,36 @@ void initialize(std::string_view application_name, const bool invert_udp_video) 
                     g_log_root_directory.string(),  // 根目录
                     g_log_directory.string());  // 本次会话目录
         SPDLOG_INFO("应用日志已切换为异步模式 thread_count=1 queue_size={}", kSpdlogQueueSize);  // 提示异步参数
-        SPDLOG_INFO("原始网络抓包已启用 path={} format=binary-v2 flags={} invert_udp_video={}",  // 抓包启用信息
-                    g_network_capture_path.string(),  // 抓包文件路径
-                    capture_flags,  // 标志字数值
-                    invert_udp_video);  // 视频翻转开关
+        if (g_capture_enabled.load(std::memory_order_acquire)) {  // 抓包真正启用时才打这条
+            SPDLOG_INFO("原始网络抓包已启用 path={} format=binary-v2 mode={} flags={} invert_udp_video={}",  // 抓包启用信息
+                        g_network_capture_path.string(),  // 抓包文件路径
+                        capture_mode == CaptureMode::All ? "all" : "mqtt",  // 档位：全量 / 仅 MQTT
+                        BuildNetworkCaptureFlags(invert_udp_video),  // 标志字数值
+                        invert_udp_video);  // 视频翻转开关
+        }  // 结束抓包启用日志
     });  // call_once 的 lambda 结束
 }  // initialize 结束
+
+// 功能：把字符串解析成抓包档位（大小写不敏感）。
+CaptureMode ParseCaptureMode(std::string_view text) {  // 供命令行与环境变量解析使用
+    std::string normalized(text);  // 复制一份便于转小写
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),  // 逐字符转小写
+                   [](unsigned char character) {  // 只处理 ASCII 字母，避免依赖 <cctype> 与 locale
+                       return (character >= 'A' && character <= 'Z') ? static_cast<char>(character - 'A' + 'a') : static_cast<char>(character);
+                   });
+    if (normalized == "off" || normalized == "none" || normalized == "0") {  // 关闭
+        return CaptureMode::Off;  // 完全不抓
+    }  // 结束关闭档位
+    if (normalized == "all" || normalized == "full") {  // 全量（含视频）
+        return CaptureMode::All;  // 全量抓包
+    }  // 结束全量档位
+    return CaptureMode::MqttOnly;  // 其余一律按默认档位处理
+}  // ParseCaptureMode 结束
+
+// 功能：查询当前生效的抓包档位。
+CaptureMode current_capture_mode() {
+    return g_capture_mode.load(std::memory_order_acquire);  // 原子读，任意线程可调用
+}  // current_capture_mode 结束
 
 // 功能：关闭日志系统。
 // 思路：未初始化直接返回；置停止标志并 join 抓包线程（其会落盘关文件），随后关闭 spdlog 并复位标志。
@@ -462,9 +501,18 @@ void log_network_payload(std::string_view transport,  // 传输类型字符串
                          std::string_view channel,  // 通道名
                          std::span<const std::uint8_t> payload,  // 原始字节
                          std::string_view peer) {  // 对端地址
-    if (!g_is_initialized || g_network_stop_requested.load(std::memory_order_acquire)) {  // 未就绪或正在关闭则跳过
+    if (!g_is_initialized || !g_capture_enabled.load(std::memory_order_acquire) || g_network_stop_requested.load(std::memory_order_acquire)) {  // 未就绪/未启用/正在关闭则跳过
         return;  // 直接返回，避免向已关闭的文件写入
     }  // 结束可用性判断
+
+    // 档位过滤：默认只抓 MQTT，图传 UDP 分片不落盘（每场可省下约 1GB 写入）。
+    const CaptureMode mode = g_capture_mode.load(std::memory_order_acquire);  // 读一次档位，避免重复原子读
+    if (mode == CaptureMode::Off) {  // 抓包已关闭（含"打开文件失败后自动降级"）
+        return;  // 直接丢弃
+    }  // 结束关闭档位
+    if (mode == CaptureMode::MqttOnly && transport == "udp-video") {  // 只抓 MQTT 时跳过图传分片
+        return;  // 直接丢弃
+    }  // 结束档位过滤
 
     NetworkCaptureRecord record;  // 构造一条待入队记录
     const auto timestamp = std::chrono::system_clock::now();  // 取当前壁钟时刻

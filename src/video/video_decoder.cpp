@@ -6,7 +6,10 @@ namespace RoboGo::video { // 进入视频模块命名空间
 
     // 功能：构造解码器，按优先级选择 HEVC 解码器并初始化解析器与缓存。
     // 思路：先尝试 Nvidia 硬件解码(hevc_cuvid)，失败再回退 CPU 软解(hevc)；
-    //       启用低延迟/快速解码标志，随后初始化解析器、数据包与帧缓存，任一关键步骤失败即终止进程。
+    //       启用低延迟/快速解码标志，随后初始化解析器、数据包与帧缓存。
+    //       任一关键步骤失败时【只降级、不终止进程】：把 is_available_ 置 false 并记录 CRITICAL，
+    //       后续 decode_frame 会直接返回，界面表现为"无画面"，但小地图/血量/自定义 UI 仍可正常使用
+    //       —— 这是 2027 规则明确要求的行为（图传断开时 UI 仍须可用），也避免现场因缺解码器直接闪退。
     VideoDecoder::VideoDecoder(const std::function<void(const AVFrame *frame)> &frame_callback) // 构造函数：接收出帧回调
         : frame_callback(frame_callback) { // 保存每解出一帧时的回调
         // 查找HEVC解码器
@@ -14,18 +17,15 @@ namespace RoboGo::video { // 进入视频模块命名空间
                 avcodec_find_decoder_by_name("hevc_cuvid"), // Nvidia 硬件加速（cuvid，走 GPU 解码）
                 avcodec_find_decoder_by_name("hevc"),      // CPU 软解码（libavcodec 内置 HEVC 解码器）
         }; // 候选列表结束
-        // 确保两个候选解码器都能被找到（开发期断言，便于及时发现环境缺失）
-        assert(codecs[0] != nullptr); // 断言硬解解码器注册存在
-        assert(codecs[1] != nullptr); // 断言软解解码器注册存在
-        const AVCodec *codec = nullptr; // 当前选中的解码器指针（初始为空）
-        // 依次尝试硬解、软解，命中可用的解码器即停止
-        for (const auto &item: codecs) { // 依次尝试硬解、软解候选
-            codec = item; // 先假设该候选可用
+        // 依次尝试硬解、软解，命中可用的解码器即停止；某个候选在当前 FFmpeg 构建里不存在时直接跳过
+        for (const AVCodec *candidate: codecs) { // 依次尝试硬解、软解候选
+            if (candidate == nullptr) { // 该候选未编译进当前 FFmpeg 构建
+                continue; // 直接跳过（原实现用 assert，Debug 下会直接 abort，Release 下会把空指针传进 avcodec_open2）
+            } // 结束候选空指针判断
 
             // 创建解码器上下文
-            av_codec_context = avcodec_alloc_context3(codec); // 为该解码器创建上下文
+            av_codec_context = avcodec_alloc_context3(candidate); // 为该解码器创建上下文
             if (!av_codec_context) { // 分配失败
-                codec = nullptr; // 放弃该候选
                 continue; // 尝试下一个候选
             } // 上下文分配失败分支结束
 
@@ -34,44 +34,45 @@ namespace RoboGo::video { // 进入视频模块命名空间
             av_codec_context->flags2 |= AV_CODEC_FLAG2_FAST;    // 快速解码，牺牲少量质量换取速度
 
             // 尝试打开解码器，失败则释放上下文并继续尝试下一个候选
-            if (avcodec_open2(av_codec_context, codec, nullptr) < 0) { // 尝试打开解码器
-                SPDLOG_WARN("打开HEVC解码器失败 codec={}", codec->name); // 记录该候选打开失败
+            if (avcodec_open2(av_codec_context, candidate, nullptr) < 0) { // 尝试打开解码器
+                SPDLOG_WARN("打开HEVC解码器失败 codec={}", candidate->name); // 记录该候选打开失败
                 avcodec_free_context(&av_codec_context); // 释放上下文
-                codec = nullptr; // 标记该候选无效
                 av_codec_context = nullptr; // 复位上下文指针
                 continue; // 尝试下一个候选
             } // 打开失败清理分支结束
 
-            is_hardware_decoder_ = (std::string_view(codec->name) == "hevc_cuvid"); // 记录是否为硬解
-            SPDLOG_INFO("HEVC解码器已启用 codec={}", codec->name); // 记录最终生效的解码器名称
+            is_hardware_decoder_ = (std::string_view(candidate->name) == "hevc_cuvid"); // 记录是否为硬解
+            SPDLOG_INFO("HEVC解码器已启用 codec={}", candidate->name); // 记录最终生效的解码器名称
             break; // 打开成功，跳出候选循环
         } // 候选遍历结束
-        if (codec == nullptr) { // 两个候选都不可用
-            SPDLOG_CRITICAL("Failed to find HEVC decoder"); // 严重错误：无解码器可用
-            std::terminate(); // 无解码器可继续，终止进程
+        if (av_codec_context == nullptr) { // 两个候选都不可用（FFmpeg 构建里没有 HEVC 解码器）
+            SPDLOG_CRITICAL("未找到可用的HEVC解码器，图传将不可用（其余界面功能不受影响）"); // 严重错误，但不再终止进程
+            return; // 直接返回：is_available_ 保持 false，decode_frame 会全部丢弃
         } // 无可用解码器的兜底检查结束
 
         // 创建解析器
         av_parser_context = av_parser_init(AV_CODEC_ID_HEVC); // 创建 HEVC 码流解析器
         if (!av_parser_context) { // 解析器创建失败
-            SPDLOG_CRITICAL("Failed to find HEVC parser"); // 严重错误：无解析器可用
-            std::terminate(); // 无解析器，终止进程
+            SPDLOG_CRITICAL("未找到HEVC解析器，图传将不可用（其余界面功能不受影响）"); // 严重错误，但不终止进程
+            return; // 降级：视为解码器不可用
         } // 解析器失败检查结束
-        SPDLOG_INFO("HEVC解析器已初始化"); // 记录解析器初始化成功
 
         // 缓存数据包
         packet = av_packet_alloc(); // 分配可复用的 AVPacket
         if (!packet) { // 分配失败
-            SPDLOG_ERROR("分配AVPacket失败"); // 记录内存分配失败
-            std::terminate(); // 致命错误，终止进程
+            SPDLOG_CRITICAL("分配AVPacket失败，图传将不可用"); // 记录内存分配失败
+            return; // 降级：视为解码器不可用
         } // 包分配失败检查结束
 
         // 缓存视频帧
         decoded_frame = av_frame_alloc(); // 分配可复用的 AVFrame
         if (!decoded_frame) { // 分配失败
-            SPDLOG_ERROR("分配AVFrame失败"); // 记录内存分配失败
-            std::terminate(); // 致命错误，终止进程
+            SPDLOG_CRITICAL("分配AVFrame失败，图传将不可用"); // 记录内存分配失败
+            return; // 降级：视为解码器不可用
         } // 帧分配失败检查结束
+
+        is_available_ = true; // 全链路初始化成功
+        SPDLOG_INFO("HEVC解析器已初始化"); // 记录解析器初始化成功
     } // 构造函数结束
 
     // 功能：析构函数，按资源创建的逆序释放 FFmpeg 所有相关对象。
@@ -158,6 +159,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
     // 思路：用 av_parser_parse2 按字节流逐步切出完整包，每切出一包就 send 给解码器，
     //       再循环 receive 把所有已就绪的帧取出回调，直到缓冲区空(EAGAIN)或出错。
     void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) { // const 成员：不修改对象可见状态
+        if (!is_available_) { // 初始化就失败了（无解码器/无解析器）：静默丢弃，避免每帧刷一条错误日志
+            return; // 直接返回
+        } // 结束不可用判断
         if (!av_codec_context || !av_parser_context) { // 解码器或解析器未就绪
             SPDLOG_ERROR("视频解码器未完成初始化，无法解码 frame_bytes={}", frame.size()); // 记录未初始化
             return; // 直接返回，不解码

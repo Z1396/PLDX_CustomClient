@@ -133,7 +133,8 @@ int RunMain(const std::vector<std::string> &args) {  // args 为已转码的命�
 
     const RoboGo::app::LaunchOptions options = RoboGo::app::ParseLaunchOptions(args); // 解析命令行参数为结构化的启动选项
 
-    RoboGo::logging::initialize(platform_backend->application_name(), options.invert_udp_video); // 初始化 spdlog 日志系统，传入应用名与视频翻转开关
+    RoboGo::logging::initialize(platform_backend->application_name(), options.invert_udp_video,
+                                RoboGo::logging::ParseCaptureMode(options.capture_mode)); // 初始化 spdlog 日志系统，并按档位决定是否抓包
     
     const int result = RoboGo::app::RunApplication(*platform_backend, options); // 进入应用主循环，返回进程退出码
     

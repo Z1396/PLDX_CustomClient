@@ -5,9 +5,26 @@
 
 namespace RoboGo::logging {  // 进入日志命名空间
 
-// 功能：初始化日志系统（spdlog 异步 + 控制台/文件双 sink）并启用原始网络抓包。
-// 参数：application_name 应用名（写入日志）；invert_udp_video 是否在抓包标志中记录“翻转 UDP 视频”选项。
-void initialize(std::string_view application_name, bool invert_udp_video);  // 声明初始化函数：进程启动时调用一次，内部用 call_once 保证幂等
+// 网络抓包档位：决定哪些流量真正落盘。
+// 背景：图传是 60fps 的 HEVC，全量抓包每场要写约 1GB，既拖慢磁盘也容易把比赛本写满；
+//       而复盘绝大多数问题只需要 MQTT 报文，所以默认只抓 MQTT。
+enum class CaptureMode {
+    Off,       // 完全关闭（连抓包文件都不创建）
+    MqttOnly,  // 只抓 MQTT 上下行（默认）
+    All,       // 全量：MQTT + UDP 图传原始分片
+};
+
+// 功能：把命令行/环境变量里的字符串解析成抓包档位。
+// 参数：取值 "off"/"mqtt"/"all"（大小写不敏感），无法识别时回退 MqttOnly。
+CaptureMode ParseCaptureMode(std::string_view text);
+
+// 功能：查询当前生效的抓包档位（供日志与界面显示）。
+CaptureMode current_capture_mode();
+
+// 功能：初始化日志系统（spdlog 异步 + 控制台/文件双 sink）并按档位启用原始网络抓包。
+// 参数：application_name 应用名（写入日志）；invert_udp_video 是否在抓包标志中记录“翻转 UDP 视频”选项；
+//       capture_mode 抓包档位（默认只抓 MQTT）。
+void initialize(std::string_view application_name, bool invert_udp_video, CaptureMode capture_mode = CaptureMode::MqttOnly);  // 声明初始化函数：进程启动时调用一次，内部用 call_once 保证幂等
 
 // 功能：关闭日志系统：停止抓包线程、等待其退出并关闭 spdlog。
 void shutdown();  // 声明关闭函数：抓包线程落盘并关闭文件后，再关闭 spdlog 全局资源

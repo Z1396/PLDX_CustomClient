@@ -1,4 +1,5 @@
 #include "start_panel.h"
+#include "app/config.h"   // 应用级配置：登录成功后把 MQTT 地址持久化，下次启动免手输
 #include "keyboard_mouse_state_manager.h"   // 标记模式开关（is_marker_mode/enter_marker_mode 等）的声明
 #include "logging/logging.h"   // spdlog 日志宏（SPDLOG_INFO/DEBUG/WARN/ERROR）
 #include "panel_layout.h"   // 面板布局与样式工具（ScopedStyle、ShowPanelRow、ButtonStyle 等）
@@ -56,19 +57,18 @@ constexpr uint32_t kAmmoExchangeBuffType = 6;
 constexpr auto kPerformanceSelectionRemoteSyncIgnoreDuration = std::chrono::seconds(5);
 
 // 功能：通用的 protobuf 控制消息发布器。
-// 思路：序列化消息后通过 MQTT 发布；可选在发布后调用 enter_game_mode() 进入比赛；序列化失败记错误日志。
+// 思路：序列化消息后通过 MQTT 发布；序列化失败记错误日志。
+// 注意：这里**不再**顺手调用 enter_game_mode()。原实现让"点任意指令按钮"都等于进入比赛模式，
+//       后果是开局面板被准星 HUD 取代、鼠标被平台层捕获，操作手会突然发现"界面没了、鼠标也没了"，
+//       而且会在准备阶段就开始向机器人发键鼠包。进入比赛只保留显式的"进入比赛"按钮。
 template<typename Message>
-void PublishProto(RoboGo::io::MqttClient &mqtt_client, const char *topic, const Message &message, bool enter_game_mode_after_send = false) {   // 模板参数 Message 为任意 protobuf 消息类型（CommonCommand/DartCommand 等）
+void PublishProto(RoboGo::io::MqttClient &mqtt_client, const char *topic, const Message &message) {   // 模板参数 Message 为任意 protobuf 消息类型（CommonCommand/DartCommand 等）
     std::string serialized;                                          // 存放序列化后的字节串
     if (message.SerializeToString(&serialized)) {                     // 尝试把 protobuf 消息序列化为字节串
-        SPDLOG_INFO("发布控制消息 topic={} bytes={} enter_game_mode_after_send={}", // 记录发布摘要便于排查
+        SPDLOG_INFO("发布控制消息 topic={} bytes={}", // 记录发布摘要便于排查
                     topic,   // 日志参数：MQTT 话题名
-                    serialized.size(),   // 日志参数：序列化后的字节数
-                    enter_game_mode_after_send);   // 日志参数：发布后是否顺带进入比赛
+                    serialized.size());   // 日志参数：序列化后的字节数
         mqtt_client.publish(topic, serialized);                      // 通过 MQTT 发布序列化后的消息
-        if (enter_game_mode_after_send) {                            // 若要求在发布后进入比赛
-            enter_game_mode();                                       // 切换为比赛模式
-        }   // 结束进入比赛分支
     } else {   // 序列化失败：不发布
         SPDLOG_ERROR("控制消息序列化失败 topic={}", topic);          // 序列化失败则记录错误
     }   // 结束序列化结果判断
@@ -611,7 +611,7 @@ void SendCommonCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t cmd_type, u
     CommonCommand common_command;                                     // 构造通用指令消息
     common_command.set_cmd_type(cmd_type);                            // 填入指令类型（区分回血/复活/弹药等）
     common_command.set_param(param);                                  // 填入附带参数（如发弹量）
-    PublishProto(mqtt_client, "CommonCommand", common_command, true);  // 发布到 "CommonCommand" 并进入比赛
+    PublishProto(mqtt_client, "CommonCommand", common_command);  // 发布到 "CommonCommand"（不再顺带进入比赛模式）
 }   // 结束 SendCommonCommand
 
 // 功能：发送哨兵控制指令（2027：1补弹/3远程补弹/4远程回血/5确认复活/6花金币复活/7-12切换姿态）。
@@ -619,17 +619,17 @@ void SendCommonCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t cmd_type, u
 void SendSentryCtrlCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t command_id) {
     SentryCtrlCommand sentry_ctrl_command;                            // 构造哨兵控制指令
     sentry_ctrl_command.set_command_id(command_id);                   // 填入指令编号
-    PublishProto(mqtt_client, "SentryCtrlCommand", sentry_ctrl_command, true); // 发布并进入比赛
+    PublishProto(mqtt_client, "SentryCtrlCommand", sentry_ctrl_command); // 发布哨兵控制指令
 }   // 结束 SendSentryCtrlCommand
 
 // 功能：发送飞镖指令（目标、闸门开关、是否确认发射）。
-// 思路：填充字段后发布到 "DartCommand" 话题，确认发射时附带进入比赛标记。
-void SendDartCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t target_id, bool open, bool launch_confirm, bool enter_game_mode_after_send = false) {
+// 思路：填充字段后发布到 "DartCommand" 话题。飞镖本身不需要切到比赛模式（操作手可能还在开局面板）。
+void SendDartCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t target_id, bool open, bool launch_confirm) {
     DartCommand dart_command;                                         // 构造飞镖指令消息
     dart_command.set_target_id(target_id);                           // 目标编号
     dart_command.set_open(open);                                     // 闸门开关意图
     dart_command.set_launch_confirm(launch_confirm);                 // 是否确认发射
-    PublishProto(mqtt_client, "DartCommand", dart_command, enter_game_mode_after_send); // 发布（确认发射时进入比赛）
+    PublishProto(mqtt_client, "DartCommand", dart_command);          // 发布飞镖指令
 }   // 结束 SendDartCommand
 
 // 功能：发送装配指令（difficulty 难度，operation 操作：0 开始兑换 / 1 确认装配 / 2 取消装配）。
@@ -638,7 +638,7 @@ void SendAssemblyCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t difficult
     AssemblyCommand assembly_command;                                 // 构造装配指令消息
     assembly_command.set_difficulty(difficulty);                      // 装配难度等级
     assembly_command.set_operation(operation);                        // 操作：0 开始兑换 / 1 确认装配 / 2 取消装配（2027 协议 2.2.21）
-    PublishProto(mqtt_client, "AssemblyCommand", assembly_command, true); // 发布并进入比赛
+    PublishProto(mqtt_client, "AssemblyCommand", assembly_command); // 发布装配指令
 }   // 结束 SendAssemblyCommand
 
 
@@ -716,6 +716,9 @@ bool SubmitLoginSelection(RoboGo::io::MqttClient &mqtt_client) {
                 current_robot_id,   // 日志参数：实际 robot_id，同时用作 MQTT client_id
                 mqtt_host,   // 日志参数：解析出的主机
                 mqtt_port);   // 日志参数：解析出的端口
+    // 登录成功即把"归一化后的 host:port"写进用户配置：下次启动自动预填，避免现场反复手输（输错一位就要排查半天）。
+    // 必须在 move 之前保存：下面 set_server_endpoint 会把 mqtt_host/mqtt_port 移走。
+    RoboGo::app::SaveConfiguredMqttServer(mqtt_host + ":" + mqtt_port); // 只存 host:port，前缀由启动时统一补
     mqtt_client.set_server_endpoint(std::move(mqtt_host), std::move(mqtt_port)); // 设置 MQTT 服务端端点
     mqtt_client.set_client_id(std::to_string(current_robot_id));      // 以 robot_id 作为 client_id 连接
     // 记录"这次登录用的是不是指挥手槽位"：指挥手没有自己的 robot_id，后续只能用这个标志区分身份。
@@ -939,7 +942,7 @@ void ShowDartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, floa
 
     ButtonFeedback launch_feedback = GetDartLaunchFeedback(state);    // 计算确认发射可用性反馈
     if (ButtonWithTooltip("确认发射", launch_feedback.valid_tooltip, launch_feedback.disabled_reason)) { // 悬停提示/禁用
-        SendDartCommand(mqtt_client, dart_panel_state.target_id, dart_panel_state.open, true, true); // 确认发射并进入比赛
+        SendDartCommand(mqtt_client, dart_panel_state.target_id, dart_panel_state.open, true); // 确认发射（不再顺带切比赛模式）
     }   // 结束确认发射按钮判断
 }   // 结束 ShowDartPanel
 

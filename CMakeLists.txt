@@ -256,6 +256,7 @@ add_embedded_resource("proto/messages.proto" "embedded_messages_proto")
 add_executable(RoboGo WIN32
     src/main.cpp
     src/app/application.cpp
+    src/app/config.cpp
     src/app/imgui_setup.cpp
     src/custom_control_payload.cpp
     src/main_window.cpp

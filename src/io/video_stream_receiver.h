@@ -23,14 +23,16 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
     // 返回值：无（类类型）。
     class VideoStreamReceiver {  // 无虚函数、不可拷贝（持有 socket 与协程），仅作为后台服务成员长期存活
     private:  // 内部状态：socket 句柄、包回调与运行标志，外部无需感知
-        boost::asio::ip::udp::socket socket;  // 用于接收图传 UDP 流的 socket
+        boost::asio::ip::udp::socket socket;  // 用于接收图传 UDP 流的 socket（构造时只绑定执行器，端口在 OpenAndBind 里绑）
+        boost::asio::ip::udp::endpoint listen_endpoint;  // 期望监听的本地地址与端口，断线重绑时复用
         std::function<void(const uint8_t *data, size_t size)> on_receive_packet;  // 收到数据包后的回调（交给解码器）
         std::atomic<bool> is_running = true;  // 运行标志，stop() 置 false 退出接收循环
 
     public:  // 对外只暴露"构造即开始收包"和"stop 停止"两个动作
-        // 功能：构造接收器——绑定并打开 UDP socket，随后启动接收协程循环。
-        // 思路：以 endpoint 在 io_context 上打开并绑定 UDP socket，调大接收缓冲区以承受高码率图传，
-        //       再 co_spawn 启动 detached 的 receive_loop() 协程开始收包。
+        // 功能：构造接收器——尝试绑定 UDP socket，随后启动接收协程循环。
+        // 思路：用 error_code 版本打开/绑定（端口被占用等失败只记日志、不抛异常，进程照常启动），
+        //       再 co_spawn 启动 detached 的 receive_loop()；循环内发现 socket 不可用会周期性重试绑定，
+        //       因此"先开客户端后插网线/后关占端口的进程"都能自动恢复。
         // 参数 io_context：外部提供的 Asio 执行上下文（与 MQTT 等共用同一 IO 线程）；
         //      endpoint：要监听的本地地址与端口（图传默认 0.0.0.0:3334）；
         //      on_receive_packet：每收到一个 UDP 包的回调（数据指针 + 长度），通常接解码器。
@@ -41,18 +43,22 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
 
         // 功能：停止接收器。
         // 思路：置 is_running=false，并关闭 socket——正在进行的 async_receive_from 会立即以错误返回，
-        //       使 receive_loop 从异常分支干净退出，无需额外通知机制。
+        //       使 receive_loop 干净退出，无需额外通知机制。
         // 参数：无。
         // 返回值：无。
         void stop();  // 幂等停止：重复调用仅关闭已关闭的 socket，不会抛异常(使用 error_code 版本)
 
     private:  // 接收循环为内部实现细节，外部只能通过构造/stop 间接驱动
+        // 功能：打开并绑定 UDP socket（全程 error_code，不抛异常）。
+        // 返回：true 表示 socket 已就绪可收包；false 表示绑定失败（端口被占用/权限不足等）。
+        bool OpenAndBind();
+
         // 功能：UDP 接收主协程——循环接收图传数据报并投递给解码管线。
-        // 思路：在 is_running 下反复 async_receive_from 阻塞等待下一个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；
-        //       收包异常时区分「主动停止（socket 被关闭）」与「运行异常」，前者属预期退出。复用同一接收缓冲，
-        //       故回调必须在本轮内完成拷贝/解析，不可跨迭代持有 data 指针。
+        // 思路：在 is_running 下反复 async_receive_from 阻塞等待下一个 UDP 包（as_tuple，错误码返回不抛异常），
+        //       记录原始负载（rx）后回调 on_receive_packet；出错时关闭 socket、退避后重绑，而不是退出协程。
+        //       复用同一接收缓冲，故回调必须在本轮内完成拷贝/解析，不可跨迭代持有 data 指针。
         // 参数：无（使用类成员）。
-        // 返回值：awaitable<void>，由 co_spawn(detached) 驱动，随 stop() 退出。
+        // 返回值：awaitable<void>，由 co_spawn(detached) 驱动，仅在 stop() 时返回。
         boost::asio::awaitable<void> receive_loop();  // 持续接收 UDP 包的主协程
     };  // VideoStreamReceiver 类定义结束
 

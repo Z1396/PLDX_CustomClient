@@ -17,6 +17,11 @@ namespace RoboGo::video { // 进入视频模块命名空间
         SPDLOG_INFO("创建视频流管理器 endpoint={}:{}", // 记录监听端点，便于排查连接问题
                     endpoint.address().to_string(), // 端点 IP 字符串
                     endpoint.port()); // 端点端口号
+        // 解码器不可用时只告警一次：后续帧会被静默丢弃，界面显示"等待图传"，但其它面板不受影响。
+        // 这样现场就算显卡驱动/FFmpeg 构建有问题，客户端也不会启动即退出。
+        if (!video_decoder.is_available()) { // 解码链路初始化失败
+            SPDLOG_ERROR("HEVC 解码器不可用：本次运行将没有图传画面，其余界面功能正常"); // 给出明确结论，便于现场快速判断
+        } // 结束解码器可用性检查
         // 接收到完整的视频帧之后去解码
         video_shards_manager.set_frame_callback([this](const std::vector<uint8_t> &frame) { // 注册「重组出完整帧」回调
             // 流未就绪时，需要先拿到首个有效关键帧(参数集或 IDR)才能开始解码，避免起始花屏
