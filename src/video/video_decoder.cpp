@@ -42,6 +42,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
                 continue; // 尝试下一个候选
             } // 打开失败清理分支结束
 
+            is_hardware_decoder_ = (std::string_view(codec->name) == "hevc_cuvid"); // 记录是否为硬解
             SPDLOG_INFO("HEVC解码器已启用 codec={}", codec->name); // 记录最终生效的解码器名称
             break; // 打开成功，跳出候选循环
         } // 候选遍历结束
@@ -121,10 +122,42 @@ namespace RoboGo::video { // 进入视频模块命名空间
         return nal_type; // 返回 NAL 类型值
     } // get_nal_type 结束
 
+    // 功能：硬解发送失败时回退到软件 HEVC 解码器，保证仍能出画面。
+    bool VideoDecoder::ReinitializeWithSoftwareDecoder() {
+        const AVCodec *software_codec = avcodec_find_decoder_by_name("hevc"); // 软件 HEVC 解码器
+        if (!software_codec) {
+            SPDLOG_ERROR("未找到软件 HEVC 解码器，无法回退"); // 理论上不会发生
+            return false;
+        }
+        AVCodecContext *new_context = avcodec_alloc_context3(software_codec); // 新建软解上下文
+        if (!new_context) {
+            SPDLOG_ERROR("分配软件解码器上下文失败"); // 内存不足
+            return false;
+        }
+        new_context->flags |= AV_CODEC_FLAG_LOW_DELAY; // 保持低延迟
+        new_context->flags2 |= AV_CODEC_FLAG2_FAST;    // 保持快速解码
+        if (avcodec_open2(new_context, software_codec, nullptr) < 0) { // 打开软解
+            SPDLOG_ERROR("打开软件 HEVC 解码器失败");
+            avcodec_free_context(&new_context);
+            return false;
+        }
+        if (av_codec_context) { // 释放旧硬解上下文
+            avcodec_free_context(&av_codec_context);
+        }
+        av_codec_context = new_context; // 切换到软解
+        if (av_parser_context) { // 重建解析器以匹配新上下文
+            av_parser_close(av_parser_context);
+        }
+        av_parser_context = av_parser_init(AV_CODEC_ID_HEVC);
+        is_hardware_decoder_ = false; // 标记已不再使用硬解
+        SPDLOG_WARN("hevc_cuvid 发送失败，已回退到软件 HEVC 解码器");
+        return av_parser_context != nullptr;
+    }
+
     // 功能：把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
     // 思路：用 av_parser_parse2 按字节流逐步切出完整包，每切出一包就 send 给解码器，
     //       再循环 receive 把所有已就绪的帧取出回调，直到缓冲区空(EAGAIN)或出错。
-    void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) const { // const 成员：不修改对象可见状态
+    void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) { // const 成员：不修改对象可见状态
         if (!av_codec_context || !av_parser_context) { // 解码器或解析器未就绪
             SPDLOG_ERROR("视频解码器未完成初始化，无法解码 frame_bytes={}", frame.size()); // 记录未初始化
             return; // 直接返回，不解码
@@ -153,7 +186,13 @@ namespace RoboGo::video { // 进入视频模块命名空间
                 // EAGAIN 表示解码器输入缓冲已满，属正常情况，可继续取值
                 if (ret < 0 && ret != AVERROR(EAGAIN)) { // 除缓冲满外的错误
                     SPDLOG_ERROR("发送包到解码器失败: {}", ret); // 记录发送失败
-                    continue; // 跳过该包
+                    if (is_hardware_decoder_) { // 硬解失败：尝试回退软解
+                        if (ReinitializeWithSoftwareDecoder()) { // 切换成功
+                            decode_frame(frame); // 用软解重新解当前整帧
+                        } // if 结束
+                        return; // 本帧已处理或回退失败，结束
+                    } // if 结束
+                    continue; // 软解仍失败：跳过该包
                 } // 发送失败分支结束
                 // 接收解码后的帧
                 while (ret >= 0) { // 只要上次操作成功就继续取帧

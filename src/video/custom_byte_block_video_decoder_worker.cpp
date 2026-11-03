@@ -11,9 +11,11 @@ CustomByteBlockVideoDecoderWorker::CustomByteBlockVideoDecoderWorker(FrameHandle
       frame_handler_(std::move(frame_handler)), // 保存帧回调
       log_handler_(std::move(log_handler)), // 保存日志回调
       worker_thread_([this]() { // 构造即启动工作线程执行 run()
-          run(); // 线程入口：执行主循环
-      }) { // 启动工作线程并完成成员初始化
-} // 构造函数体为空，线程已在初始化列表中启动
+      run(); // 线程入口：执行主循环
+      }) 
+{ 
+        // 启动工作线程并完成成员初始化
+}       // 构造函数体为空，线程已在初始化列表中启动
 
 // 功能：析构时确保工作线程被停止并回收。
 CustomByteBlockVideoDecoderWorker::~CustomByteBlockVideoDecoderWorker() {

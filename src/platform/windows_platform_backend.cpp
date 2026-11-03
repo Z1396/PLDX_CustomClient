@@ -248,12 +248,23 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     [[nodiscard]] bool ProcessEvents() override {
         // MSG:是 Windows 消息结构体，包含消息类型、发送窗口句柄、消息参数等。
         MSG message;
+        /*PeekMessage 是 Windows API 中用于检查消息队列的函数。它的核心特点是非阻塞：如果队列中没有消息，它会立即返回，而不会像 GetMessage 那样让线程休眠等待消息。
+        关键参数决定了它的行为：
+        BOOL PeekMessageW(
+            LPMSG lpMsg,
+            HWND  hWnd,
+            UINT  wMsgFilterMin,
+            UINT  wMsgFilterMax,
+            UINT  wRemoveMsg
+        );
+        hWnd：指定要查看哪个窗口的消息。若为 NULL，则检查当前线程所有窗口及线程消息；若为 -1，仅检查通过 PostThreadMessage 投递的线程消息。
+        wRemoveMsg：控制是否将消息从队列中移除。常用 PM_REMOVE（处理并移除）或 PM_NOREMOVE（仅查看，不移除，常用于检查队列是否为空）。*/
         while (::PeekMessage(&message, nullptr, 0U, 0U, PM_REMOVE)) {  // 循环取出消息队列中的全部消息（PM_REMOVE 表示取走即删除）
-            // 翻译消息：将 Windows 消息转换为 ImGui 可识别的格式。
+            // TranslateMessage 是 Windows 消息循环中的关键函数，它的作用是将虚拟键消息（如按键按下 WM_KEYDOWN也就是键盘上的任意键）转换为字符消息（如 WM_CHAR）
             ::TranslateMessage(&message);
-            // 分发消息：将翻译后的消息分发给 ImGui 处理。
+            // DispatchMessage 是 Windows 消息循环的最后一步，负责将消息真正“派发”给对应的窗口过程函数去处理。
             ::DispatchMessage(&message);
-            // 若遇到 WM_QUIT 则标记应关闭，返回 false（结束主循环）。
+            // 若遇到 WM_QUIT（窗口关闭消息） 则标记应关闭，返回 false（结束主循环）。
             if (message.message == WM_QUIT) {
                 should_close_ = true;  // 收到退出消息，标记应关闭
             }  // 结束 WM_QUIT 判断
@@ -325,6 +336,8 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     // 思路：enabled 为真时把鼠标裁剪到窗口屏幕坐标矩形并隐藏光标；为假时恢复。重复设置直接返回。
     // 参数：enabled —— true 锁定并隐藏鼠标（游戏操控），false 恢复普通光标。
     void SetGameInputCapture(const bool enabled) override {
+        /*hwnd_ 主窗口句柄
+        game_input_captured_ 游戏输入捕获状态*/
         if (hwnd_ == nullptr || game_input_captured_ == enabled) {  // 窗口未创建或状态未发生变化时无需处理
             return;  // 窗口无效或状态已一致，无需处理
         }  // 结束提前返回分支
@@ -341,8 +354,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             rect.top = top_left.y; // 更新矩形上边界
             rect.right = bottom_right.x; // 更新矩形右边界
             rect.bottom = bottom_right.y; // 更新矩形下边界
-            // 把鼠标锁定在该矩形内并隐藏光标，避免操作手误移出窗口。
-            ClipCursor(&rect);
+            ClipCursor(&rect);  // 把鼠标锁定在该矩形内并隐藏光标，避免操作手误移出窗口。
             ShowCursor(FALSE);  // 隐藏系统鼠标光标
             SPDLOG_DEBUG("已锁定Windows鼠标光标区域 left={} top={} right={} bottom={}",  // 调试日志：记录锁定后的裁剪矩形，便于排查坐标换算问题
                          rect.left,  // 日志参数：矩形左边界

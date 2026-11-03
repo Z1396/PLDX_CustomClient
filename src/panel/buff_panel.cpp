@@ -72,7 +72,7 @@ void ShowBuffPanel(const State &state) {  // state：全局状态（含静态状
     // 无装饰/不可移动/无背景/不保存设置的浮动窗口
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration |
                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |  // 不可拖动 + 透明背景，作为覆盖层使用
-                                    ImGuiWindowFlags_NoSavedSettings;  // 不写入 imgui.ini，布局完全由代码控制
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;  // 不写入 imgui.ini，布局完全由代码控制
 
     if (!ImGui::Begin("BuffPanel", nullptr, window_flags)) {  // 创建窗口失败（被折叠）则结束
         ImGui::End();  // 配对 End，避免状态不一致

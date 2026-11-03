@@ -14,6 +14,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
         AVPacket *packet = nullptr;                        // 复用的数据包缓存，避免每次解码都重新分配
         AVFrame *decoded_frame = nullptr;                  // 复用的解码帧缓存，接收解码器输出
         std::function<void(const AVFrame *frame)> frame_callback; // 每解出一帧 AVFrame 时回调通知上层
+        bool is_hardware_decoder_ = false; // 当前是否使用 Nvidia 硬解；发送失败时可回退软解
 
     public: // ---------- 公开接口 ----------
         // 功能：构造解码器，优先尝试 Nvidia 硬解(hevc_cuvid)，失败则回退到 CPU 软解(hevc)。
@@ -29,7 +30,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
 
         // 功能：把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
         // 参数：frame 为完整帧的字节数据；const 表示本方法不修改解码器成员以外的外部状态。
-        void decode_frame(const std::vector<uint8_t> &frame) const; // const 成员函数：只写 FFmpeg 上下文内部缓冲
+        void decode_frame(const std::vector<uint8_t> &frame); // 非 const：硬解失败时可能切换为软解
+        // 功能：硬解发送失败时回退到软件 HEVC 解码器（内部使用）。
+        bool ReinitializeWithSoftwareDecoder(); // 返回是否成功切换到软解
     }; // 解码器类定义结束
 
 }// namespace RoboGo::video // 结束视频模块命名空间

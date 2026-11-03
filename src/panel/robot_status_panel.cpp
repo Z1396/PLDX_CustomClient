@@ -38,7 +38,7 @@ void ShowRobotStatusPanel(const State &state) {
         current_health = state.robot_dynamic_status->current_health();  // 当前血量
         max_health = state.robot_static_status->max_health();  // 最大血量
         health_ratio = static_cast<float>(current_health) / static_cast<float>(max_health);  // 血量比例
-        current_energy = state.robot_dynamic_status->current_chassis_energy();  // 当前底盘能量
+        current_energy = 0;  // 2027 底盘能量字段已移除，置 0
         max_energy = state.robot_static_status->max_chassis_energy();   // 底盘能量上限
         energy_ratio = static_cast<float>(current_energy) / static_cast<float>(max_energy);   // 底盘能量比例 = 当前 / 上限
         current_experience = state.robot_dynamic_status->current_experience();  // 当前经验
@@ -91,32 +91,21 @@ void ShowRobotStatusPanel(const State &state) {
     // 指示灯
     bool is_auto_aim = state.auto_aim;  // 自瞄开关
     bool is_gyro = state.gyro;  // 小陀螺开关
-    bool is_deploy_mode;                                        // 部署模式（待填充）
-    if (state.deploy_mode_status_sync.has_value()) {   // 已收到部署模式同步
-        is_deploy_mode = state.deploy_mode_status_sync->status() == 1;  // 部署模式(状态为 1)
-    } else {   // 尚未同步部署模式
-        is_deploy_mode = false;   // 未知状态按未部署处理
-    }   // 结束部署模式判断
-
     float text_width1 = ImGui::CalcTextSize("指示灯: ").x;            // "指示灯: " 文本宽度
     float text_width2 = ImGui::CalcTextSize("自瞄").x;                // "自瞄" 文本宽度
     float text_width3 = ImGui::CalcTextSize("小陀螺").x;              // "小陀螺" 文本宽度
-    float text_width4 = ImGui::CalcTextSize("部署模式").x;            // "部署模式" 文本宽度
-    float indicator_spacing = (content_avail.x - text_width1 - text_width2 - text_width3 - text_width4) / 4.0f;  // 在四项间均分剩余宽度
+    float indicator_spacing = (content_avail.x - text_width1 - text_width2 - text_width3) / 3.0f;  // 在三项间均分剩余宽度
     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "指示灯: ");  // 标签
     ImGui::SameLine(text_width1 + indicator_spacing);  // 首项后偏移，开始排列指示灯
     ImGui::TextColored(is_auto_aim ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "自瞄");  // 开启绿/关闭灰
     ImGui::SameLine(text_width1 + text_width2 + indicator_spacing * 2);   // 「自瞄」之后的第三个位置：累计三个已用宽度 + 3 份间距
     ImGui::TextColored(is_gyro ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "小陀螺");   // 小陀螺指示灯：开启绿、关闭灰
-    ImGui::SameLine(text_width1 + text_width2 + text_width3 + indicator_spacing * 3);   // 「部署模式」位置：累计四个已用宽度 + 4 份间距
-    ImGui::TextColored(is_deploy_mode ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f) : ImVec4(0.5, 0.5, 0.5, 1), "部署模式");   // 部署模式指示灯：开启绿、关闭灰
     ImGui::Spacing();   // 指示灯与设备状态之间留白
 
     // 设备连接状态
-    const char *module_names[] = {  // 11 个模块的中文名（与下方状态数组一一对应）
+    const char *module_names[] = {  // 10 个模块的中文名（与下方状态数组一一对应）
             "主控", "电源管理", "图传", "RFID", "UWB",   // 模块名第 1 行（与状态数组前 5 项对应）
-            "装甲板", "小弹丸", "大弹丸", "超级电容", "灯条",   // 模块名第 2 行（对应第 6~10 项）
-            "激光检测"};   // 模块名第 3 行（对应第 11 项）
+            "装甲板", "小弹丸", "大弹丸", "超级电容", "灯条"};   // 模块名第 2 行（对应第 6~10 项）
 
     ImGui::SameLine(0, 0);  // 与标题同行紧接
     ImGui::TextColored(ImVec4(0.8f, 0.4f, 1.0f, 1.0f), "未连接设备: ");  // 紫色标签
@@ -132,19 +121,23 @@ void ShowRobotStatusPanel(const State &state) {
                 state.robot_module_status->small_shooter(),   // 小弹丸发射机构连接状态
                 state.robot_module_status->big_shooter(),   // 大弹丸发射机构连接状态
                 state.robot_module_status->capacitor(),   // 超级电容连接状态
-                state.robot_module_status->light_strip(),   // 灯条连接状态
-                state.robot_module_status->laser_detection_module()};   // 激光检测模块连接状态
+                state.robot_module_status->light_strip()};   // 灯条连接状态
         static_assert(std::size(module_names) == std::size(module_status));  // 编译期保证两数组长度一致
 
         ImGui::SameLine(0, 0);   // 紧跟标签同行继续输出未连接列表
         ImGuiTextBuffer buffer;                                      // 拼接未连接模块名的临时缓冲区
-        for (size_t i = 0; i < std::size(module_names); i++) {   // 遍历全部 11 个模块
-            if (module_status[i] != 1) {  // 仅收集未连接的模块
-                if (!buffer.empty()) {   // 不是第一个未连接项时先补分隔符
-                    buffer.append(", ");  // 多模块用逗号分隔
-                }   // 结束分隔符判断
+        for (size_t i = 0; i < std::size(module_names); i++) {   // 遍历全部 10 个模块
+            if (module_status[i] == 1) {  // 状态 1 表示在线，跳过
+                continue;   // 已连接模块不列入
+            }   // 结束在线判断
+            if (!buffer.empty()) {   // 不是第一个异常项时先补分隔符
+                buffer.append(", ");  // 多模块用逗号分隔
+            }   // 结束分隔符判断
+            if (module_status[i] == 2) {   // 状态 2 表示"因安装不规范被视为离线"，与真正离线区分开
+                buffer.appendf("%s(安装不规范)", module_names[i]);   // 标注安装不规范，便于现场排查装配问题
+            } else {   // 状态 0 表示确实离线
                 buffer.appendf("%s", module_names[i]);   // 把未连接模块名追加到缓冲区
-            }   // 结束未连接判断
+            }   // 结束三态区分
         }   // 结束模块遍历
         if (buffer.empty()) {   // 没有任何未连接模块
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "（无）");  // 全部已连接
@@ -155,6 +148,18 @@ void ShowRobotStatusPanel(const State &state) {
         ImGui::SameLine(0, 0);   // 紧跟标签同行输出
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "未知");  // 无模块状态数据时
     }   // 结束模块状态分支
+
+    // 2027 协议 2.2.12 第 11 项：modular_42mm = 是否拥有模块化 42mm 发射机构安装权限（仅重装有效，0 未拥有 / 1 拥有）。
+    // 语义与其它 10 个模块的"在线/离线"不同（这里是权限而非连接状态），因此单独一行显示，不并入上面的未连接列表。
+    if (state.robot_module_status.has_value()) {   // 已收到模块状态
+        if (state.robot_module_status->modular_42mm() == 1) {   // 1 = 已获得安装权限
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "模块化42mm装配权限: 已获得");  // 绿色：可以装 42mm
+        } else {   // 0 = 未获得（或该机器人不是重装）
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "模块化42mm装配权限: 未获得");  // 灰色：尚未解锁
+        }   // 结束权限判断
+    } else {   // 尚未收到模块状态
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "模块化42mm装配权限: 未知");  // 无数据时不臆测
+    }   // 结束权限数据分支
 
     ImGui::End();                                                    // 结束窗口
 }   // 结束 ShowRobotStatusPanel

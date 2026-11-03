@@ -45,3 +45,29 @@ void exit_marker_mode();
 // 功能：在标记模式下向裁判系统发送一次地图点击标记指令(MapClickCmd)。
 // 参数 mqtt_client：MQTT 客户端；map_x/map_y：地图上的归一化坐标。
 void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y);
+
+// 功能：无视"标记模式"开关，直接下发一次地图标记（指挥台点地图时用）。
+// 说明：指挥台的鼠标是可见的，点地图就是要打点，不需要先切成标记模式。
+void send_map_marker_now(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry);
+
+// 功能：查询/设置当前登录身份是否为"指挥手"。
+// 说明：指挥手不是机器人、没有自己的 robot_id，登录槽位沿用飞镖的 8 号，
+//       因此不能用 robot_id 判断身份，必须单独记一个角色标志。
+bool is_commander_role();
+void set_commander_role(bool enabled);
+
+// 功能：查询指挥台（全屏综合指挥界面）是否已打开。
+bool is_commander_console_active();
+
+// 功能：打开/关闭指挥台。打开时自动退出比赛模式，保证鼠标箭头可见、键鼠不被捕获。
+void enter_commander_console();
+void exit_commander_console();
+
+// 功能：指挥手登录成功后自动进入指挥台（每次成功登录只自动进一次）。
+// 说明：指挥手的赛前页面里没有任何可用指令（弹药/回血/复活/哨兵/飞镖全在指挥台内），
+//       停在那一页只会多一次点击，所以一旦连上就直铺开指挥台；退出指挥台后不会被立刻拽回去。
+void maybe_auto_enter_commander_console(RoboGo::io::MqttClient &mqtt_client);
+
+// 功能：离开指挥台并退出登录（指挥手唯一的出口）。
+// 说明：指挥手没有"赛前指令页"，退出后停在那页只会让人再点一次，所以直接断开连接回登录面板重新选身份。
+void leave_commander_console(RoboGo::io::MqttClient &mqtt_client);

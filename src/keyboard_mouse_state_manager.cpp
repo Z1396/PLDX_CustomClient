@@ -9,6 +9,8 @@ static int32_t mouse_z = 0; // 累计鼠标滚轮位移
 static bool game_mode_enabled = false; // 比赛模式开关(决定是否采集并上报键鼠)
 static float mouse_sensitivity = 1.0f; // 鼠标灵敏度系数
 static bool marker_mode_enabled = false; // 地图点位标记模式开关
+static bool commander_role_enabled = false; // 当前登录身份是否为指挥手（登录槽位 8 的"指挥手"）
+static bool commander_console_active = false; // 指挥台是否已打开（全屏综合指挥界面）
 static bool marker_mode_include_sentry = true;// 标记模式是否包含哨兵，默认包含
 static std::chrono::steady_clock::time_point last_publish_time; // 上次发布键鼠消息的时刻(用于节流)
 static std::function<void(bool enabled)> game_input_capture_handler; // 平台层游戏输入捕获回调(进入/退出比赛模式时通知)
@@ -24,6 +26,67 @@ void enter_game_mode() {  // 由界面/快捷键触发
     SPDLOG_INFO("进入比赛模式");  // spdlog 宏：格式化输出 info 级别日志到默认 logger
     game_mode_enabled = true; // 置位比赛模式标志，后续开始采集并上报键鼠
 }  // enter_game_mode 结束
+
+// 功能：查询当前登录身份是否为指挥手。
+bool is_commander_role() {
+    return commander_role_enabled;   // 直接返回角色标志
+}  // is_commander_role 结束
+
+// 功能：设置当前登录身份是否为指挥手；取消身份时顺手关掉指挥台。
+void set_commander_role(bool enabled) {
+    commander_role_enabled = enabled;                   // 记录新的角色标志
+    if (!enabled) {                                     // 不再是指挥手
+        commander_console_active = false;               // 指挥台不能留在打开状态
+    }                                                   // 结束角色关闭分支
+    SPDLOG_INFO("指挥手身份切换 enabled={}", enabled);    // 记录切换便于排查
+}  // set_commander_role 结束
+
+// 功能：查询指挥台是否已打开。
+bool is_commander_console_active() {
+    return commander_console_active;   // 直接返回指挥台标志
+}  // is_commander_console_active 结束
+
+// 功能：打开指挥台。
+// 关键点：指挥台不控车，鼠标必须可见可点，所以强制退出比赛模式（比赛模式会捕获并隐藏鼠标）。
+void enter_commander_console() {
+    if (!commander_role_enabled) {                     // 只有指挥手身份才允许打开
+        return;                                        // 非指挥手直接忽略
+    }                                                  // 结束角色校验
+    commander_console_active = true;                   // 置位指挥台标志
+    game_mode_enabled = false;                         // 退出比赛模式：释放键鼠捕获、恢复鼠标箭头
+    SPDLOG_INFO("进入指挥台（鼠标可见、不采集键鼠）");       // 记录操作
+}  // enter_commander_console 结束
+
+// 功能：关闭指挥台，回到开局面板（仍保持登录）。
+void exit_commander_console() {
+    commander_console_active = false;                  // 清除指挥台标志
+    SPDLOG_INFO("退出指挥台");                            // 记录操作
+}  // exit_commander_console 结束
+
+// 功能：指挥手登录成功后自动进入指挥台（每次成功登录只自动进一次）。
+// 思路：用"连接状态上升沿"触发——只在 未连接→已连接 的那一帧进指挥台。
+//       这样退出指挥台后回到赛前面板不会被立刻又拽进去，用户想再进就自己点按钮。
+void maybe_auto_enter_commander_console(RoboGo::io::MqttClient &mqtt_client) {
+    static bool was_connected = false;                                          // 上一帧是否已登录
+    const bool connected = mqtt_client.get_connection_state() ==
+                           RoboGo::io::MqttClient::ConnectionState::Connected;   // 本帧是否已登录
+    const bool just_connected = connected && !was_connected;                    // 上升沿：刚刚登录成功
+    was_connected = connected;                                                  // 记录本帧状态供下一帧比较
+    if (!just_connected || !commander_role_enabled || commander_console_active) { // 非刚登录 / 非指挥手 / 已在指挥台
+        return;                                                                  // 什么都不做
+    }                                                                            // 结束前置条件判断
+    enter_commander_console();                                                   // 直接铺开指挥台（内部会退出比赛模式、恢复鼠标）
+}  // maybe_auto_enter_commander_console 结束
+
+// 功能：离开指挥台并退出登录。
+// 思路：置空 client_id 让 MQTT 协程断开连接，界面自动回到登录面板；角色标志一并清掉，
+//       避免下次以别的身份登录时还残留指挥手状态。
+void leave_commander_console(RoboGo::io::MqttClient &mqtt_client) {
+    SPDLOG_INFO("退出指挥台并退出登录 client_id={}", mqtt_client.get_client_id());  // 记录当前 client_id 便于排查
+    set_commander_role(false);             // 关掉指挥台并清除指挥手身份（内部会一并复位指挥台标志）
+    game_mode_enabled = false;             // 保证回到非比赛模式（鼠标可见）
+    mqtt_client.set_client_id("");         // 置空 client_id 触发断开 → 界面回到登录面板
+}  // leave_commander_console 结束
 
 // 功能：注册平台层的游戏输入捕获回调，进入/退出比赛模式时回调以独占输入。
 // 参数 handler：回调函数(参数为是否启用捕获)。
@@ -73,16 +136,13 @@ void exit_marker_mode() {  // 用户取消标记时调用
 }  // exit_marker_mode 结束
 
 // 功能：在地图标记模式下，向裁判系统发送一次地图点击标记指令(MapClickCmd)。
-// 思路：校验标记模式 -> 填充 Protobuf 字段 -> 序列化并发布 -> 发送后自动退出标记模式。
+// 思路：校验标记模式 -> 填充 Protobuf 字段 -> 序列化并发布；发送后保持标记模式，由操作手手动退出。
 // 参数 mqtt_client：MQTT 客户端；map_x/map_y：地图上的归一化坐标。
-void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y) {  // mqtt_client 用于发布消息
-    if (!marker_mode_enabled) {  // 模式校验：只有处于标记模式才允许发送
-        SPDLOG_WARN("忽略地图标记请求，因为当前不在标记模式");  // 记录告警，便于发现异常调用
-        return; // 非标记模式直接忽略，避免误发
-    }  // 结束模式校验分支
-
+// 功能：构造并下发一次地图标记指令（内部复用：不校验标记模式）。
+// 参数 include_sentry：true 表示群发含哨兵（is_send_all=2），false 仅普通机器人（1）。
+static void PublishMapClick(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry) {
     MapClickCmd map_click_cmd; // 构造地图点击指令 Protobuf 消息
-    map_click_cmd.set_is_send_all(marker_mode_include_sentry ? 2 : 1); // 2 表示群发给哨兵，1 表示仅普通机器人
+    map_click_cmd.set_is_send_all(include_sentry ? 2 : 1); // 2 表示群发给哨兵，1 表示仅普通机器人
     std::string robot_id(7, 0x00); // 固定 7 字节 robot_id，先以全 0 占位
     map_click_cmd.set_robot_id(robot_id); // 设置目标机器人 ID(此处为占位)
     map_click_cmd.set_mode(1); // 设置指令模式
@@ -97,15 +157,33 @@ void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map
         SPDLOG_INFO("发送地图标记 map_x={} map_y={} include_sentry={}",  // 记录发送内容，便于复盘对账
                     map_x,  // 占位符 1：地图 X 坐标
                     map_y,  // 占位符 2：地图 Y 坐标
-                    marker_mode_include_sentry);  // 占位符 3：是否包含哨兵
+                    include_sentry);  // 占位符 3：是否包含哨兵
         mqtt_client.publish("MapClickCmd", serialized); // 发布到 MapClickCmd 主题
     } else {  // 序列化失败(通常表示必填字段缺失或内存不足)
         SPDLOG_ERROR("地图标记序列化失败 map_x={} map_y={}", map_x, map_y);  // 记录失败坐标，便于复现
     }  // 结束序列化分支
+}  // PublishMapClick 结束
 
-    marker_mode_enabled = false; // 发送完成后自动退出标记模式
-    SPDLOG_INFO("地图点位标记模式已自动退出");  // 记录自动退出，提示用户下次需要重新进入
+// 功能：标记模式下发送一次地图标记（保留"必须先进入标记模式"的原有约束）。
+// 参数 mqtt_client：MQTT 客户端；map_x/map_y：地图上的归一化坐标。
+void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y) {  // mqtt_client 用于发布消息
+    if (!marker_mode_enabled) {  // 模式校验：只有处于标记模式才允许发送
+        SPDLOG_WARN("忽略地图标记请求，因为当前不在标记模式");  // 记录告警，便于发现异常调用
+        return; // 非标记模式直接忽略，避免误发
+    }  // 结束模式校验分支
+
+    PublishMapClick(mqtt_client, map_x, map_y, marker_mode_include_sentry);  // 复用公共下发实现
+
+    // 注意：这里**不再**自动退出标记模式。
+    // 早先的写法是"发完立刻 exit"，操作手看到的是"点一下模式就没了、地图上什么都没留下"，
+    // 会误以为点击没生效。现在保持模式直到操作手在面板里手动退出，方便连续打几个点
+    // （进攻/防御/警戒），同时由小地图画出标记点做可视化确认。
 }  // send_map_marker 结束
+
+// 功能：指挥台点地图时直接下发标记，不要求先切标记模式。
+void send_map_marker_now(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry) {
+    PublishMapClick(mqtt_client, map_x, map_y, include_sentry);  // 直接走公共下发实现
+}  // send_map_marker_now 结束
 
 // 功能：每帧采集全局键鼠输入，按约 75Hz 向裁判系统上报 KeyboardMouseControl 消息。
 // 思路：Esc 切换比赛模式 -> 在模式边沿通知平台捕获输入 -> 累计鼠标位移 -> 节流发布 ->
@@ -113,8 +191,13 @@ void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map
 // 参数 mqtt_client：用于发布消息的 MQTT 客户端。
 void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client) {  // 每帧由应用主循环调用
     ImGuiIO &io = ImGui::GetIO(); // 获取 ImGui IO，用于读取鼠标/键盘输入
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { // 按下 Esc 切换比赛模式(进入/退出)
-        game_mode_enabled = !game_mode_enabled;  // 布尔取反：在进入与退出之间切换
+    // 指挥台是常驻界面：Esc 在指挥台内既不切比赛模式、也不退出（现场误触一下不该掉线），
+    // 离开统一走顶栏的"退出登录"按钮。普通界面里 Esc 仍然照旧切换比赛模式。
+    const bool esc_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);  // 本帧是否按下 Esc（只取一次，避免后续分支重复触发）
+    if (commander_console_active) {                  // 指挥台激活期间
+        game_mode_enabled = false;                   // 强制保持非比赛模式：鼠标可见、键鼠不上报
+    } else if (esc_pressed) {                        // 普通界面按 Esc 切换比赛模式
+        game_mode_enabled = !game_mode_enabled;      // 布尔取反：在进入与退出之间切换
         SPDLOG_INFO("比赛模式切换 enabled={}", game_mode_enabled);  // 记录切换后的状态
     }  // 结束 Esc 切换处理
 

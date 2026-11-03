@@ -1,7 +1,10 @@
 syntax = "proto3";
 
-// RoboMaster 2026 机甲大师高校系列赛自定义客户端通信协议
-// 版本: V2.0.0 (20260626)
+// 使用 lite 运行时：项目链接 libprotobuf-lite，不引入完整运行时
+option optimize_for = LITE_RUNTIME;
+
+// RoboMaster 2027 机甲大师高校系列赛自定义客户端通信协议
+// 版本: V1.0.0 (20261029)
 // 包含所有上行和下行消息，使用 package 区分数据流方向。
 
 // -------------------------------------------------------------------------
@@ -39,9 +42,9 @@ message KeyboardMouseControl {
 }
 
 // 2.2.2 CustomControl
-// 用途: 最大30字节的自定义数据 (频率: 75Hz)
+// 用途: 最大60字节的自定义数据 (频率: 75Hz)
 message CustomControl {
-  optional bytes data = 1; // 最大 30 字节的自定义数据
+  optional bytes data = 1; // 最大 60 字节的自定义数据
 }
 
 // 2.2.18 MapClickCmd
@@ -57,14 +60,14 @@ message MapClickCmd {
   optional float  map_y       = 8; // 地图坐标 Y
 }
 
-// 2.2.20 AssemblyCommand
+// 2.2.21 AssemblyCommand
 // 用途: 工程装配指令 (频率: 触发式发送，发送频率最高为 10Hz)
 message AssemblyCommand {
   optional uint32 operation  = 1; // 装配操作类型（0=开始兑换，1=确认装配，2=取消装配）
   optional uint32 difficulty = 2; // 选中的装配难度
 }
 
-// 2.2.22 RobotPerformanceSelectionCommand
+// 2.2.23 RobotPerformanceSelectionCommand
 // 用途: 地面机器人选择性能体系或控制方式 (频率: 触发式发送，发送频率最高为 10Hz)
 message RobotPerformanceSelectionCommand {
   // shooter 枚举值：
@@ -85,7 +88,7 @@ message RobotPerformanceSelectionCommand {
   optional uint32 sentry_control = 3; // 哨兵控制方式选择
 }
 
-// 2.2.24 CommonCommand
+// 2.2.25 CommonCommand
 // 用途: 机器人多种常用指令 (频率: 触发式发送，最高10Hz)
 message CommonCommand {
     // cmd_type 枚举值：
@@ -99,19 +102,13 @@ message CommonCommand {
   optional uint32 param    = 2; // 参数
 }
 
-// 2.2.25 HeroDeployModeEventCommand
-// 用途: 英雄部署模式指令 (频率: 触发式发送，发送频率最高为 10Hz)
-message HeroDeployModeEventCommand {
-  optional uint32 mode = 1; // 模式（0=退出, 1=进入）
-}
-
-// 2.2.27 RuneActivateCommand
+// 2.2.26 RuneActivateCommand
 // 用途: 能量机关激活指令 (频率: 触发式发送，发送频率最高为 10Hz)
 message RuneActivateCommand {
   optional uint32 activate = 1; // 激活（1=开启）
 }
 
-// 2.2.30 DartCommand
+// 2.2.29 DartCommand
 // 用途: 飞镖控制指令 (频率: 触发式发送，发送频率最高为 10Hz)
 message DartCommand {
     // target_id 枚举值：
@@ -125,7 +122,7 @@ message DartCommand {
   optional bool   launch_confirm = 3; // 是否确认发射（默认为0，1为确认发射）
 }
 
-// 2.2.32 SentryCtrlCommand
+// 2.2.31 SentryCtrlCommand
 // 用途: 哨兵控制指令请求 (频率: 触发式发送，发送频率最高为 10Hz)
 message SentryCtrlCommand {
     // command_id 枚举值：
@@ -143,23 +140,12 @@ message SentryCtrlCommand {
   optional uint32 command_id = 1; // 指令编号（0=无效）
 }
 
-// 2.2.34 AirSupportCommand
-// 用途: 空中支援指令 (频率: 触发式发送)
-message AirSupportCommand {
-    // command_id 枚举值：
-    // 0: 取消空中支援
-    // 1: 免费呼叫空中支援
-    // 2: 花费金币呼叫空中支援（仍优先使用免费时长）
-    // 3: 花费金币解除反制（仅在规则描述的情况下有效）
-  optional uint32 command_id = 1; // 指令类型
-}
-
 // -------------------------------------------------------------------------
 // Package 2: 下行消息 (Server -> Client)
 // -------------------------------------------------------------------------
 
 // 2.2.3 GameStatus
-// 用途: 同步比赛全局状态信息 (频率: 1Hz)
+// 用途: 同步比赛全局状态信息 (频率: 5Hz)
 message GameStatus {
     // current_stage 枚举值：
     // 0: 未开始比赛
@@ -184,30 +170,30 @@ message GameStatus {
 // 用途: 同步基地、前哨站和所有机器人状态 (频率: 1Hz)
 message GlobalUnitStatus {
     // base_status 枚举值：
-    // 0: 无敌
-    // 1: 解除无敌，护甲未展开
-    // 2: 解除无敌，护甲展开
-    // outpost_status 枚举值：
-    // 0: 无敌
-    // 1: 存活，解除无敌，中部装甲旋转
-    // 2: 存活，解除无敌，中部装甲停转
-    // 3: 被击毁，不可重建
-    // 4: 被击毁，可重建
-    // 5: 被击毁，重建中
+    // 0: 拥有 100% 防御增益
+    // 1: 不拥有 100% 防御增益，护甲未展开
+    // 2: 不拥有 100% 防御增益，护甲展开
+    // 阵地控制状态枚举值（base_shield / outpost_R_status / outpost_B_status）：
+    //   1: 被己方完全控制
+    //   2: 被己方临时控制 / 被对方临时控制（随字段方向而定）
+    //   3: 被对方临时控制
+    //   4: 被对方完全控制
   optional uint32 base_health          = 1; // 己方基地当前血量（0=已摧毁）
   optional uint32 base_status          = 2; // 己方基地状态
-  optional uint32 base_shield          = 3; // 己方基地当前护盾值（0=无护盾）
-  optional uint32 outpost_health       = 4; // 己方前哨站当前血量（0=已摧毁）
-  optional uint32 outpost_status       = 5; // 己方前哨站状态
+  optional uint32 base_shield          = 3; // 己方基地阵地控制状态（1=己方完全控制,2=对方临时控制）【2027 语义变更：不再是护盾值】
+  optional uint32 outpost_R_health     = 4; // R 前哨站当前血量（0=已摧毁）
+  optional uint32 outpost_R_status     = 5; // R 前哨阵地控制状态（1己方完全,2己方临时,3对方临时,4对方完全）
   optional uint32 enemy_base_health    = 6; // 对方基地当前血量（0=已摧毁）
   optional uint32 enemy_base_status    = 7; // 对方基地状态
-  optional uint32 enemy_base_shield    = 8; // 对方基地当前护盾值（0=无护盾）
-  optional uint32 enemy_outpost_health = 9; // 对方前哨站当前血量（0=已摧毁）
-  optional uint32 enemy_outpost_status = 10; // 对方前哨站状态
-  repeated uint32 robot_health         = 11; // 所有机器人血量（按照己方 1 号，2 号，3 号，4 号，7 号，对方 1 号，2 号，3 号，4 号，7 号的顺序发送）
+  optional uint32 enemy_base_shield    = 8; // 对方基地阵地控制状态（1=对方完全控制,2=己方临时控制）【2027 语义变更：不再是护盾值】
+  optional uint32 outpost_B_health     = 9; // B 前哨站当前血量（0=已摧毁）
+  optional uint32 outpost_B_status     = 10; // B 前哨阵地控制状态（1己方完全,2己方临时,3对方临时,4对方完全）
+  repeated uint32 robot_health         = 11; // 所有机器人血量（按照己方 1号,3号,4号,7号，对方 1号,3号,4号,7号 的顺序发送）
   repeated int32  robot_bullets        = 12; // 己方机器人剩余累计发弹量
   optional uint32 total_damage_ally    = 13; // 己方累计总伤害
   optional uint32 total_damage_enemy   = 14; // 对方累计总伤害
+  optional uint32 total_CP_ally        = 15; // 己方累计控制度（2027 新增）
+  optional uint32 total_CP_enemy       = 16; // 对方累计控制度（2027 新增）
 }
 
 // 2.2.5 GlobalLogisticsStatus
@@ -232,22 +218,23 @@ message GlobalSpecialMechanism {
 // 2.2.7 Event
 // 用途: 全局事件通知 (频率: 触发式发送)
 message Event {
-    // event_id 枚举值：
-    // 1: 击杀事件（参数 1 为被击杀者，参数 2 为击杀者，如“1,101”，代表蓝方英雄击毁红方英雄）
+    // event_id 枚举值（2027 版）：
+    // 1: 击杀事件（参数 1 为被击杀者，参数 2 为击杀者，如“1,101”，代表蓝方重装击毁红方重装）
     // 2: 前哨站被摧毁事件（参数值为被击毁的目标 id，红方前哨站为 11，蓝方前哨站为 111）
     // 3: 当前大能量机关被成功激活的灯臂数量、平均环数（仅大能量机关被激活时触发该事件，参数值为激活成功臂数，平均环数(浮点数)，比如“10,9.6”代表激活十个灯臂，平均环数为 9.6)
     // 4: 能量机关进入已激活状态（激活类型 1：小能量机关，2：大能量机关）
-    // 5: 己方英雄造成狙击伤害（参数值为累计造成狙击伤害数量）
-    // 6: 对方英雄造成狙击伤害（参数值为累计造成狙击伤害数量）
-    // 7: 对方呼叫空中支援（无参数值）
-    // 8: 对方空中支援被反制（参数值为己方还剩余的可反制次数）
+    // 5: R 前哨阵地改变控制状态（参数 1 为红方临时控制，2 为红方完全控制，3 为蓝方临时控制，4 为蓝方完全控制）
+    // 6: B 前哨阵地改变控制状态（参数 1 为红方临时控制，2 为红方完全控制，3 为蓝方临时控制，4 为蓝方完全控制）
+    // 7: R 基地阵地改变控制方（参数 1 为红方完全控制，2 为蓝方临时控制）
+    // 8: B 基地阵地改变控制方（参数 1 为蓝方完全控制，2 为红方临时控制）
     // 9: 飞镖命中（第一个参数为命中方，1 为红方命中，2 为蓝方命中 第二个参数值为命中目标，1 为击中前哨站，2 为击中基地固定目标，3 为击中基地随机固定目标，4 为击中基地随机移动目标，5 为击中基地末端移动目标）
     // 10: 对方飞镖闸门开启（无参数）
     // 11: 基地遭到攻击（无参数值，每次触发存在 5s 内置冷却）
     // 12: 对方前哨站停转（无参数）
     // 13: 对方基地护甲展开（无参数）
-    // 14: 装配过程中对方请求四级装配，进入强制退出缓冲期（无参数）
-    // 15: 装配结果事件(0 成功，1 拔出，2 超时，3 离开装配区过久，4 工程战亡，5 四级难度未满足完成协作时限，6 主动退出，7 完成装配但结算时未检测到有能量单元，8 缓冲期到期，装配流程强制结束)
+    // 14: 重装战亡临时激活，进入强制退出缓冲期（无参数）
+    // 15: 装配结果事件(0 成功，1 拔出，2 超时，3 离开装配区过久，4 重装战亡，5 四级难度未满足完成协作时限，6 主动退出，7 完成装配但结算时未检测到有能量单元，8 缓冲期到期，装配流程强制结束)
+    // 16: 重装机器人成功安装模块化 42mm 发射机构（无参数）
   optional int32  event_id = 1; // 事件编号
   optional string param    = 2; // 事件参数（含义随 event_id 变化）
 }
@@ -281,16 +268,12 @@ message RobotRespawnStatus {
 // 2.2.10 RobotStaticStatus
 // 用途: 机器人固定属性和配置 (频率: 1Hz)
 message RobotStaticStatus {
-  // performance_system_shooter 枚举值：
+  // performance_system_shooter 枚举值（2027 版）：
   // 1: 冷却优先
   // 2: 爆发优先
-  // 3: 英雄近战优先
-  // 4: 英雄远程优先
-  // performance_system_chassis 枚举值：
+  // performance_system_chassis 枚举值（2027 版）：
   // 1: 血量优先
   // 2: 功率优先
-  // 3: 英雄近战优先
-  // 4: 英雄远程优先
   optional uint32 connection_state           = 1; // 连接状态（0=未连接,1=已连接）
   optional uint32 field_state                = 2; // 上场状态（0=已上场,1=未上场）
   optional uint32 alive_state                = 3; // 存活状态（0=未知,1=存活,2=战亡）
@@ -313,7 +296,7 @@ message RobotDynamicStatus {
   optional uint32 current_health            = 1; // 当前血量
   optional float  current_heat              = 2; // 当前热量
   optional float  last_projectile_fire_rate = 3; // 上一次弹丸射速
-  optional uint32 current_chassis_energy    = 4; // 当前剩余底盘能量
+  optional uint32 reserved                  = 4; // 保留位（2027 起该字段为保留位，不再表示底盘能量）
   optional uint32 current_buffer_energy     = 5; // 当前缓冲能量
   optional uint32 current_experience        = 6; // 当前经验值
   optional uint32 experience_for_upgrade    = 7; // 距离下一次升级仍需获得的经验
@@ -331,14 +314,14 @@ message RobotModuleStatus {
   optional uint32 power_manager          = 1; // 电源管理模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 rfid                   = 2; // RFID 模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 light_strip            = 3; // 灯条模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
-  optional uint32 small_shooter          = 4; // 17mm 发射机构状态（0=离线，1=在线，2=因安装不规范被视为离线）
-  optional uint32 big_shooter            = 5; // 42mm 发射机构状态（0=离线，1=在线，2=因安装不规范被视为离线）
+  optional uint32 small_shooter          = 4; // 17mm 测速模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
+  optional uint32 big_shooter            = 5; // 42mm 测速模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 uwb                    = 6; // 定位模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 armor                  = 7; // 装甲模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 video_transmission     = 8; // 图传模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 capacitor              = 9; // 电容模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
   optional uint32 main_controller        = 10; // 主控状态（0=离线，1=在线，2=因安装不规范被视为离线）
-  optional uint32 laser_detection_module = 11; // 激光检测模块状态（0=离线，1=在线，2=因安装不规范被视为离线）
+  optional uint32 modular_42mm           = 11; // 是否拥有模块化 42mm 发射机构安装权限（仅重装；0=未拥有，1=拥有）
 }
 
 // 2.2.13 RobotPosition
@@ -408,7 +391,7 @@ message MapClickInfo {
   optional float  map_y       = 8; // 地图坐标 Y
 }
 
-// 2.2.18 RadarInfoToClient
+// 2.2.19 RadarInfoToClient
 // 用途: 雷达发送的机器人位置信息 (频率: 触发式发送)
 message RadarInfoToClient {
   repeated RadarSingleRobotInfo robots_info = 1; // 雷达发送的所有机器人位置信息及特殊标识情况，每次触发发送时均按对方 1 号，2 号，3 号，4 号，6 号，7 号；己方 1 号，2 号，3 号，4 号，6 号，7 号的排列顺序发送以下结构的数据包
@@ -421,13 +404,13 @@ message RadarSingleRobotInfo
   optional uint32 is_high_light = 3;// 机器人是否特殊标识（0=否；1=是；2=是，但目标机器人此时定位模块为离线状态）
 }
 
-// 2.2.19 CustomByteBlock
+// 2.2.20 CustomByteBlock
 // 用途: 自定义数据流 (频率: 50Hz)
 message CustomByteBlock {
   optional bytes data = 1; // 最大为 2.4 kbit 的自定义数据包
 }
 
-// 2.2.21 TechCoreMotionStateSync
+// 2.2.22 TechCoreMotionStateSync
 // 用途: 科技核心运动状态同步 (频率: 1Hz)
 message TechCoreMotionStateSync {
   optional uint32 maximum_difficulty_level = 1; // 当前可选择的最高装配难度等级
@@ -440,7 +423,7 @@ message TechCoreMotionStateSync {
   optional uint32 remain_time_step         = 8; // 己方单个步骤装配间隔剩余时长（仅己方正在四级装配时有效）
 }
 
-// 2.2.23 RobotPerformanceSelectionSync
+// 2.2.24 RobotPerformanceSelectionSync
 // 用途: 步兵/英雄性能体系状态同步 (频率: 1Hz)
 message RobotPerformanceSelectionSync {
   optional uint32 shooter        = 1; // 发射机构性能体系
@@ -448,13 +431,7 @@ message RobotPerformanceSelectionSync {
   optional uint32 sentry_control = 3; // 哨兵控制方式选择
 }
 
-// 2.2.26 DeployModeStatusSync
-// 用途: 英雄部署模式状态同步 (频率: 1Hz)
-message DeployModeStatusSync {
-  optional uint32 status = 1; // 当前部署模式状态（0为未部署，1为已部署）
-}
-
-// 2.2.28 RuneStatusSync
+// 2.2.27 RuneStatusSync
 // 用途: 能量机关状态同步 (频率: 1Hz)
 message RuneStatusSync {
     // rune_status 枚举值：
@@ -466,7 +443,7 @@ message RuneStatusSync {
   optional float  average_rings  = 3; // 平均环数（仅大能量机关正在激活状态有效，其余状态该值为 0）
 }
 
-// 2.2.30 SentryStatusSync
+// 2.2.28 SentryStatusSync
 // 用途: 哨兵姿态相关信息 (频率: 1Hz)
 message SentryStatusSync {
   optional uint32 posture_id  = 1; // 姿态 ID（1为进攻姿态，2为防御姿态，3为移动姿态）
@@ -474,14 +451,14 @@ message SentryStatusSync {
   optional bool   is_powered  = 3; // 是否强化
 }
 
-// 2.2.31 DartSelectTargetStatusSync
+// 2.2.30 DartSelectTargetStatusSync
 // 用途: 飞镖目标选择状态同步 (频率: 1Hz)
 message DartSelectTargetStatusSync {
   optional uint32 target_id = 1; // 目标 ID
   optional uint32 open      = 2; // 闸门状态（0：关闭，1：开启中，2：已开启）
 }
 
-// 2.2.33 SentryCtrlResult
+// 2.2.32 SentryCtrlResult
 // 用途: 哨兵控制指令结果反馈 (频率: 触发式发送)
 message SentryCtrlResult {
     // result_code 枚举值：
@@ -491,19 +468,3 @@ message SentryCtrlResult {
   optional uint32 result_code = 2; // 执行结果码
 }
 
-// 2.2.35 AirSupportStatusSync
-// 用途: 空中支援状态反馈 (频率: 1Hz)
-message AirSupportStatusSync {
-    // airsupport_status 枚举值：
-    // 0: 未进行空中支援
-    // 1: 正在空中支援
-    // shooter_status 枚举值：
-    // 0: 发射机构因雷达反制而被锁定，且不可解除
-    // 1: 发射机构正常，未被反制
-    // 2: 发射机构因雷达反制而被锁定，且可花费金币解除
-  optional uint32 airsupport_status = 1; // 空中支援状态
-  optional uint32 left_time         = 2; // 免费空中支援剩余时间
-  optional uint32 cost_coins        = 3; // 付费空中支援已花费金币
-  optional uint32 is_being_targeted = 4; // 当前激光检测模块是否正在检测到被照射（0为未被照射，1为被照射）
-  optional uint32 shooter_status    = 5; // 空中机器人被反制状态
-}

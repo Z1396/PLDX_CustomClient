@@ -262,8 +262,8 @@ add_executable(RoboGo WIN32
     src/keyboard_mouse_state_manager.cpp
     src/panel/bottom_panel.cpp
     src/panel/buff_panel.cpp
+    src/panel/commander_panel.cpp
     src/panel/crosshair.cpp
-    src/panel/custom_video_panel.cpp
     src/panel/header_panel.cpp
     src/panel/log_panel.cpp
     src/panel/mini_map.cpp

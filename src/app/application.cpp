@@ -146,7 +146,7 @@ class BackgroundServices {  // 生命周期与 RunApplication 中的作用域块
 public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* 接口
     // 功能：构造后台服务，按启动选项初始化各组件并启动 IO 线程。
     // 思路：成员初始化列表中依次构造转换器、解码 worker、MQTT 客户端、视频流管理器，
-    //       最后创建一个专用线程运行 Asio io_context。
+    // 最后创建一个专用线程运行 Asio io_context。
     explicit BackgroundServices(const LaunchOptions &options)  // explicit：防止 LaunchOptions 被隐式转换
         :   udp_frame_converter_(options.invert_udp_video), // AvFrameRgbaConverterUDP udp_frame_converter_帧转换器(带初始旋转开关)
             custom_byte_block_decoder_worker_(  // 自定义字节块解码 worker：内部自带线程
@@ -165,6 +165,7 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
                       log_message.text = text; // 日志文本
                       custom_video_log_queue_.emplace(std::move(log_message)); // 日志入队
                   }),  // 日志回调结束，worker 构造参数结束
+
             // MQTT 客户端：连接裁判系统；收到消息时投递到主线程消息队列。
             mqtt_client_(io_context_,  // 共用本类的 io_context
                         options.mqtt_host,  // 解析后的 broker 主机
@@ -172,6 +173,7 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
                         [this](const std::string &topic, const std::string &payload) {  // 下行报文回调(在 IO 线程执行)
                             message_queue_.emplace(topic, payload); // (topic, payload) 原样入队
                         }),  // 回调结束
+
             // UDP 视频流管理器：绑定 0.0.0.0:video_port 接收图传；每解出一帧调用回调。
             video_stream_manager_(io_context_,  // 同一个执行器，避免多线程竞争
                                     boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), options.parsed_video_port),  // 监听所有网卡的指定端口
@@ -189,6 +191,7 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
                                 frame->height); // 格式/转换失败
                 }  // if-else 链结束
             }),  // 帧回调结束
+
             // IO 线程：运行 Asio 事件循环，承接 MQTT 与 UDP 的异步操作。
             io_thread_([this]() {  // 新线程入口：整个 IO 线程都跑在 io_context_.run() 里
                 SPDLOG_INFO("IO线程已启动");  // 标记后台线程就绪
@@ -227,9 +230,13 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
     void ProcessMessages(State &state) {  // 每帧调用一次，必须取空以免积压
         std::pair<std::string, std::string> message;  // 复用的出参，避免每条消息都构造新对象
         while (message_queue_.try_dequeue(message)) { // 直到队列取空
-            HandleMqttMessage(state, mqtt_client_, message.first, message.second, [this](std::span<const uint8_t> packet_bytes) {  // 按 topic 分发；自定义字节块走最后一个回调
-                custom_byte_block_decoder_worker_.enqueue_packet_bytes(packet_bytes); // 字节块包交给解码 worker
-            });  // HandleMqttMessage 调用结束
+            HandleMqttMessage(state,               // 状态引用，避免拷贝
+                            mqtt_client_,             // 客户端引用，避免拷贝
+                            message.first,             // 话题，避免拷贝
+                            message.second,            // 消息，引用，避免拷贝
+                            [this](std::span<const uint8_t> packet_bytes) {  // 按 topic 分发；自定义字节块走最后一个回调
+                                custom_byte_block_decoder_worker_.enqueue_packet_bytes(packet_bytes); // 字节块包交给解码 worker
+                });  // HandleMqttMessage 调用结束
         }  // while 结束
     }  // ProcessMessages 结束
 
@@ -329,71 +336,6 @@ void UploadLatestVideoFrames(RoboGo::platform::PlatformBackend &platform_backend
            && (now - last_frame_time) <= fallback_timeout; // 未超过无帧超时
 }  // IsVideoDisplayReady 结束
 
-// 功能：维护"哪一路视频作为主画面"的偏好与自动回退逻辑。
-// 思路：按 H 键手动切换偏好；再结合两路视频是否就绪，决定实际主画面——
-//       优先 UDP；UDP 无数据而自定义视频就绪时自动切到自定义视频，UDP 恢复后再切回。
-void UpdateVideoLayoutPreference(State &state,  // 用于写系统日志
-                                 const TextureView &udp_video_texture,  // UDP 视频纹理状态
-                                 const TextureView &custom_video_texture,  // 自定义视频纹理状态
-                                 std::chrono::steady_clock::time_point last_udp_frame_time,  // UDP 最近出帧时刻
-                                 std::chrono::steady_clock::time_point last_custom_frame_time,  // 自定义视频最近出帧时刻
-                                 bool &prefer_custom_video_as_main,  // 出参：用户偏好(按 H 翻转)
-                                 bool &using_custom_video_as_main) {  // 出参：当前实际主画面
-    const auto now = std::chrono::steady_clock::now();  // 本帧统一时间基准，避免两次取时导致判断不一致
-    // 分别计算两路视频当前是否可显示。
-    const bool udp_video_display_ready = IsVideoDisplayReady(  // UDP 是否可显示
-            udp_video_texture,  // 纹理状态
-            last_udp_frame_time,  // 最近出帧时刻
-            kUdpVideoFallbackTimeout,  // 无帧超时阈值
-            now);  // 当前时刻
-    const bool custom_video_display_ready = IsVideoDisplayReady(  // 自定义视频是否可显示
-            custom_video_texture,  // 纹理状态
-            last_custom_frame_time,  // 最近出帧时刻
-            kCustomVideoFallbackTimeout,  // 无帧超时阈值
-            now);  // 当前时刻
-
-    bool handled_manual_video_layout_toggle = false; // 本帧是否已处理手动切换
-    // 按 H 键(且未在输入文本)手动翻转主画面偏好。
-    if (ImGui::IsKeyPressed(ImGuiKey_H, false) && !ImGui::GetIO().WantTextInput) {  // 第二参数 false：不重复触发(避免长按连翻)
-        prefer_custom_video_as_main = !prefer_custom_video_as_main; // 翻转偏好
-        handled_manual_video_layout_toggle = true;  // 标记本帧已处理，避免下面再用自动逻辑覆盖
-
-        // 根据偏好与当前两路可用性，输出对应的提示日志。
-        if (prefer_custom_video_as_main) {  // 目标：自定义视频为主
-            if (custom_video_display_ready) {  // 目标已就绪
-                AppendSystemLog(state, 0, "主画面偏好已切换到 CustomByteBlock 视频流。");  // 0=普通信息
-            } else if (udp_video_display_ready) {  // 目标未就绪但 UDP 可用
-                AppendSystemLog(state, 1, "主画面偏好已切换到 CustomByteBlock 视频流，等待 CustomByteBlock 视频流恢复后自动切换。");  // 1=警告
-            } else {  // 两路都不可用
-                AppendSystemLog(state, 1, "主画面偏好已切换到 CustomByteBlock 视频流，当前两路视频都不可用。");  // 仍记录偏好已改
-            }  // if-else-if 结束
-        } else {  // 目标：UDP 为主
-            if (udp_video_display_ready) {  // 目标已就绪
-                AppendSystemLog(state, 0, "主画面偏好已切换到 UDP 视频流。");  // 普通信息
-            } else if (custom_video_display_ready) {  // UDP 暂时无数据
-                AppendSystemLog(state, 1, "主画面偏好已切换到 UDP 视频流，UDP 视频流恢复后会自动切回。");  // 提示会自动切回
-            } else {  // 两路都不可用
-                AppendSystemLog(state, 1, "主画面偏好已切换到 UDP 视频流，当前两路视频都不可用。");  // 提示当前无画面
-            }  // if-else-if 结束
-        }  // if-else 结束
-    }  // if 结束
-
-    // 实际是否使用自定义视频作为主画面：自定义视频就绪，且(用户偏好它 或 UDP 不可用)。
-    const bool should_use_custom_video_as_main = custom_video_display_ready  // 前提：自定义视频必须有画面
-                                                 && (prefer_custom_video_as_main || !udp_video_display_ready);  // 用户偏好它，或 UDP 已无数据
-    if (!handled_manual_video_layout_toggle && should_use_custom_video_as_main != using_custom_video_as_main) {  // 非本帧手动切换，且实际选择发生变化
-        // 非手动切换且实际主画面发生变化时，更新状态并记录日志。
-        using_custom_video_as_main = should_use_custom_video_as_main;  // 先同步状态
-        if (using_custom_video_as_main) {  // 自动切到了自定义视频
-            AppendSystemLog(state, 1, "UDP 视频流无数据，主画面已切换到 CustomByteBlock 视频流");  // 警告级别：属于降级
-        } else if (udp_video_display_ready) {  // 自动切回了 UDP
-            AppendSystemLog(state, 0, "UDP 视频流恢复，主画面已切回 UDP 视频流");  // 普通信息：恢复正常
-        }  // if-else-if 结束
-    } else {  // 本帧已手动处理，或无变化
-        using_custom_video_as_main = should_use_custom_video_as_main; // 同步状态
-    }  // if-else 结束
-}  // UpdateVideoLayoutPreference 结束
-
 // 功能：切换 UDP 视频的 180 度旋转开关，并记录日志。
 void ToggleUdpVideoInversion(State &state, BackgroundServices &background_services) {  // 键鼠快捷键与界面按钮共用
     const bool udp_video_inverted = !background_services.IsUdpVideoInverted(); // 取反当前开关
@@ -467,7 +409,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     auto mini_map_image = RoboGo::resource::LoadEmbeddedMapImage();  // 返回 optional<VideoFrame>：内嵌资源解码结果
     if (!mini_map_image.has_value()) {  // 资源缺失/解码失败
         SPDLOG_WARN("未能加载内嵌小地图，将回退为纯色小地图背景");  // 仅告警，不影响主流程
-    } else if // 小地图加载成功：尝试上传纹理
+    } else if 
+    // 小地图加载成功：尝试上传纹理
     // 尝试上传小地图纹理
     // 如果上传成功，记录日志
     (platform_backend.UploadTexture(TextureSlot::MiniMap, *mini_map_image)) {
@@ -476,14 +419,13 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
         SPDLOG_ERROR("创建小地图纹理失败 width={} height={}", mini_map_image->width, mini_map_image->height);  // 记录失败原因相关尺寸
     }  // if-else-if 结束
 
-    {  // 作用域块
+    {   // 作用域块
         // 用作用域包裹后台服务，保证退出时先析构(停止线程)再继续收尾
         BackgroundServices background_services(options); // 启动 IO 线程、MQTT、视频流等
+        
         // 记录两路视频最近一次出帧的时间，初值 min() 表示"尚未收到帧"。
         std::chrono::steady_clock::time_point last_udp_frame_time = std::chrono::steady_clock::time_point::min();  // UDP 从未收到帧
         std::chrono::steady_clock::time_point last_custom_frame_time = std::chrono::steady_clock::time_point::min();  // 自定义视频从未收到帧
-        bool prefer_custom_video_as_main = false; // 用户是否偏好自定义视频为主画面
-        bool using_custom_video_as_main = false; // 当前实际是否以自定义视频为主画面
 
         // 统计从启动到后台服务就绪的耗时。
         const auto startup_ms = std::chrono::duration_cast<std::chrono::milliseconds>(  // 转毫秒
@@ -491,7 +433,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
                                         .count();  // 取整数值
         SPDLOG_INFO("程序启动完成 startup_ms={}", startup_ms);  // 记录启动耗时
 
-        // 主循环：ProcessEvents 返回 false(如窗口关闭)时退出。
+        // 主循环：如果遇到窗口关闭消息（比如用户点击关闭按钮），标记应关闭，退出循环。 
         while (platform_backend.ProcessEvents()) {  // 泵一次平台事件(窗口消息/输入)
             background_services.ProcessMessages(state); // 消费 MQTT 下行消息
             background_services.DrainCustomVideoLogs(state); // 搬运自定义视频日志
@@ -512,14 +454,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
             const TextureView custom_video_texture = platform_backend.GetTextureView(TextureSlot::CustomVideo);  // 自定义视频纹理视图
             const TextureView mini_map_texture = platform_backend.GetTextureView(TextureSlot::MiniMap);  // 小地图纹理视图
 
-            // 根据按键与两路视频可用性，更新主画面选择。
-            UpdateVideoLayoutPreference(state,  // 状态(用于写日志)
-                                        udp_video_texture,  // UDP 纹理
-                                        custom_video_texture,  // 自定义纹理
-                                        last_udp_frame_time,  // UDP 最近出帧时刻
-                                        last_custom_frame_time,  // 自定义最近出帧时刻
-                                        prefer_custom_video_as_main,  // 用户偏好(按 H 会被翻转)
-                                        using_custom_video_as_main);  // 实际主画面(可能自动变化)
+            // 【2027 变更】英雄部署模式已删除，不再有"第二路主画面"的概念：
+            // 主画面恒为 UDP 图传，CustomByteBlock 视频流只作为左栏的次画面预览，不再参与切换。
 
             // 按 I 键(且非文本输入)切换 UDP 视频 180 度旋转。
             if (ImGui::IsKeyPressed(ImGuiKey_I, false) && !ImGui::GetIO().WantTextInput) {  // 避免在输入框里打字时误触发
@@ -527,6 +463,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
             }  // if 结束
 
             const auto now = std::chrono::steady_clock::now();  // 本帧统一时间基准
+            
             // 为绘制重新计算两路视频的就绪状态(供界面决定占位/提示)。
             const bool udp_video_display_ready = IsVideoDisplayReady(  // UDP 是否有画面
                     udp_video_texture,  // 纹理状态
@@ -547,8 +484,6 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
                     udp_video_texture.size,  // UDP 纹理尺寸
                     custom_video_texture.texture_ref,  // 自定义纹理句柄
                     custom_video_texture.size,  // 自定义纹理尺寸
-                    using_custom_video_as_main,  // 当前实际主画面
-                    prefer_custom_video_as_main,  // 用户偏好(界面可修改)
                     udp_video_display_ready,  // UDP 是否可显示
                     custom_video_display_ready,  // 自定义是否可显示
                     background_services.IsUdpVideoInverted(),  // 当前旋转开关

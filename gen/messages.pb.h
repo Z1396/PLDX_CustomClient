@@ -47,22 +47,6 @@ template <typename T>
 struct TableStruct_messages_2eproto {
   static const ::uint32_t offsets[];
 };
-class AirSupportCommand;
-struct AirSupportCommandGlobalsTypeInternal;
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-extern AirSupportCommandGlobalsTypeInternal AirSupportCommand_globals_;
-extern const ::google::protobuf::internal::ClassDataLite AirSupportCommand_class_data_;
-#else
-extern const AirSupportCommandGlobalsTypeInternal AirSupportCommand_globals_;
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-class AirSupportStatusSync;
-struct AirSupportStatusSyncGlobalsTypeInternal;
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-extern AirSupportStatusSyncGlobalsTypeInternal AirSupportStatusSync_globals_;
-extern const ::google::protobuf::internal::ClassDataLite AirSupportStatusSync_class_data_;
-#else
-extern const AirSupportStatusSyncGlobalsTypeInternal AirSupportStatusSync_globals_;
-#endif  // PROTOBUF_MESSAGE_GLOBALS
 class AssemblyCommand;
 struct AssemblyCommandGlobalsTypeInternal;
 #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -119,14 +103,6 @@ extern const ::google::protobuf::internal::ClassDataLite DartSelectTargetStatusS
 #else
 extern const DartSelectTargetStatusSyncGlobalsTypeInternal DartSelectTargetStatusSync_globals_;
 #endif  // PROTOBUF_MESSAGE_GLOBALS
-class DeployModeStatusSync;
-struct DeployModeStatusSyncGlobalsTypeInternal;
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-extern DeployModeStatusSyncGlobalsTypeInternal DeployModeStatusSync_globals_;
-extern const ::google::protobuf::internal::ClassDataLite DeployModeStatusSync_class_data_;
-#else
-extern const DeployModeStatusSyncGlobalsTypeInternal DeployModeStatusSync_globals_;
-#endif  // PROTOBUF_MESSAGE_GLOBALS
 class Event;
 struct EventGlobalsTypeInternal;
 #ifndef PROTOBUF_MESSAGE_GLOBALS
@@ -166,14 +142,6 @@ extern GlobalUnitStatusGlobalsTypeInternal GlobalUnitStatus_globals_;
 extern const ::google::protobuf::internal::ClassDataLite GlobalUnitStatus_class_data_;
 #else
 extern const GlobalUnitStatusGlobalsTypeInternal GlobalUnitStatus_globals_;
-#endif  // PROTOBUF_MESSAGE_GLOBALS
-class HeroDeployModeEventCommand;
-struct HeroDeployModeEventCommandGlobalsTypeInternal;
-#ifndef PROTOBUF_MESSAGE_GLOBALS
-extern HeroDeployModeEventCommandGlobalsTypeInternal HeroDeployModeEventCommand_globals_;
-extern const ::google::protobuf::internal::ClassDataLite HeroDeployModeEventCommand_class_data_;
-#else
-extern const HeroDeployModeEventCommandGlobalsTypeInternal HeroDeployModeEventCommand_globals_;
 #endif  // PROTOBUF_MESSAGE_GLOBALS
 class KeyboardMouseControl;
 struct KeyboardMouseControlGlobalsTypeInternal;
@@ -400,7 +368,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED TechCoreMotionStateSync final : pub
   [[nodiscard]] static const TechCoreMotionStateSync& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<TechCoreMotionStateSync>(&TechCoreMotionStateSync_globals_);
   }
-  static constexpr int kIndexInFileMessages = 29;
+  static constexpr int kIndexInFileMessages = 27;
   friend void swap(TechCoreMotionStateSync& a, TechCoreMotionStateSync& b) { a.Swap(&b); }
   inline void Swap(TechCoreMotionStateSync* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -688,7 +656,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SentryStatusSync final : public ::g
   [[nodiscard]] static const SentryStatusSync& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SentryStatusSync>(&SentryStatusSync_globals_);
   }
-  static constexpr int kIndexInFileMessages = 33;
+  static constexpr int kIndexInFileMessages = 30;
   friend void swap(SentryStatusSync& a, SentryStatusSync& b) { a.Swap(&b); }
   inline void Swap(SentryStatusSync* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -906,7 +874,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SentryCtrlResult final : public ::g
   [[nodiscard]] static const SentryCtrlResult& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SentryCtrlResult>(&SentryCtrlResult_globals_);
   }
-  static constexpr int kIndexInFileMessages = 35;
+  static constexpr int kIndexInFileMessages = 32;
   friend void swap(SentryCtrlResult& a, SentryCtrlResult& b) { a.Swap(&b); }
   inline void Swap(SentryCtrlResult* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -1110,7 +1078,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED SentryCtrlCommand final : public ::
   [[nodiscard]] static const SentryCtrlCommand& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<SentryCtrlCommand>(&SentryCtrlCommand_globals_);
   }
-  static constexpr int kIndexInFileMessages = 9;
+  static constexpr int kIndexInFileMessages = 8;
   friend void swap(SentryCtrlCommand& a, SentryCtrlCommand& b) { a.Swap(&b); }
   inline void Swap(SentryCtrlCommand* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -1300,7 +1268,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RuneStatusSync final : public ::goo
   [[nodiscard]] static const RuneStatusSync& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RuneStatusSync>(&RuneStatusSync_globals_);
   }
-  static constexpr int kIndexInFileMessages = 32;
+  static constexpr int kIndexInFileMessages = 29;
   friend void swap(RuneStatusSync& a, RuneStatusSync& b) { a.Swap(&b); }
   inline void Swap(RuneStatusSync* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -1518,7 +1486,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RuneActivateCommand final : public 
   [[nodiscard]] static const RuneActivateCommand& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RuneActivateCommand>(&RuneActivateCommand_globals_);
   }
-  static constexpr int kIndexInFileMessages = 7;
+  static constexpr int kIndexInFileMessages = 6;
   friend void swap(RuneActivateCommand& a, RuneActivateCommand& b) { a.Swap(&b); }
   inline void Swap(RuneActivateCommand* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -1708,7 +1676,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotStaticStatus final : public ::
   [[nodiscard]] static const RobotStaticStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotStaticStatus>(&RobotStaticStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 18;
+  static constexpr int kIndexInFileMessages = 16;
   friend void swap(RobotStaticStatus& a, RobotStaticStatus& b) { a.Swap(&b); }
   inline void Swap(RobotStaticStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -2080,7 +2048,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotRespawnStatus final : public :
   [[nodiscard]] static const RobotRespawnStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotRespawnStatus>(&RobotRespawnStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 17;
+  static constexpr int kIndexInFileMessages = 15;
   friend void swap(RobotRespawnStatus& a, RobotRespawnStatus& b) { a.Swap(&b); }
   inline void Swap(RobotRespawnStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -2340,7 +2308,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotPosition final : public ::goog
   [[nodiscard]] static const RobotPosition& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotPosition>(&RobotPosition_globals_);
   }
-  static constexpr int kIndexInFileMessages = 21;
+  static constexpr int kIndexInFileMessages = 19;
   friend void swap(RobotPosition& a, RobotPosition& b) { a.Swap(&b); }
   inline void Swap(RobotPosition* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -2586,7 +2554,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotPerformanceSelectionSync final
   [[nodiscard]] static const RobotPerformanceSelectionSync& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotPerformanceSelectionSync>(&RobotPerformanceSelectionSync_globals_);
   }
-  static constexpr int kIndexInFileMessages = 30;
+  static constexpr int kIndexInFileMessages = 28;
   friend void swap(RobotPerformanceSelectionSync& a, RobotPerformanceSelectionSync& b) { a.Swap(&b); }
   inline void Swap(RobotPerformanceSelectionSync* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3022,7 +2990,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotPathPlanInfo final : public ::
   [[nodiscard]] static const RobotPathPlanInfo& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotPathPlanInfo>(&RobotPathPlanInfo_globals_);
   }
-  static constexpr int kIndexInFileMessages = 24;
+  static constexpr int kIndexInFileMessages = 22;
   friend void swap(RobotPathPlanInfo& a, RobotPathPlanInfo& b) { a.Swap(&b); }
   inline void Swap(RobotPathPlanInfo* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3300,7 +3268,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotModuleStatus final : public ::
   [[nodiscard]] static const RobotModuleStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotModuleStatus>(&RobotModuleStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 20;
+  static constexpr int kIndexInFileMessages = 18;
   friend void swap(RobotModuleStatus& a, RobotModuleStatus& b) { a.Swap(&b); }
   inline void Swap(RobotModuleStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3399,7 +3367,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotModuleStatus final : public ::
     kVideoTransmissionFieldNumber = 8,
     kCapacitorFieldNumber = 9,
     kMainControllerFieldNumber = 10,
-    kLaserDetectionModuleFieldNumber = 11,
+    kModular42MmFieldNumber = 11,
   };
   // optional uint32 power_manager = 1;
   [[nodiscard]] bool has_power_manager()
@@ -3521,16 +3489,16 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotModuleStatus final : public ::
   void _internal_set_main_controller(::uint32_t value);
 
   public:
-  // optional uint32 laser_detection_module = 11;
-  [[nodiscard]] bool has_laser_detection_module()
+  // optional uint32 modular_42mm = 11;
+  [[nodiscard]] bool has_modular_42mm()
       const;
-  void clear_laser_detection_module() ;
-  [[nodiscard]] ::uint32_t laser_detection_module() const;
-  void set_laser_detection_module(::uint32_t value);
+  void clear_modular_42mm() ;
+  [[nodiscard]] ::uint32_t modular_42mm() const;
+  void set_modular_42mm(::uint32_t value);
 
   private:
-  ::uint32_t _internal_laser_detection_module() const;
-  void _internal_set_laser_detection_module(::uint32_t value);
+  ::uint32_t _internal_modular_42mm() const;
+  void _internal_set_modular_42mm(::uint32_t value);
 
   public:
   // @@protoc_insertion_point(class_scope:RobotModuleStatus)
@@ -3576,7 +3544,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotModuleStatus final : public ::
     ::uint32_t video_transmission_;
     ::uint32_t capacitor_;
     ::uint32_t main_controller_;
-    ::uint32_t laser_detection_module_;
+    ::uint32_t modular_42mm_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -3630,7 +3598,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotInjuryStat final : public ::go
   [[nodiscard]] static const RobotInjuryStat& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotInjuryStat>(&RobotInjuryStat_globals_);
   }
-  static constexpr int kIndexInFileMessages = 16;
+  static constexpr int kIndexInFileMessages = 14;
   friend void swap(RobotInjuryStat& a, RobotInjuryStat& b) { a.Swap(&b); }
   inline void Swap(RobotInjuryStat* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -3946,7 +3914,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotDynamicStatus final : public :
   [[nodiscard]] static const RobotDynamicStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RobotDynamicStatus>(&RobotDynamicStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 19;
+  static constexpr int kIndexInFileMessages = 17;
   friend void swap(RobotDynamicStatus& a, RobotDynamicStatus& b) { a.Swap(&b); }
   inline void Swap(RobotDynamicStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -4038,7 +4006,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotDynamicStatus final : public :
     kCurrentHealthFieldNumber = 1,
     kCurrentHeatFieldNumber = 2,
     kLastProjectileFireRateFieldNumber = 3,
-    kCurrentChassisEnergyFieldNumber = 4,
+    kReservedFieldNumber = 4,
     kCurrentBufferEnergyFieldNumber = 5,
     kCurrentExperienceFieldNumber = 6,
     kExperienceForUpgradeFieldNumber = 7,
@@ -4085,16 +4053,16 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotDynamicStatus final : public :
   void _internal_set_last_projectile_fire_rate(float value);
 
   public:
-  // optional uint32 current_chassis_energy = 4;
-  [[nodiscard]] bool has_current_chassis_energy()
+  // optional uint32 reserved = 4;
+  [[nodiscard]] bool has_reserved()
       const;
-  void clear_current_chassis_energy() ;
-  [[nodiscard]] ::uint32_t current_chassis_energy() const;
-  void set_current_chassis_energy(::uint32_t value);
+  void clear_reserved() ;
+  [[nodiscard]] ::uint32_t reserved() const;
+  void set_reserved(::uint32_t value);
 
   private:
-  ::uint32_t _internal_current_chassis_energy() const;
-  void _internal_set_current_chassis_energy(::uint32_t value);
+  ::uint32_t _internal_reserved() const;
+  void _internal_set_reserved(::uint32_t value);
 
   public:
   // optional uint32 current_buffer_energy = 5;
@@ -4241,7 +4209,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RobotDynamicStatus final : public :
     ::uint32_t current_health_;
     float current_heat_;
     float last_projectile_fire_rate_;
-    ::uint32_t current_chassis_energy_;
+    ::uint32_t reserved_;
     ::uint32_t current_buffer_energy_;
     ::uint32_t current_experience_;
     ::uint32_t experience_for_upgrade_;
@@ -4304,7 +4272,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RadarSingleRobotInfo final : public
   [[nodiscard]] static const RadarSingleRobotInfo& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RadarSingleRobotInfo>(&RadarSingleRobotInfo_globals_);
   }
-  static constexpr int kIndexInFileMessages = 27;
+  static constexpr int kIndexInFileMessages = 25;
   friend void swap(RadarSingleRobotInfo& a, RadarSingleRobotInfo& b) { a.Swap(&b); }
   inline void Swap(RadarSingleRobotInfo* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -4522,7 +4490,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED PenaltyInfo final : public ::google
   [[nodiscard]] static const PenaltyInfo& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<PenaltyInfo>(&PenaltyInfo_globals_);
   }
-  static constexpr int kIndexInFileMessages = 23;
+  static constexpr int kIndexInFileMessages = 21;
   friend void swap(PenaltyInfo& a, PenaltyInfo& b) { a.Swap(&b); }
   inline void Swap(PenaltyInfo* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -4740,7 +4708,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED MapClickInfo final : public ::googl
   [[nodiscard]] static const MapClickInfo& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<MapClickInfo>(&MapClickInfo_globals_);
   }
-  static constexpr int kIndexInFileMessages = 25;
+  static constexpr int kIndexInFileMessages = 23;
   friend void swap(MapClickInfo& a, MapClickInfo& b) { a.Swap(&b); }
   inline void Swap(MapClickInfo* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -5554,196 +5522,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED KeyboardMouseControl final : public
 };
 // -------------------------------------------------------------------
 
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED HeroDeployModeEventCommand final : public ::google::protobuf::MessageLite
-/* @@protoc_insertion_point(class_definition:HeroDeployModeEventCommand) */ {
- public:
-  inline HeroDeployModeEventCommand() : HeroDeployModeEventCommand(nullptr) {}
-  ~HeroDeployModeEventCommand() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(HeroDeployModeEventCommand* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(HeroDeployModeEventCommand));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr HeroDeployModeEventCommand(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline HeroDeployModeEventCommand(const HeroDeployModeEventCommand& from) : HeroDeployModeEventCommand(nullptr, from) {}
-  inline HeroDeployModeEventCommand(HeroDeployModeEventCommand&& from) noexcept : HeroDeployModeEventCommand(nullptr, ::std::move(from)) {}
-  inline HeroDeployModeEventCommand& operator=(const HeroDeployModeEventCommand& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline HeroDeployModeEventCommand& operator=(HeroDeployModeEventCommand&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::std::string& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::std::string>(::google::protobuf::internal::GetEmptyString);
-  }
-  [[nodiscard]] inline ::std::string* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::std::string>();
-  }
-
-  [[nodiscard]] static const HeroDeployModeEventCommand& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<HeroDeployModeEventCommand>(&HeroDeployModeEventCommand_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 6;
-  friend void swap(HeroDeployModeEventCommand& a, HeroDeployModeEventCommand& b) { a.Swap(&b); }
-  inline void Swap(HeroDeployModeEventCommand* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(HeroDeployModeEventCommand* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] HeroDeployModeEventCommand* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::MessageLite::DefaultConstruct<HeroDeployModeEventCommand>(arena);
-  }
-  void CopyFrom(const HeroDeployModeEventCommand& from);
-  void MergeFrom(const HeroDeployModeEventCommand& from) { HeroDeployModeEventCommand::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(HeroDeployModeEventCommand* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "HeroDeployModeEventCommand"; }
-
-  explicit HeroDeployModeEventCommand(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  HeroDeployModeEventCommand(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const HeroDeployModeEventCommand& from);
-  HeroDeployModeEventCommand(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, HeroDeployModeEventCommand&& from) noexcept
-      : HeroDeployModeEventCommand(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kModeFieldNumber = 1,
-  };
-  // optional uint32 mode = 1;
-  [[nodiscard]] bool has_mode()
-      const;
-  void clear_mode() ;
-  [[nodiscard]] ::uint32_t mode() const;
-  void set_mode(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_mode() const;
-  void _internal_set_mode(::uint32_t value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:HeroDeployModeEventCommand)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<0, 1,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const HeroDeployModeEventCommand& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::uint32_t mode_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_messages_2eproto;
-};
-// -------------------------------------------------------------------
-
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::google::protobuf::MessageLite
 /* @@protoc_insertion_point(class_definition:GlobalUnitStatus) */ {
  public:
@@ -5790,7 +5568,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
   [[nodiscard]] static const GlobalUnitStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GlobalUnitStatus>(&GlobalUnitStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 12;
+  static constexpr int kIndexInFileMessages = 10;
   friend void swap(GlobalUnitStatus& a, GlobalUnitStatus& b) { a.Swap(&b); }
   inline void Swap(GlobalUnitStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -5884,15 +5662,17 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
     kBaseHealthFieldNumber = 1,
     kBaseStatusFieldNumber = 2,
     kBaseShieldFieldNumber = 3,
-    kOutpostHealthFieldNumber = 4,
-    kOutpostStatusFieldNumber = 5,
+    kOutpostRHealthFieldNumber = 4,
+    kOutpostRStatusFieldNumber = 5,
     kEnemyBaseHealthFieldNumber = 6,
     kEnemyBaseStatusFieldNumber = 7,
     kEnemyBaseShieldFieldNumber = 8,
-    kEnemyOutpostHealthFieldNumber = 9,
-    kEnemyOutpostStatusFieldNumber = 10,
+    kOutpostBHealthFieldNumber = 9,
+    kOutpostBStatusFieldNumber = 10,
     kTotalDamageAllyFieldNumber = 13,
     kTotalDamageEnemyFieldNumber = 14,
+    kTotalCPAllyFieldNumber = 15,
+    kTotalCPEnemyFieldNumber = 16,
   };
   // repeated uint32 robot_health = 11;
   [[nodiscard]] int robot_health_size()
@@ -5970,28 +5750,28 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
   void _internal_set_base_shield(::uint32_t value);
 
   public:
-  // optional uint32 outpost_health = 4;
-  [[nodiscard]] bool has_outpost_health()
+  // optional uint32 outpost_R_health = 4;
+  [[nodiscard]] bool has_outpost_r_health()
       const;
-  void clear_outpost_health() ;
-  [[nodiscard]] ::uint32_t outpost_health() const;
-  void set_outpost_health(::uint32_t value);
+  void clear_outpost_r_health() ;
+  [[nodiscard]] ::uint32_t outpost_r_health() const;
+  void set_outpost_r_health(::uint32_t value);
 
   private:
-  ::uint32_t _internal_outpost_health() const;
-  void _internal_set_outpost_health(::uint32_t value);
+  ::uint32_t _internal_outpost_r_health() const;
+  void _internal_set_outpost_r_health(::uint32_t value);
 
   public:
-  // optional uint32 outpost_status = 5;
-  [[nodiscard]] bool has_outpost_status()
+  // optional uint32 outpost_R_status = 5;
+  [[nodiscard]] bool has_outpost_r_status()
       const;
-  void clear_outpost_status() ;
-  [[nodiscard]] ::uint32_t outpost_status() const;
-  void set_outpost_status(::uint32_t value);
+  void clear_outpost_r_status() ;
+  [[nodiscard]] ::uint32_t outpost_r_status() const;
+  void set_outpost_r_status(::uint32_t value);
 
   private:
-  ::uint32_t _internal_outpost_status() const;
-  void _internal_set_outpost_status(::uint32_t value);
+  ::uint32_t _internal_outpost_r_status() const;
+  void _internal_set_outpost_r_status(::uint32_t value);
 
   public:
   // optional uint32 enemy_base_health = 6;
@@ -6030,28 +5810,28 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
   void _internal_set_enemy_base_shield(::uint32_t value);
 
   public:
-  // optional uint32 enemy_outpost_health = 9;
-  [[nodiscard]] bool has_enemy_outpost_health()
+  // optional uint32 outpost_B_health = 9;
+  [[nodiscard]] bool has_outpost_b_health()
       const;
-  void clear_enemy_outpost_health() ;
-  [[nodiscard]] ::uint32_t enemy_outpost_health() const;
-  void set_enemy_outpost_health(::uint32_t value);
+  void clear_outpost_b_health() ;
+  [[nodiscard]] ::uint32_t outpost_b_health() const;
+  void set_outpost_b_health(::uint32_t value);
 
   private:
-  ::uint32_t _internal_enemy_outpost_health() const;
-  void _internal_set_enemy_outpost_health(::uint32_t value);
+  ::uint32_t _internal_outpost_b_health() const;
+  void _internal_set_outpost_b_health(::uint32_t value);
 
   public:
-  // optional uint32 enemy_outpost_status = 10;
-  [[nodiscard]] bool has_enemy_outpost_status()
+  // optional uint32 outpost_B_status = 10;
+  [[nodiscard]] bool has_outpost_b_status()
       const;
-  void clear_enemy_outpost_status() ;
-  [[nodiscard]] ::uint32_t enemy_outpost_status() const;
-  void set_enemy_outpost_status(::uint32_t value);
+  void clear_outpost_b_status() ;
+  [[nodiscard]] ::uint32_t outpost_b_status() const;
+  void set_outpost_b_status(::uint32_t value);
 
   private:
-  ::uint32_t _internal_enemy_outpost_status() const;
-  void _internal_set_enemy_outpost_status(::uint32_t value);
+  ::uint32_t _internal_outpost_b_status() const;
+  void _internal_set_outpost_b_status(::uint32_t value);
 
   public:
   // optional uint32 total_damage_ally = 13;
@@ -6078,11 +5858,35 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
   void _internal_set_total_damage_enemy(::uint32_t value);
 
   public:
+  // optional uint32 total_CP_ally = 15;
+  [[nodiscard]] bool has_total_cp_ally()
+      const;
+  void clear_total_cp_ally() ;
+  [[nodiscard]] ::uint32_t total_cp_ally() const;
+  void set_total_cp_ally(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_total_cp_ally() const;
+  void _internal_set_total_cp_ally(::uint32_t value);
+
+  public:
+  // optional uint32 total_CP_enemy = 16;
+  [[nodiscard]] bool has_total_cp_enemy()
+      const;
+  void clear_total_cp_enemy() ;
+  [[nodiscard]] ::uint32_t total_cp_enemy() const;
+  void set_total_cp_enemy(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_total_cp_enemy() const;
+  void _internal_set_total_cp_enemy(::uint32_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:GlobalUnitStatus)
  private:
   class _Internal;
   using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<4, 14,
+      ::google::protobuf::internal::TcParseTable<4, 16,
                           0, 0,
                           2>;
   static constexpr ParseTableT_ InternalGenerateParseTable_(
@@ -6118,15 +5922,17 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalUnitStatus final : public ::g
     ::uint32_t base_health_;
     ::uint32_t base_status_;
     ::uint32_t base_shield_;
-    ::uint32_t outpost_health_;
-    ::uint32_t outpost_status_;
+    ::uint32_t outpost_r_health_;
+    ::uint32_t outpost_r_status_;
     ::uint32_t enemy_base_health_;
     ::uint32_t enemy_base_status_;
     ::uint32_t enemy_base_shield_;
-    ::uint32_t enemy_outpost_health_;
-    ::uint32_t enemy_outpost_status_;
+    ::uint32_t outpost_b_health_;
+    ::uint32_t outpost_b_status_;
     ::uint32_t total_damage_ally_;
     ::uint32_t total_damage_enemy_;
+    ::uint32_t total_cp_ally_;
+    ::uint32_t total_cp_enemy_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -6180,7 +5986,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalSpecialMechanism final : publ
   [[nodiscard]] static const GlobalSpecialMechanism& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GlobalSpecialMechanism>(&GlobalSpecialMechanism_globals_);
   }
-  static constexpr int kIndexInFileMessages = 14;
+  static constexpr int kIndexInFileMessages = 12;
   friend void swap(GlobalSpecialMechanism& a, GlobalSpecialMechanism& b) { a.Swap(&b); }
   inline void Swap(GlobalSpecialMechanism* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -6402,7 +6208,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GlobalLogisticsStatus final : publi
   [[nodiscard]] static const GlobalLogisticsStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GlobalLogisticsStatus>(&GlobalLogisticsStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 13;
+  static constexpr int kIndexInFileMessages = 11;
   friend void swap(GlobalLogisticsStatus& a, GlobalLogisticsStatus& b) { a.Swap(&b); }
   inline void Swap(GlobalLogisticsStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -6634,7 +6440,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED GameStatus final : public ::google:
   [[nodiscard]] static const GameStatus& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<GameStatus>(&GameStatus_globals_);
   }
-  static constexpr int kIndexInFileMessages = 11;
+  static constexpr int kIndexInFileMessages = 9;
   friend void swap(GameStatus& a, GameStatus& b) { a.Swap(&b); }
   inline void Swap(GameStatus* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -6950,7 +6756,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Event final : public ::google::prot
   [[nodiscard]] static const Event& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<Event>(&Event_globals_);
   }
-  static constexpr int kIndexInFileMessages = 15;
+  static constexpr int kIndexInFileMessages = 13;
   friend void swap(Event& a, Event& b) { a.Swap(&b); }
   inline void Swap(Event* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -7113,196 +6919,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Event final : public ::google::prot
 };
 // -------------------------------------------------------------------
 
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED DeployModeStatusSync final : public ::google::protobuf::MessageLite
-/* @@protoc_insertion_point(class_definition:DeployModeStatusSync) */ {
- public:
-  inline DeployModeStatusSync() : DeployModeStatusSync(nullptr) {}
-  ~DeployModeStatusSync() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(DeployModeStatusSync* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(DeployModeStatusSync));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr DeployModeStatusSync(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline DeployModeStatusSync(const DeployModeStatusSync& from) : DeployModeStatusSync(nullptr, from) {}
-  inline DeployModeStatusSync(DeployModeStatusSync&& from) noexcept : DeployModeStatusSync(nullptr, ::std::move(from)) {}
-  inline DeployModeStatusSync& operator=(const DeployModeStatusSync& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline DeployModeStatusSync& operator=(DeployModeStatusSync&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::std::string& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::std::string>(::google::protobuf::internal::GetEmptyString);
-  }
-  [[nodiscard]] inline ::std::string* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::std::string>();
-  }
-
-  [[nodiscard]] static const DeployModeStatusSync& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<DeployModeStatusSync>(&DeployModeStatusSync_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 31;
-  friend void swap(DeployModeStatusSync& a, DeployModeStatusSync& b) { a.Swap(&b); }
-  inline void Swap(DeployModeStatusSync* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(DeployModeStatusSync* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] DeployModeStatusSync* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::MessageLite::DefaultConstruct<DeployModeStatusSync>(arena);
-  }
-  void CopyFrom(const DeployModeStatusSync& from);
-  void MergeFrom(const DeployModeStatusSync& from) { DeployModeStatusSync::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(DeployModeStatusSync* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "DeployModeStatusSync"; }
-
-  explicit DeployModeStatusSync(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  DeployModeStatusSync(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const DeployModeStatusSync& from);
-  DeployModeStatusSync(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, DeployModeStatusSync&& from) noexcept
-      : DeployModeStatusSync(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kStatusFieldNumber = 1,
-  };
-  // optional uint32 status = 1;
-  [[nodiscard]] bool has_status()
-      const;
-  void clear_status() ;
-  [[nodiscard]] ::uint32_t status() const;
-  void set_status(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_status() const;
-  void _internal_set_status(::uint32_t value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:DeployModeStatusSync)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<0, 1,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const DeployModeStatusSync& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::uint32_t status_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_messages_2eproto;
-};
-// -------------------------------------------------------------------
-
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED DartSelectTargetStatusSync final : public ::google::protobuf::MessageLite
 /* @@protoc_insertion_point(class_definition:DartSelectTargetStatusSync) */ {
  public:
@@ -7349,7 +6965,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED DartSelectTargetStatusSync final : 
   [[nodiscard]] static const DartSelectTargetStatusSync& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<DartSelectTargetStatusSync>(&DartSelectTargetStatusSync_globals_);
   }
-  static constexpr int kIndexInFileMessages = 34;
+  static constexpr int kIndexInFileMessages = 31;
   friend void swap(DartSelectTargetStatusSync& a, DartSelectTargetStatusSync& b) { a.Swap(&b); }
   inline void Swap(DartSelectTargetStatusSync* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -7553,7 +7169,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED DartCommand final : public ::google
   [[nodiscard]] static const DartCommand& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<DartCommand>(&DartCommand_globals_);
   }
-  static constexpr int kIndexInFileMessages = 8;
+  static constexpr int kIndexInFileMessages = 7;
   friend void swap(DartCommand& a, DartCommand& b) { a.Swap(&b); }
   inline void Swap(DartCommand* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -7966,7 +7582,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED CustomByteBlock final : public ::go
   [[nodiscard]] static const CustomByteBlock& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<CustomByteBlock>(&CustomByteBlock_globals_);
   }
-  static constexpr int kIndexInFileMessages = 28;
+  static constexpr int kIndexInFileMessages = 26;
   friend void swap(CustomByteBlock& a, CustomByteBlock& b) { a.Swap(&b); }
   inline void Swap(CustomByteBlock* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -8365,7 +7981,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED Buff final : public ::google::proto
   [[nodiscard]] static const Buff& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<Buff>(&Buff_globals_);
   }
-  static constexpr int kIndexInFileMessages = 22;
+  static constexpr int kIndexInFileMessages = 20;
   friend void swap(Buff& a, Buff& b) { a.Swap(&b); }
   inline void Swap(Buff* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -8769,442 +8385,6 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AssemblyCommand final : public ::go
 };
 // -------------------------------------------------------------------
 
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AirSupportStatusSync final : public ::google::protobuf::MessageLite
-/* @@protoc_insertion_point(class_definition:AirSupportStatusSync) */ {
- public:
-  inline AirSupportStatusSync() : AirSupportStatusSync(nullptr) {}
-  ~AirSupportStatusSync() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(AirSupportStatusSync* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(AirSupportStatusSync));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr AirSupportStatusSync(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline AirSupportStatusSync(const AirSupportStatusSync& from) : AirSupportStatusSync(nullptr, from) {}
-  inline AirSupportStatusSync(AirSupportStatusSync&& from) noexcept : AirSupportStatusSync(nullptr, ::std::move(from)) {}
-  inline AirSupportStatusSync& operator=(const AirSupportStatusSync& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline AirSupportStatusSync& operator=(AirSupportStatusSync&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::std::string& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::std::string>(::google::protobuf::internal::GetEmptyString);
-  }
-  [[nodiscard]] inline ::std::string* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::std::string>();
-  }
-
-  [[nodiscard]] static const AirSupportStatusSync& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<AirSupportStatusSync>(&AirSupportStatusSync_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 36;
-  friend void swap(AirSupportStatusSync& a, AirSupportStatusSync& b) { a.Swap(&b); }
-  inline void Swap(AirSupportStatusSync* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(AirSupportStatusSync* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] AirSupportStatusSync* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::MessageLite::DefaultConstruct<AirSupportStatusSync>(arena);
-  }
-  void CopyFrom(const AirSupportStatusSync& from);
-  void MergeFrom(const AirSupportStatusSync& from) { AirSupportStatusSync::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(AirSupportStatusSync* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "AirSupportStatusSync"; }
-
-  explicit AirSupportStatusSync(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  AirSupportStatusSync(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const AirSupportStatusSync& from);
-  AirSupportStatusSync(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, AirSupportStatusSync&& from) noexcept
-      : AirSupportStatusSync(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kAirsupportStatusFieldNumber = 1,
-    kLeftTimeFieldNumber = 2,
-    kCostCoinsFieldNumber = 3,
-    kIsBeingTargetedFieldNumber = 4,
-    kShooterStatusFieldNumber = 5,
-  };
-  // optional uint32 airsupport_status = 1;
-  [[nodiscard]] bool has_airsupport_status()
-      const;
-  void clear_airsupport_status() ;
-  [[nodiscard]] ::uint32_t airsupport_status() const;
-  void set_airsupport_status(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_airsupport_status() const;
-  void _internal_set_airsupport_status(::uint32_t value);
-
-  public:
-  // optional uint32 left_time = 2;
-  [[nodiscard]] bool has_left_time()
-      const;
-  void clear_left_time() ;
-  [[nodiscard]] ::uint32_t left_time() const;
-  void set_left_time(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_left_time() const;
-  void _internal_set_left_time(::uint32_t value);
-
-  public:
-  // optional uint32 cost_coins = 3;
-  [[nodiscard]] bool has_cost_coins()
-      const;
-  void clear_cost_coins() ;
-  [[nodiscard]] ::uint32_t cost_coins() const;
-  void set_cost_coins(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_cost_coins() const;
-  void _internal_set_cost_coins(::uint32_t value);
-
-  public:
-  // optional uint32 is_being_targeted = 4;
-  [[nodiscard]] bool has_is_being_targeted()
-      const;
-  void clear_is_being_targeted() ;
-  [[nodiscard]] ::uint32_t is_being_targeted() const;
-  void set_is_being_targeted(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_is_being_targeted() const;
-  void _internal_set_is_being_targeted(::uint32_t value);
-
-  public:
-  // optional uint32 shooter_status = 5;
-  [[nodiscard]] bool has_shooter_status()
-      const;
-  void clear_shooter_status() ;
-  [[nodiscard]] ::uint32_t shooter_status() const;
-  void set_shooter_status(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_shooter_status() const;
-  void _internal_set_shooter_status(::uint32_t value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:AirSupportStatusSync)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<3, 5,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const AirSupportStatusSync& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::uint32_t airsupport_status_;
-    ::uint32_t left_time_;
-    ::uint32_t cost_coins_;
-    ::uint32_t is_being_targeted_;
-    ::uint32_t shooter_status_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_messages_2eproto;
-};
-// -------------------------------------------------------------------
-
-class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED AirSupportCommand final : public ::google::protobuf::MessageLite
-/* @@protoc_insertion_point(class_definition:AirSupportCommand) */ {
- public:
-  inline AirSupportCommand() : AirSupportCommand(nullptr) {}
-  ~AirSupportCommand() PROTOBUF_FINAL;
-
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-  void operator delete(AirSupportCommand* PROTOBUF_NONNULL msg, ::std::destroying_delete_t) {
-    SharedDtor(*msg);
-    ::google::protobuf::internal::SizedDelete(msg, sizeof(AirSupportCommand));
-  }
-#endif
-
-  template <typename = void>
-  explicit constexpr AirSupportCommand(::google::protobuf::internal::ConstantInitialized,
-                           const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL
-                               class_data);
-
-  inline AirSupportCommand(const AirSupportCommand& from) : AirSupportCommand(nullptr, from) {}
-  inline AirSupportCommand(AirSupportCommand&& from) noexcept : AirSupportCommand(nullptr, ::std::move(from)) {}
-  inline AirSupportCommand& operator=(const AirSupportCommand& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline AirSupportCommand& operator=(AirSupportCommand&& from) noexcept {
-    if (this == &from) return *this;
-    if (::google::protobuf::internal::CanMoveWithInternalSwap(GetArena(), from.GetArena())) {
-      InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  [[nodiscard]] inline const ::std::string& unknown_fields() const
-      ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.unknown_fields<::std::string>(::google::protobuf::internal::GetEmptyString);
-  }
-  [[nodiscard]] inline ::std::string* PROTOBUF_NONNULL
-  mutable_unknown_fields() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-    return _internal_metadata_.mutable_unknown_fields<::std::string>();
-  }
-
-  [[nodiscard]] static const AirSupportCommand& default_instance() {
-    return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<AirSupportCommand>(&AirSupportCommand_globals_);
-  }
-  static constexpr int kIndexInFileMessages = 10;
-  friend void swap(AirSupportCommand& a, AirSupportCommand& b) { a.Swap(&b); }
-  inline void Swap(AirSupportCommand* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    if (::google::protobuf::internal::CanUseInternalSwap(GetArena(), other->GetArena())) {
-      InternalSwap(other);
-    } else {
-      ::google::protobuf::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(AirSupportCommand* PROTOBUF_NONNULL other) {
-    if (other == this) return;
-    ABSL_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  [[nodiscard]] AirSupportCommand* PROTOBUF_NONNULL
-  New(::google::protobuf::Arena* PROTOBUF_NULLABLE arena = nullptr) const {
-    return ::google::protobuf::MessageLite::DefaultConstruct<AirSupportCommand>(arena);
-  }
-  void CopyFrom(const AirSupportCommand& from);
-  void MergeFrom(const AirSupportCommand& from) { AirSupportCommand::MergeImpl(*this, from); }
-
-  private:
-  static void MergeImpl(::google::protobuf::MessageLite& to_msg,
-                        const ::google::protobuf::MessageLite& from_msg);
-
-  public:
-  [[nodiscard]] bool IsInitialized() const {
-    return true;
-  }
-  ABSL_ATTRIBUTE_REINITIALIZES void Clear() PROTOBUF_FINAL;
-  #if defined(PROTOBUF_CUSTOM_VTABLE)
-  private:
-  [[nodiscard]] static ::size_t ByteSizeLong(const ::google::protobuf::MessageLite& msg);
-  [[nodiscard]] static ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      const ::google::protobuf::MessageLite& msg, ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream);
-
-  public:
-  [[nodiscard]] ::size_t ByteSizeLong() const { return ByteSizeLong(*this); }
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const {
-    return _InternalSerialize(*this, target, stream);
-  }
-  #else   // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] ::size_t ByteSizeLong() const final;
-  [[nodiscard]] ::uint8_t* PROTOBUF_NONNULL _InternalSerialize(
-      ::uint8_t* PROTOBUF_NONNULL target,
-      ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
-  #endif  // PROTOBUF_CUSTOM_VTABLE
-  [[nodiscard]] int GetCachedSize() const {
-    return _impl_._cached_size_.Get();
-  }
-
-  private:
-  void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static void SharedDtor(MessageLite& self);
-  void InternalSwap(AirSupportCommand* PROTOBUF_NONNULL other);
- private:
-  template <typename T>
-  friend ::absl::string_view(::google::protobuf::internal::GetAnyMessageName)();
-  static ::absl::string_view FullMessageName() { return "AirSupportCommand"; }
-
-  explicit AirSupportCommand(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  AirSupportCommand(::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const AirSupportCommand& from);
-  AirSupportCommand(
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, AirSupportCommand&& from) noexcept
-      : AirSupportCommand(arena) {
-    *this = ::std::move(from);
-  }
-  const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL GetClassData() const PROTOBUF_FINAL;
-  static void* PROTOBUF_NONNULL PlacementNew_(
-      const void* PROTOBUF_NONNULL, void* PROTOBUF_NONNULL mem,
-      ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-  static constexpr auto InternalNewImpl_();
-
- public:
-  static constexpr auto InternalGenerateClassData_(
-      const MessageLite& prototype,
-      const ::google::protobuf::internal::TcParseTableBase* PROTOBUF_NULLABLE tc_table = nullptr);
-
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-  enum : int {
-    kCommandIdFieldNumber = 1,
-  };
-  // optional uint32 command_id = 1;
-  [[nodiscard]] bool has_command_id()
-      const;
-  void clear_command_id() ;
-  [[nodiscard]] ::uint32_t command_id() const;
-  void set_command_id(::uint32_t value);
-
-  private:
-  ::uint32_t _internal_command_id() const;
-  void _internal_set_command_id(::uint32_t value);
-
-  public:
-  // @@protoc_insertion_point(class_scope:AirSupportCommand)
- private:
-  class _Internal;
-  using ParseTableT_ =
-      ::google::protobuf::internal::TcParseTable<0, 1,
-                          0, 0,
-                          2>;
-  static constexpr ParseTableT_ InternalGenerateParseTable_(
-      const ::google::protobuf::internal::ClassData* PROTOBUF_NONNULL class_data);
-  friend class ::google::protobuf::internal::TcParser;
-  #ifndef PROTOBUF_MESSAGE_GLOBALS
-  static const ParseTableT_ _table_;
-  #endif
-
-  friend class ::google::protobuf::MessageLite;
-  friend class ::google::protobuf::Arena;
-  friend ::google::protobuf::internal::PrivateAccess;
-  template <typename T>
-  friend class ::google::protobuf::Arena::InternalHelper;
-  using InternalArenaConstructable_ = void;
-  using DestructorSkippable_ = void;
-  struct Impl_ {
-    inline explicit constexpr Impl_(::google::protobuf::internal::InternalVisibility visibility,
-                                    ::google::protobuf::internal::ConstantInitialized) noexcept;
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
-    inline explicit Impl_(
-        ::google::protobuf::internal::InternalVisibility visibility,
-        ::google::protobuf::Arena* PROTOBUF_NULLABLE arena, const Impl_& from,
-        const AirSupportCommand& from_msg);
-    ::google::protobuf::internal::HasBits<1> _has_bits_;
-    ::google::protobuf::internal::CachedSize _cached_size_;
-    ::uint32_t command_id_;
-    PROTOBUF_TSAN_DECLARE_MEMBER
-  };
-  union { Impl_ _impl_; };
-  friend struct ::TableStruct_messages_2eproto;
-};
-// -------------------------------------------------------------------
-
 class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RadarInfoToClient final : public ::google::protobuf::MessageLite
 /* @@protoc_insertion_point(class_definition:RadarInfoToClient) */ {
  public:
@@ -9251,7 +8431,7 @@ class  PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED RadarInfoToClient final : public ::
   [[nodiscard]] static const RadarInfoToClient& default_instance() {
     return *::google::protobuf::internal::MessageGlobalsBase::ToDefaultInstance<RadarInfoToClient>(&RadarInfoToClient_globals_);
   }
-  static constexpr int kIndexInFileMessages = 26;
+  static constexpr int kIndexInFileMessages = 24;
   friend void swap(RadarInfoToClient& a, RadarInfoToClient& b) { a.Swap(&b); }
   inline void Swap(RadarInfoToClient* PROTOBUF_NONNULL other) {
     if (other == this) return;
@@ -10165,38 +9345,6 @@ inline void CommonCommand::_internal_set_param(::uint32_t value) {
 
 // -------------------------------------------------------------------
 
-// HeroDeployModeEventCommand
-
-// optional uint32 mode = 1;
-inline bool HeroDeployModeEventCommand::has_mode() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
-  return value;
-}
-inline void HeroDeployModeEventCommand::clear_mode() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.mode_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
-}
-inline ::uint32_t HeroDeployModeEventCommand::mode() const {
-  // @@protoc_insertion_point(field_get:HeroDeployModeEventCommand.mode)
-  return _internal_mode();
-}
-inline void HeroDeployModeEventCommand::set_mode(::uint32_t value) {
-  _internal_set_mode(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:HeroDeployModeEventCommand.mode)
-}
-inline ::uint32_t HeroDeployModeEventCommand::_internal_mode() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.mode_;
-}
-inline void HeroDeployModeEventCommand::_internal_set_mode(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.mode_ = value;
-}
-
-// -------------------------------------------------------------------
-
 // RuneActivateCommand
 
 // optional uint32 activate = 1;
@@ -10343,38 +9491,6 @@ inline ::uint32_t SentryCtrlCommand::_internal_command_id() const {
   return _impl_.command_id_;
 }
 inline void SentryCtrlCommand::_internal_set_command_id(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.command_id_ = value;
-}
-
-// -------------------------------------------------------------------
-
-// AirSupportCommand
-
-// optional uint32 command_id = 1;
-inline bool AirSupportCommand::has_command_id() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
-  return value;
-}
-inline void AirSupportCommand::clear_command_id() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.command_id_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
-}
-inline ::uint32_t AirSupportCommand::command_id() const {
-  // @@protoc_insertion_point(field_get:AirSupportCommand.command_id)
-  return _internal_command_id();
-}
-inline void AirSupportCommand::set_command_id(::uint32_t value) {
-  _internal_set_command_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:AirSupportCommand.command_id)
-}
-inline ::uint32_t AirSupportCommand::_internal_command_id() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.command_id_;
-}
-inline void AirSupportCommand::_internal_set_command_id(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.command_id_ = value;
 }
@@ -10751,60 +9867,60 @@ inline void GlobalUnitStatus::_internal_set_base_shield(::uint32_t value) {
   _impl_.base_shield_ = value;
 }
 
-// optional uint32 outpost_health = 4;
-inline bool GlobalUnitStatus::has_outpost_health() const {
+// optional uint32 outpost_R_health = 4;
+inline bool GlobalUnitStatus::has_outpost_r_health() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000020U);
   return value;
 }
-inline void GlobalUnitStatus::clear_outpost_health() {
+inline void GlobalUnitStatus::clear_outpost_r_health() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.outpost_health_ = 0u;
+  _impl_.outpost_r_health_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000020U);
 }
-inline ::uint32_t GlobalUnitStatus::outpost_health() const {
-  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_health)
-  return _internal_outpost_health();
+inline ::uint32_t GlobalUnitStatus::outpost_r_health() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_R_health)
+  return _internal_outpost_r_health();
 }
-inline void GlobalUnitStatus::set_outpost_health(::uint32_t value) {
-  _internal_set_outpost_health(value);
+inline void GlobalUnitStatus::set_outpost_r_health(::uint32_t value) {
+  _internal_set_outpost_r_health(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000020U);
-  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_health)
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_R_health)
 }
-inline ::uint32_t GlobalUnitStatus::_internal_outpost_health() const {
+inline ::uint32_t GlobalUnitStatus::_internal_outpost_r_health() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.outpost_health_;
+  return _impl_.outpost_r_health_;
 }
-inline void GlobalUnitStatus::_internal_set_outpost_health(::uint32_t value) {
+inline void GlobalUnitStatus::_internal_set_outpost_r_health(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.outpost_health_ = value;
+  _impl_.outpost_r_health_ = value;
 }
 
-// optional uint32 outpost_status = 5;
-inline bool GlobalUnitStatus::has_outpost_status() const {
+// optional uint32 outpost_R_status = 5;
+inline bool GlobalUnitStatus::has_outpost_r_status() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000040U);
   return value;
 }
-inline void GlobalUnitStatus::clear_outpost_status() {
+inline void GlobalUnitStatus::clear_outpost_r_status() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.outpost_status_ = 0u;
+  _impl_.outpost_r_status_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000040U);
 }
-inline ::uint32_t GlobalUnitStatus::outpost_status() const {
-  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_status)
-  return _internal_outpost_status();
+inline ::uint32_t GlobalUnitStatus::outpost_r_status() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_R_status)
+  return _internal_outpost_r_status();
 }
-inline void GlobalUnitStatus::set_outpost_status(::uint32_t value) {
-  _internal_set_outpost_status(value);
+inline void GlobalUnitStatus::set_outpost_r_status(::uint32_t value) {
+  _internal_set_outpost_r_status(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000040U);
-  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_status)
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_R_status)
 }
-inline ::uint32_t GlobalUnitStatus::_internal_outpost_status() const {
+inline ::uint32_t GlobalUnitStatus::_internal_outpost_r_status() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.outpost_status_;
+  return _impl_.outpost_r_status_;
 }
-inline void GlobalUnitStatus::_internal_set_outpost_status(::uint32_t value) {
+inline void GlobalUnitStatus::_internal_set_outpost_r_status(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.outpost_status_ = value;
+  _impl_.outpost_r_status_ = value;
 }
 
 // optional uint32 enemy_base_health = 6;
@@ -10891,60 +10007,60 @@ inline void GlobalUnitStatus::_internal_set_enemy_base_shield(::uint32_t value) 
   _impl_.enemy_base_shield_ = value;
 }
 
-// optional uint32 enemy_outpost_health = 9;
-inline bool GlobalUnitStatus::has_enemy_outpost_health() const {
+// optional uint32 outpost_B_health = 9;
+inline bool GlobalUnitStatus::has_outpost_b_health() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000400U);
   return value;
 }
-inline void GlobalUnitStatus::clear_enemy_outpost_health() {
+inline void GlobalUnitStatus::clear_outpost_b_health() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.enemy_outpost_health_ = 0u;
+  _impl_.outpost_b_health_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000400U);
 }
-inline ::uint32_t GlobalUnitStatus::enemy_outpost_health() const {
-  // @@protoc_insertion_point(field_get:GlobalUnitStatus.enemy_outpost_health)
-  return _internal_enemy_outpost_health();
+inline ::uint32_t GlobalUnitStatus::outpost_b_health() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_B_health)
+  return _internal_outpost_b_health();
 }
-inline void GlobalUnitStatus::set_enemy_outpost_health(::uint32_t value) {
-  _internal_set_enemy_outpost_health(value);
+inline void GlobalUnitStatus::set_outpost_b_health(::uint32_t value) {
+  _internal_set_outpost_b_health(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000400U);
-  // @@protoc_insertion_point(field_set:GlobalUnitStatus.enemy_outpost_health)
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_B_health)
 }
-inline ::uint32_t GlobalUnitStatus::_internal_enemy_outpost_health() const {
+inline ::uint32_t GlobalUnitStatus::_internal_outpost_b_health() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.enemy_outpost_health_;
+  return _impl_.outpost_b_health_;
 }
-inline void GlobalUnitStatus::_internal_set_enemy_outpost_health(::uint32_t value) {
+inline void GlobalUnitStatus::_internal_set_outpost_b_health(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.enemy_outpost_health_ = value;
+  _impl_.outpost_b_health_ = value;
 }
 
-// optional uint32 enemy_outpost_status = 10;
-inline bool GlobalUnitStatus::has_enemy_outpost_status() const {
+// optional uint32 outpost_B_status = 10;
+inline bool GlobalUnitStatus::has_outpost_b_status() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000800U);
   return value;
 }
-inline void GlobalUnitStatus::clear_enemy_outpost_status() {
+inline void GlobalUnitStatus::clear_outpost_b_status() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.enemy_outpost_status_ = 0u;
+  _impl_.outpost_b_status_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000800U);
 }
-inline ::uint32_t GlobalUnitStatus::enemy_outpost_status() const {
-  // @@protoc_insertion_point(field_get:GlobalUnitStatus.enemy_outpost_status)
-  return _internal_enemy_outpost_status();
+inline ::uint32_t GlobalUnitStatus::outpost_b_status() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.outpost_B_status)
+  return _internal_outpost_b_status();
 }
-inline void GlobalUnitStatus::set_enemy_outpost_status(::uint32_t value) {
-  _internal_set_enemy_outpost_status(value);
+inline void GlobalUnitStatus::set_outpost_b_status(::uint32_t value) {
+  _internal_set_outpost_b_status(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000800U);
-  // @@protoc_insertion_point(field_set:GlobalUnitStatus.enemy_outpost_status)
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.outpost_B_status)
 }
-inline ::uint32_t GlobalUnitStatus::_internal_enemy_outpost_status() const {
+inline ::uint32_t GlobalUnitStatus::_internal_outpost_b_status() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.enemy_outpost_status_;
+  return _impl_.outpost_b_status_;
 }
-inline void GlobalUnitStatus::_internal_set_enemy_outpost_status(::uint32_t value) {
+inline void GlobalUnitStatus::_internal_set_outpost_b_status(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.enemy_outpost_status_ = value;
+  _impl_.outpost_b_status_ = value;
 }
 
 // repeated uint32 robot_health = 11;
@@ -11103,6 +10219,62 @@ inline ::uint32_t GlobalUnitStatus::_internal_total_damage_enemy() const {
 inline void GlobalUnitStatus::_internal_set_total_damage_enemy(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.total_damage_enemy_ = value;
+}
+
+// optional uint32 total_CP_ally = 15;
+inline bool GlobalUnitStatus::has_total_cp_ally() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00004000U);
+  return value;
+}
+inline void GlobalUnitStatus::clear_total_cp_ally() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.total_cp_ally_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00004000U);
+}
+inline ::uint32_t GlobalUnitStatus::total_cp_ally() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.total_CP_ally)
+  return _internal_total_cp_ally();
+}
+inline void GlobalUnitStatus::set_total_cp_ally(::uint32_t value) {
+  _internal_set_total_cp_ally(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00004000U);
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.total_CP_ally)
+}
+inline ::uint32_t GlobalUnitStatus::_internal_total_cp_ally() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.total_cp_ally_;
+}
+inline void GlobalUnitStatus::_internal_set_total_cp_ally(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.total_cp_ally_ = value;
+}
+
+// optional uint32 total_CP_enemy = 16;
+inline bool GlobalUnitStatus::has_total_cp_enemy() const {
+  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00008000U);
+  return value;
+}
+inline void GlobalUnitStatus::clear_total_cp_enemy() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.total_cp_enemy_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0], 0x00008000U);
+}
+inline ::uint32_t GlobalUnitStatus::total_cp_enemy() const {
+  // @@protoc_insertion_point(field_get:GlobalUnitStatus.total_CP_enemy)
+  return _internal_total_cp_enemy();
+}
+inline void GlobalUnitStatus::set_total_cp_enemy(::uint32_t value) {
+  _internal_set_total_cp_enemy(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00008000U);
+  // @@protoc_insertion_point(field_set:GlobalUnitStatus.total_CP_enemy)
+}
+inline ::uint32_t GlobalUnitStatus::_internal_total_cp_enemy() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.total_cp_enemy_;
+}
+inline void GlobalUnitStatus::_internal_set_total_cp_enemy(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.total_cp_enemy_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -12367,32 +11539,32 @@ inline void RobotDynamicStatus::_internal_set_last_projectile_fire_rate(float va
   _impl_.last_projectile_fire_rate_ = value;
 }
 
-// optional uint32 current_chassis_energy = 4;
-inline bool RobotDynamicStatus::has_current_chassis_energy() const {
+// optional uint32 reserved = 4;
+inline bool RobotDynamicStatus::has_reserved() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000008U);
   return value;
 }
-inline void RobotDynamicStatus::clear_current_chassis_energy() {
+inline void RobotDynamicStatus::clear_reserved() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.current_chassis_energy_ = 0u;
+  _impl_.reserved_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
 }
-inline ::uint32_t RobotDynamicStatus::current_chassis_energy() const {
-  // @@protoc_insertion_point(field_get:RobotDynamicStatus.current_chassis_energy)
-  return _internal_current_chassis_energy();
+inline ::uint32_t RobotDynamicStatus::reserved() const {
+  // @@protoc_insertion_point(field_get:RobotDynamicStatus.reserved)
+  return _internal_reserved();
 }
-inline void RobotDynamicStatus::set_current_chassis_energy(::uint32_t value) {
-  _internal_set_current_chassis_energy(value);
+inline void RobotDynamicStatus::set_reserved(::uint32_t value) {
+  _internal_set_reserved(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000008U);
-  // @@protoc_insertion_point(field_set:RobotDynamicStatus.current_chassis_energy)
+  // @@protoc_insertion_point(field_set:RobotDynamicStatus.reserved)
 }
-inline ::uint32_t RobotDynamicStatus::_internal_current_chassis_energy() const {
+inline ::uint32_t RobotDynamicStatus::_internal_reserved() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.current_chassis_energy_;
+  return _impl_.reserved_;
 }
-inline void RobotDynamicStatus::_internal_set_current_chassis_energy(::uint32_t value) {
+inline void RobotDynamicStatus::_internal_set_reserved(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.current_chassis_energy_ = value;
+  _impl_.reserved_ = value;
 }
 
 // optional uint32 current_buffer_energy = 5;
@@ -12931,32 +12103,32 @@ inline void RobotModuleStatus::_internal_set_main_controller(::uint32_t value) {
   _impl_.main_controller_ = value;
 }
 
-// optional uint32 laser_detection_module = 11;
-inline bool RobotModuleStatus::has_laser_detection_module() const {
+// optional uint32 modular_42mm = 11;
+inline bool RobotModuleStatus::has_modular_42mm() const {
   bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000400U);
   return value;
 }
-inline void RobotModuleStatus::clear_laser_detection_module() {
+inline void RobotModuleStatus::clear_modular_42mm() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.laser_detection_module_ = 0u;
+  _impl_.modular_42mm_ = 0u;
   ClearHasBit(_impl_._has_bits_[0], 0x00000400U);
 }
-inline ::uint32_t RobotModuleStatus::laser_detection_module() const {
-  // @@protoc_insertion_point(field_get:RobotModuleStatus.laser_detection_module)
-  return _internal_laser_detection_module();
+inline ::uint32_t RobotModuleStatus::modular_42mm() const {
+  // @@protoc_insertion_point(field_get:RobotModuleStatus.modular_42mm)
+  return _internal_modular_42mm();
 }
-inline void RobotModuleStatus::set_laser_detection_module(::uint32_t value) {
-  _internal_set_laser_detection_module(value);
+inline void RobotModuleStatus::set_modular_42mm(::uint32_t value) {
+  _internal_set_modular_42mm(value);
   SetHasBit(_impl_._has_bits_[0], 0x00000400U);
-  // @@protoc_insertion_point(field_set:RobotModuleStatus.laser_detection_module)
+  // @@protoc_insertion_point(field_set:RobotModuleStatus.modular_42mm)
 }
-inline ::uint32_t RobotModuleStatus::_internal_laser_detection_module() const {
+inline ::uint32_t RobotModuleStatus::_internal_modular_42mm() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.laser_detection_module_;
+  return _impl_.modular_42mm_;
 }
-inline void RobotModuleStatus::_internal_set_laser_detection_module(::uint32_t value) {
+inline void RobotModuleStatus::_internal_set_modular_42mm(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.laser_detection_module_ = value;
+  _impl_.modular_42mm_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -14358,38 +13530,6 @@ inline void RobotPerformanceSelectionSync::_internal_set_sentry_control(::uint32
 
 // -------------------------------------------------------------------
 
-// DeployModeStatusSync
-
-// optional uint32 status = 1;
-inline bool DeployModeStatusSync::has_status() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
-  return value;
-}
-inline void DeployModeStatusSync::clear_status() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.status_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
-}
-inline ::uint32_t DeployModeStatusSync::status() const {
-  // @@protoc_insertion_point(field_get:DeployModeStatusSync.status)
-  return _internal_status();
-}
-inline void DeployModeStatusSync::set_status(::uint32_t value) {
-  _internal_set_status(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:DeployModeStatusSync.status)
-}
-inline ::uint32_t DeployModeStatusSync::_internal_status() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.status_;
-}
-inline void DeployModeStatusSync::_internal_set_status(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.status_ = value;
-}
-
-// -------------------------------------------------------------------
-
 // RuneStatusSync
 
 // optional uint32 rune_status = 1;
@@ -14682,150 +13822,6 @@ inline ::uint32_t SentryCtrlResult::_internal_result_code() const {
 inline void SentryCtrlResult::_internal_set_result_code(::uint32_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.result_code_ = value;
-}
-
-// -------------------------------------------------------------------
-
-// AirSupportStatusSync
-
-// optional uint32 airsupport_status = 1;
-inline bool AirSupportStatusSync::has_airsupport_status() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000001U);
-  return value;
-}
-inline void AirSupportStatusSync::clear_airsupport_status() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.airsupport_status_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000001U);
-}
-inline ::uint32_t AirSupportStatusSync::airsupport_status() const {
-  // @@protoc_insertion_point(field_get:AirSupportStatusSync.airsupport_status)
-  return _internal_airsupport_status();
-}
-inline void AirSupportStatusSync::set_airsupport_status(::uint32_t value) {
-  _internal_set_airsupport_status(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000001U);
-  // @@protoc_insertion_point(field_set:AirSupportStatusSync.airsupport_status)
-}
-inline ::uint32_t AirSupportStatusSync::_internal_airsupport_status() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.airsupport_status_;
-}
-inline void AirSupportStatusSync::_internal_set_airsupport_status(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.airsupport_status_ = value;
-}
-
-// optional uint32 left_time = 2;
-inline bool AirSupportStatusSync::has_left_time() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000002U);
-  return value;
-}
-inline void AirSupportStatusSync::clear_left_time() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.left_time_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000002U);
-}
-inline ::uint32_t AirSupportStatusSync::left_time() const {
-  // @@protoc_insertion_point(field_get:AirSupportStatusSync.left_time)
-  return _internal_left_time();
-}
-inline void AirSupportStatusSync::set_left_time(::uint32_t value) {
-  _internal_set_left_time(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000002U);
-  // @@protoc_insertion_point(field_set:AirSupportStatusSync.left_time)
-}
-inline ::uint32_t AirSupportStatusSync::_internal_left_time() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.left_time_;
-}
-inline void AirSupportStatusSync::_internal_set_left_time(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.left_time_ = value;
-}
-
-// optional uint32 cost_coins = 3;
-inline bool AirSupportStatusSync::has_cost_coins() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000004U);
-  return value;
-}
-inline void AirSupportStatusSync::clear_cost_coins() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.cost_coins_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
-}
-inline ::uint32_t AirSupportStatusSync::cost_coins() const {
-  // @@protoc_insertion_point(field_get:AirSupportStatusSync.cost_coins)
-  return _internal_cost_coins();
-}
-inline void AirSupportStatusSync::set_cost_coins(::uint32_t value) {
-  _internal_set_cost_coins(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
-  // @@protoc_insertion_point(field_set:AirSupportStatusSync.cost_coins)
-}
-inline ::uint32_t AirSupportStatusSync::_internal_cost_coins() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.cost_coins_;
-}
-inline void AirSupportStatusSync::_internal_set_cost_coins(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.cost_coins_ = value;
-}
-
-// optional uint32 is_being_targeted = 4;
-inline bool AirSupportStatusSync::has_is_being_targeted() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000008U);
-  return value;
-}
-inline void AirSupportStatusSync::clear_is_being_targeted() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.is_being_targeted_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000008U);
-}
-inline ::uint32_t AirSupportStatusSync::is_being_targeted() const {
-  // @@protoc_insertion_point(field_get:AirSupportStatusSync.is_being_targeted)
-  return _internal_is_being_targeted();
-}
-inline void AirSupportStatusSync::set_is_being_targeted(::uint32_t value) {
-  _internal_set_is_being_targeted(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
-  // @@protoc_insertion_point(field_set:AirSupportStatusSync.is_being_targeted)
-}
-inline ::uint32_t AirSupportStatusSync::_internal_is_being_targeted() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.is_being_targeted_;
-}
-inline void AirSupportStatusSync::_internal_set_is_being_targeted(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.is_being_targeted_ = value;
-}
-
-// optional uint32 shooter_status = 5;
-inline bool AirSupportStatusSync::has_shooter_status() const {
-  bool value = CheckHasBit(_impl_._has_bits_[0], 0x00000010U);
-  return value;
-}
-inline void AirSupportStatusSync::clear_shooter_status() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.shooter_status_ = 0u;
-  ClearHasBit(_impl_._has_bits_[0], 0x00000010U);
-}
-inline ::uint32_t AirSupportStatusSync::shooter_status() const {
-  // @@protoc_insertion_point(field_get:AirSupportStatusSync.shooter_status)
-  return _internal_shooter_status();
-}
-inline void AirSupportStatusSync::set_shooter_status(::uint32_t value) {
-  _internal_set_shooter_status(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
-  // @@protoc_insertion_point(field_set:AirSupportStatusSync.shooter_status)
-}
-inline ::uint32_t AirSupportStatusSync::_internal_shooter_status() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.shooter_status_;
-}
-inline void AirSupportStatusSync::_internal_set_shooter_status(::uint32_t value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.shooter_status_ = value;
 }
 
 #ifdef __GNUC__

@@ -1,4 +1,3 @@
-// start_panel.cpp：开局准备面板——队伍与机器人选择、MQTT 服务器地址配置与登录，以及飞镖/哨兵/空中支援/性能选型/装配等赛前指令的下发。
 #include "start_panel.h"
 #include "keyboard_mouse_state_manager.h"   // 标记模式开关（is_marker_mode/enter_marker_mode 等）的声明
 #include "logging/logging.h"   // spdlog 日志宏（SPDLOG_INFO/DEBUG/WARN/ERROR）
@@ -20,13 +19,14 @@ using RoboGo::panel::ScopedStyle;                        // RAII 样式栈封装
 using RoboGo::panel::ScopedTitledPanel;                  // 带标题的命名子面板
 using RoboGo::panel::ShowPanelRow;                       // 一行多面板横向排布工具
 
-// 登录面板可选队伍名（下标 0=红队，1=蓝队）。
-constexpr std::array<const char *, 2> kLoginTeamNames = {"红队", "蓝队"};
-// 登录面板可选机器人名（云台手对应无人机 6 号）。
-constexpr std::array<const char *, 5> kLoginRobotNames = {"英雄", "工程", "3号步兵", "4号步兵", "云台手"}; // 登录面板可选机器人名（下标对应 kLoginRobotIds 的列）
+// 登录面板可选身份（2027：重装 / 步兵3 / 步兵4 / 指挥手）。
+// 最后一个槽位原先叫"飞镖"——飞镖不是机器人，而指挥手要把哨兵、飞镖、空中系统都收进一屏，
+// 所以这一列改成"指挥手"，robot_id 仍沿用 8（飞镖系统的槽位），只是 UI 身份按指挥台渲染。
+// 哨兵的整套操作（姿态/强化/补弹/回血/复活）已经并入指挥台，因此不再单独占一个登录身份。
+constexpr std::array<const char *, 4> kLoginRobotNames = {"重装", "3号步兵", "4号步兵", "指挥手"}; // 登录面板可选身份（下标对应 kLoginRobotIds 的列）
+constexpr int kCommanderLoginSlot = 3;   // "指挥手"在登录槽位中的下标（0 基）
 constexpr float kLoginStatusGap = 4.0f;             // 连接状态行与下方内容之间的垂直间距
-constexpr float kLoginSectionGap = 8.0f;            // 各区块（队伍/机器人/目标）之间的垂直间距
-constexpr float kLoginTargetGap = 10.0f;            // "登录目标"标题与其内容之间的垂直间距
+constexpr float kLoginSectionGap = 8.0f;            // 各区块（队伍/机器人）之间的垂直间距
 constexpr float kLoginMqttInputTopMargin = 4.0f;    // MQTT 地址输入框顶部留白
 constexpr float kPrimaryActionButtonHeight = 30.0f; // 底部主按钮（登录/进入比赛）的高度
 constexpr float kLoginTeamButtonHeight = kPrimaryActionButtonHeight;  // 队伍按钮高度对齐主按钮
@@ -36,9 +36,9 @@ constexpr float kLoginPanelBottomPadding = 12.0f;   // 登录面板底部内边�
 constexpr std::string_view kDefaultMqttPort = "3333"; // 地址未显式填写端口时使用的默认 MQTT 端口
 
 // 登录面板机器人 ID 表：[队伍][机器人序号] -> 实际 robot_id（蓝队为 100+）。
-constexpr std::array<std::array<int, 5>, 2> kLoginRobotIds = {{
-        {1, 2, 3, 4, 6},   // 红队：1 英雄 / 2 工程 / 3、4 步兵 / 6 云台手（无人机）
-        {101, 102, 103, 104, 106},   // 蓝队：同上，robot_id 统一加 100
+constexpr std::array<std::array<int, 4>, 2> kLoginRobotIds = {{
+        {1, 3, 4, 8},   // 红队：1 重装 / 3、4 步兵 / 8 指挥手（沿用飞镖槽位连接）
+        {101, 103, 104, 108},   // 蓝队：同上，robot_id 统一加 100
 }};   // 结束 [队伍][序号] 的 ID 表
 
 // 飞镖可打击目标名（与 target_id 1~5 一一对应）。
@@ -127,26 +127,18 @@ bool ButtonWithTooltip(const char *label, const std::string &valid_tooltip, cons
     return is_clicked;                                               // 返回该按钮本次是否被点击
 }   // 结束 ButtonWithTooltip（返回本次是否点击）
 
-// 功能：发送空中支援指令（command_id: 0 取消/1 免费呼叫/2 付费呼叫/3 解除反制）。
-// 思路：填充 command_id 后发布到 "AirSupportCommand" 话题，并附带进入比赛标记。
-void SendAirSupportCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t command_id) {
-    AirSupportCommand air_support_command;                           // 构造空中支援指令消息
-    air_support_command.set_command_id(command_id);                 // 填入指令类型（0 取消 / 1 免费 / 2 付费 / 3 解除反制）
-    PublishProto(mqtt_client, "AirSupportCommand", air_support_command, true); // 发布到对应话题并进入比赛
-}   // 结束 SendAirSupportCommand
 
 // 开局面板中各子面板的可见性集合，由当前 robot_id 决定哪些机器人可发送哪些指令。
 struct StartPanelVisibility {
     bool show_ammo_panel = false;// 弹药兑换面板。
     bool show_recover_panel = false;// 远程回血面板。
     bool show_revive_panel = false;// 复活控制面板。
-    bool show_deploy_panel = false;// 部署模式面板（英雄专用）。
-    bool show_assembly_panel = false;// 装配控制面板（工程专用）。
-    bool show_marker_panel = false;// 地图标记面板（无人机专用）。
+    bool show_assembly_panel = false;// 装配控制面板（2027 重装专用）。
+    bool show_marker_panel = false;// 地图标记面板（哨兵/飞镖）。
     bool show_performance_panel = false;// 性能选择面板。
-    bool show_dart_panel = false;// 飞镖控制面板（无人机专用）。
-    bool show_air_support_panel = false;// 空中支援面板（无人机专用）。
-    bool is_hero = false;// 当前是否为英雄机器人。
+    bool show_dart_panel = false;// 飞镖控制面板（飞镖系统 8 号）。
+    bool show_sentry_panel = false;// 哨兵控制面板（SentryCtrlCommand）。
+    bool is_hero = false;// 当前是否为重装机器人（沿用旧变量名，用于 42mm 计价）。
     bool show_robot_performance_options = false;// 是否显示机器人性能选项（发射机构/底盘）。
     bool show_sentry_performance_option = false;// 是否显示哨兵性能选项。
 };   // 结束可见性集合
@@ -247,11 +239,6 @@ const ButtonStyle kAssemblyButtonStyle = { // 装配控制按钮样式：青蓝�
         ImVec4(0.2f, 0.7f, 0.9f, 1.0f),     // 按下背景色
 };   // 结束装配按钮样式
 
-const ButtonStyle kDeployButtonStyle = { // 部署模式按钮样式：紫色
-        ImVec4(0.7f, 0.3f, 1.0f, 0.8f),     // 常态背景色
-        ImVec4(0.8f, 0.4f, 1.0f, 1.0f),     // 悬停背景色
-        ImVec4(0.6f, 0.2f, 0.9f, 1.0f),     // 按下背景色
-};   // 结束部署按钮样式
 
 const ButtonStyle kRecoverButtonStyle = { // 远程回血按钮样式：红色
         ImVec4(1.0f, 0.3f, 0.3f, 0.8f),     // 常态背景色
@@ -277,11 +264,6 @@ const ButtonStyle kDartButtonStyle = { // 飞镖控制按钮样式：粉色
         ImVec4(0.9f, 0.3f, 0.7f, 1.0f),     // 按下背景色
 };   // 结束飞镖按钮样式
 
-const ButtonStyle kAirSupportButtonStyle = { // 空中支援按钮样式：青色
-        ImVec4(0.2f, 0.85f, 1.0f, 0.8f),    // 常态背景色
-        ImVec4(0.3f, 0.9f, 1.0f, 1.0f),     // 悬停背景色
-        ImVec4(0.15f, 0.7f, 0.9f, 1.0f),    // 按下背景色
-};   // 结束空中支援按钮样式
 
 const ButtonStyle kEnterGameButtonStyle = { // 进入比赛/登录主按钮样式：绿色描边
         ImVec4(0.0f, 0.8f, 0.4f, 0.9f),     // 常态背景色
@@ -318,19 +300,19 @@ ButtonFeedback GetEconomyFeedback(const State &state, uint32_t price) {
 }   // 结束 GetEconomyFeedback
 
 // 功能：计算"兑换允许发弹量"按钮的可用性反馈。
-// 思路：必须在补给区 Buff 内、输入合法；英雄按 10 金币/发计价，其他机器人要求发量为 10 的倍数再计价。
+// 思路：必须在补给区 Buff 内、输入合法；重装按 10 金币/发计价，其他机器人要求发量为 10 的倍数再计价。
 ButtonFeedback GetAmmoExchangeFeedback(const State &state, bool is_valid_ammo, long long ammo, bool is_hero) {
     if (!HasActiveBuff(state, kAmmoExchangeBuffType)) {              // 必须处于补给区 Buff 内
         return MakeDisabledFeedback("不在补给区内");                 // 不在补给区则禁用
     }   // 结束补给区判断
     if (!is_valid_ammo) {                                           // 输入的发弹量含非法字符
-        return MakeDisabledFeedback("用户输入存在非法字符");         // 非法输入则禁用
+        return MakeDisabledFeedback("输入含非法字符");         // 非法输入则禁用
     }   // 结束输入合法性判断
-    if (is_hero) {                                                  // 英雄按 10 金币/发计价
-        return GetEconomyFeedback(state, static_cast<uint32_t>(ammo * 10));   // 英雄按 10 金币/发换算总价后走经济判断
-    }   // 结束英雄分支
-    if (ammo % 10 != 0) {                                           // 非英雄要求发量为 10 的倍数
-        return MakeDisabledFeedback("兑换的允许发弹量必须是 10 的倍数");   // 非英雄且不是 10 的倍数则禁用
+    if (is_hero) {                                                  // 重装按 10 金币/发计价
+        return GetEconomyFeedback(state, static_cast<uint32_t>(ammo * 10));   // 重装按 10 金币/发换算总价后走经济判断
+    }   // 结束重装分支
+    if (ammo % 10 != 0) {                                           // 非重装要求发量为 10 的倍数
+        return MakeDisabledFeedback("必须是 10 的倍数");   // 非重装且不是 10 的倍数则禁用
     }   // 结束倍数判断
     return GetEconomyFeedback(state, static_cast<uint32_t>(ammo));  // 普通机器人按 1 金币/发计价
 }   // 结束 GetAmmoExchangeFeedback
@@ -339,16 +321,16 @@ ButtonFeedback GetAmmoExchangeFeedback(const State &state, bool is_valid_ammo, l
 // 思路：输入合法前提下，英雄要求发量为 10 倍数且按 15 金币/发计价，其他机器人要求 100 倍数并按 1.5 倍计价。
 ButtonFeedback GetRemoteAmmoExchangeFeedback(const State &state, bool is_valid_ammo, long long ammo, bool is_hero) {
     if (!is_valid_ammo) {                                           // 输入的发弹量含非法字符
-        return MakeDisabledFeedback("用户输入存在非法字符");         // 非法输入则禁用
+        return MakeDisabledFeedback("输入含非法字符");         // 非法输入则禁用
     }   // 结束输入合法性判断
-    if (is_hero) {                                                  // 英雄：发量 10 倍数，按 15 金币/发
+    if (is_hero) {                                                  // 重装：发量 10 倍数，按 15 金币/发
         if (ammo % 10 != 0) {   // 英雄同样要求发量为 10 的倍数
-            return MakeDisabledFeedback("兑换的允许发弹量必须是 10 的倍数");   // 非 10 倍数则禁用
+            return MakeDisabledFeedback("必须是 10 的倍数");   // 非 10 倍数则禁用
         }   // 结束倍数判断
         return GetEconomyFeedback(state, static_cast<uint32_t>(ammo * 15));   // 英雄按 15 金币/发换算总价
-    }   // 结束英雄分支
+    }   // 结束重装分支
     if (ammo % 100 != 0) {                                          // 非英雄要求发量为 100 的倍数
-        return MakeDisabledFeedback("兑换的允许发弹量必须是 100 的倍数");   // 非英雄要求 100 的倍数
+        return MakeDisabledFeedback("必须是 100 的倍数");   // 非英雄要求 100 的倍数
     }   // 结束倍数判断
     return GetEconomyFeedback(state, static_cast<uint32_t>(ammo * 1.5)); // 普通机器人按 1.5 倍计价
 }   // 结束 GetRemoteAmmoExchangeFeedback
@@ -410,63 +392,12 @@ ButtonFeedback GetDartLaunchFeedback(const State &state) {
     return {};                                                       // 闸门已开：可用
 }   // 结束 GetDartLaunchFeedback
 
-// 功能：计算"免费呼叫（空中支援）"按钮的可用性反馈。
 // 思路：需未在进行中且有可用免费时长。
-ButtonFeedback GetFreeAirSupportFeedback(const State &state) {
-    if (!state.air_support_status_sync.has_value()) {                // 尚未收到空中支援同步状态
-        return MakeDisabledFeedback("无法获取空中支援状态");        // 无数据则禁用
-    }   // 结束空中支援状态判断
-    const auto &sync = *state.air_support_status_sync;               // 取同步状态引用
-    if (sync.airsupport_status() == 1) {                             // 当前正在空中支援
-        return MakeDisabledFeedback("当前正在空中支援");   // 正在支援中，不能重复呼叫
-    }   // 结束进行中判断
-    if (sync.left_time() == 0) {                                     // 没有可用的免费时长
-        return MakeDisabledFeedback("当前没有可用的免费空中支援时长");   // 没有免费时长则禁用
-    }   // 结束剩余时长判断
-    return {};                                                       // 可用：免费呼叫
-}   // 结束 GetFreeAirSupportFeedback
 
-// 功能：计算"付费呼叫（空中支援）"按钮的可用性反馈。
 // 思路：需未在进行中；若仍有免费时长提示优先使用免费，否则提示发起付费。
-ButtonFeedback GetPaidAirSupportFeedback(const State &state) {
-    if (!state.air_support_status_sync.has_value()) {                // 尚未收到空中支援同步状态
-        return MakeDisabledFeedback("无法获取空中支援状态");        // 无数据则禁用
-    }   // 结束状态判断
-    const auto &sync = *state.air_support_status_sync;               // 取同步状态引用
-    if (sync.airsupport_status() == 1) {                             // 当前正在空中支援
-        return MakeDisabledFeedback("当前正在空中支援");   // 正在支援中，不能重复呼叫
-    }   // 结束进行中判断
 
-    ButtonFeedback feedback;                                         // 可用反馈
-    feedback.valid_tooltip = sync.left_time() > 0 ? "若仍有免费时长，将优先使用免费时长" : "发起付费空中支援"; // 提示优先用免费时长或付费
-    return feedback;   // 返回可用反馈（无禁用原因）
-}   // 结束 GetPaidAirSupportFeedback
 
-// 功能：计算"取消呼叫（空中支援）"按钮的可用性反馈。
-// 思路：需当前正在进行空中支援才能取消。
-ButtonFeedback GetCancelAirSupportFeedback(const State &state) {
-    if (!state.air_support_status_sync.has_value()) {                // 尚未收到空中支援同步状态
-        return MakeDisabledFeedback("无法获取空中支援状态");        // 无数据则禁用
-    }   // 结束状态判断
-    if (state.air_support_status_sync->airsupport_status() != 1) {   // 当前没有在进行空中支援
-        return MakeDisabledFeedback("当前未进行空中支援");   // 未在进行支援，无法取消
-    }   // 结束进行中判断
-    return {};                                                       // 进行中：可取消
-}   // 结束 GetCancelAirSupportFeedback
-
-// 功能：计算"解除反制（空中支援）"按钮的可用性反馈。
 // 思路：需当前发射机构处于"可解除锁定"状态（shooter_status==2）才允许。
-ButtonFeedback GetReleaseAirSupportCountermeasureFeedback(const State &state) {
-    if (!state.air_support_status_sync.has_value()) {                // 尚未收到空中支援同步状态
-        return MakeDisabledFeedback("无法获取空中支援状态");        // 无数据则禁用
-    }   // 结束状态判断
-    if (state.air_support_status_sync->shooter_status() != 2) {      // 发射机构未处于"可解除锁定"状态
-        return MakeDisabledFeedback("当前发射机构不可解除反制");   // 发射机构状态不为 2 时不可解除反制
-    }   // 结束状态判断
-    ButtonFeedback feedback;                                         // 可用反馈
-    feedback.valid_tooltip = "花费金币解除空中机器人发射机构反制"; // 提示花费金币解除反制
-    return feedback;   // 返回可用反馈
-}   // 结束 GetReleaseAirSupportCountermeasureFeedback
 
 // 功能：构造"进入比赛/登录"主按钮的样式（绿色描边突出）。
 ScopedStyle MakeEnterGameButtonStyle() {
@@ -514,13 +445,6 @@ ImVec4 GetLoginConnectionStateColor(RoboGo::io::MqttClient::ConnectionState conn
             return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);                  // 白色兜底
     }   // 结束颜色 switch
 }   // 结束 GetLoginConnectionStateColor
-
-// 功能：把当前选中的队伍+机器人组合渲染成"队伍 / 兵种 (ID x)"文案。
-std::string GetSelectedLoginTargetText(const TeamRobotSelectionState &selection_state) {
-    const int robot_id = kLoginRobotIds[selection_state.selected_team][selection_state.selected_robot]; // 由队伍+机器人序号查实际 robot_id
-    return std::string(kLoginTeamNames[selection_state.selected_team]) + " / " +                      // 拼接 "队伍 / 兵种 (ID x)"
-           kLoginRobotNames[selection_state.selected_robot] + " (ID " + std::to_string(robot_id) + ")";   // 拼接兵种名与 (ID x) 后缀
-}   // 结束 GetSelectedLoginTargetText
 
 // 功能：去除字符串首尾的 ASCII 空白字符（空格/制表/回车/换行）。
 // 思路：双指针分别从两端向中间收缩，跳过空白后取子串。
@@ -690,6 +614,14 @@ void SendCommonCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t cmd_type, u
     PublishProto(mqtt_client, "CommonCommand", common_command, true);  // 发布到 "CommonCommand" 并进入比赛
 }   // 结束 SendCommonCommand
 
+// 功能：发送哨兵控制指令（2027：1补弹/3远程补弹/4远程回血/5确认复活/6花金币复活/7-12切换姿态）。
+// 思路：填充 command_id 后发布到 "SentryCtrlCommand" 话题。
+void SendSentryCtrlCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t command_id) {
+    SentryCtrlCommand sentry_ctrl_command;                            // 构造哨兵控制指令
+    sentry_ctrl_command.set_command_id(command_id);                   // 填入指令编号
+    PublishProto(mqtt_client, "SentryCtrlCommand", sentry_ctrl_command, true); // 发布并进入比赛
+}   // 结束 SendSentryCtrlCommand
+
 // 功能：发送飞镖指令（目标、闸门开关、是否确认发射）。
 // 思路：填充字段后发布到 "DartCommand" 话题，确认发射时附带进入比赛标记。
 void SendDartCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t target_id, bool open, bool launch_confirm, bool enter_game_mode_after_send = false) {
@@ -700,22 +632,15 @@ void SendDartCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t target_id, bo
     PublishProto(mqtt_client, "DartCommand", dart_command, enter_game_mode_after_send); // 发布（确认发射时进入比赛）
 }   // 结束 SendDartCommand
 
-// 功能：发送装配指令（difficulty 难度，operation 操作：0 取消/1 确认）。
+// 功能：发送装配指令（difficulty 难度，operation 操作：0 开始兑换 / 1 确认装配 / 2 取消装配）。
 // 思路：填充字段后发布到 "AssemblyCommand" 话题，并附带进入比赛标记。
 void SendAssemblyCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t difficulty, uint32_t operation) {
     AssemblyCommand assembly_command;                                 // 构造装配指令消息
     assembly_command.set_difficulty(difficulty);                      // 装配难度等级
-    assembly_command.set_operation(operation);                        // 操作：0 取消 / 1 确认
+    assembly_command.set_operation(operation);                        // 操作：0 开始兑换 / 1 确认装配 / 2 取消装配（2027 协议 2.2.21）
     PublishProto(mqtt_client, "AssemblyCommand", assembly_command, true); // 发布并进入比赛
 }   // 结束 SendAssemblyCommand
 
-// 功能：发送英雄部署模式切换指令（mode: 0/1 进入或退出）。
-// 思路：填充 mode 后发布到 "HeroDeployModeEventCommand" 话题，并附带进入比赛标记。
-void SendDeployModeCommand(RoboGo::io::MqttClient &mqtt_client, uint32_t mode) {
-    HeroDeployModeEventCommand hero_deploy_mode_event_command;         // 构造英雄部署模式指令
-    hero_deploy_mode_event_command.set_mode(mode);                    // mode: 0 退出 / 1 进入
-    PublishProto(mqtt_client, "HeroDeployModeEventCommand", hero_deploy_mode_event_command, true); // 发布并进入比赛
-}   // 结束 SendDeployModeCommand
 
 // 功能：发送机器人性能选择指令，并标记一段"忽略远端同步"窗口。
 // 思路：先把 ignore_remote_sync_until 设为当前+5s，再把本地发射机构/底盘/哨兵选项下发到 "RobotPerformanceSelectionCommand"。
@@ -793,6 +718,8 @@ bool SubmitLoginSelection(RoboGo::io::MqttClient &mqtt_client) {
                 mqtt_port);   // 日志参数：解析出的端口
     mqtt_client.set_server_endpoint(std::move(mqtt_host), std::move(mqtt_port)); // 设置 MQTT 服务端端点
     mqtt_client.set_client_id(std::to_string(current_robot_id));      // 以 robot_id 作为 client_id 连接
+    // 记录"这次登录用的是不是指挥手槽位"：指挥手没有自己的 robot_id，后续只能用这个标志区分身份。
+    set_commander_role(selection_state.selected_robot == kCommanderLoginSlot);
     return true;                                                      // 登录参数已写入，返回成功
 }   // 结束 SubmitLoginSelection
 
@@ -826,9 +753,6 @@ float GetLoginPanelHeight(RoboGo::io::MqttClient::ConnectionState connection_sta
                                  kLoginSectionGap * scale +   // 区块间距
                                  text_line_height +   // MQTT 标题行
                                  frame_height +   // MQTT 输入框高度
-                                 text_line_height +   // 登录目标标题行
-                                 text_line_height +   // 登录目标内容行
-                                 kLoginTargetGap * scale +   // 标题与内容之间的间距
                                  text_line_height +   // 错误提示占位行
                                  text_line_height;   // 预留一行余量，避免文本换行时被裁切
 
@@ -868,14 +792,16 @@ void ShowLoginTeamSelection(TeamRobotSelectionState &selection_state) {
     }   // 结束蓝队按钮判断
 }   // 结束 ShowLoginTeamSelection
 
-// 功能：渲染 5 个机器人选项按钮（一行等宽排列），点击更新选中机器人。
+// 功能：渲染可选身份按钮（一行等宽排列），点击更新选中身份。
 void ShowLoginRobotSelection(TeamRobotSelectionState &selection_state) {
+    const int robot_count = static_cast<int>(kLoginRobotNames.size());   // 可选身份数量（重装 / 3 / 4 / 指挥手）
     const float button_gap = ImGui::GetStyle().ItemSpacing.x;        // 相邻控件水平间距
-    const float button_width = (ImGui::GetContentRegionAvail().x - button_gap * 4.0f) / 5.0f; // 5 个按钮均分宽度（4 个间隙）
+    const float button_width = (ImGui::GetContentRegionAvail().x - button_gap * static_cast<float>(robot_count - 1)) /
+                               static_cast<float>(robot_count);      // 按数量等分宽度（间隙数为数量减一）
     const float button_height = kLoginRobotButtonHeight * ImGui::GetScale(); // 按钮高度（随缩放）
 
     ImGui::TextDisabled("机器人");                                    // 灰色标题"机器人"
-    for (int i = 0; i < static_cast<int>(kLoginRobotNames.size()); i++) { // 遍历 5 个机器人选项
+    for (int i = 0; i < robot_count; i++) { // 遍历全部可选身份
         if (i > 0) {   // 首个按钮独占行首，其余需要 SameLine
             ImGui::SameLine();                                        // 除首个外均同行排列
         }   // 结束同行判断
@@ -946,27 +872,29 @@ void ShowTeamRobotSelection(RoboGo::io::MqttClient &mqtt_client) {
     ShowLoginTeamSelection(selection_state);                          // 队伍选择
     ImGui::Dummy(ImVec2(0.0f, kLoginSectionGap * ImGui::GetScale())); // 区块间距
     ShowLoginRobotSelection(selection_state);                         // 机器人选择
-    ImGui::Dummy(ImVec2(0.0f, kLoginTargetGap * ImGui::GetScale()));  // 与登录目标间距
-    ImGui::TextDisabled("登录目标");                                  // 灰色标题
-    ImGui::TextUnformatted(GetSelectedLoginTargetText(selection_state).c_str()); // 显示"队伍 / 兵种 (ID x)"
 }   // 结束 ShowTeamRobotSelection
 
 // 功能：依据当前 robot_id 计算开局面板各子面板的可见性（不同兵种可用指令不同）。
+// 思路：除兵种专属面板外，还要避免"同一功能在多个面板里重复出现"导致版面溢出——
+//       哨兵的补弹/回血/复活都走 SentryCtrlCommand，已在"哨兵控制"面板里，就不再显示通用的弹药/回血/复活面板。
 StartPanelVisibility GetStartPanelVisibility(const State &state) {
     uint32_t current_robot_id = GetCurrentRobotId(state);            // 取当前已登录 robot_id
     StartPanelVisibility visibility;                                  // 待填充的可见性集合
-    visibility.show_ammo_panel = IsOneOf(current_robot_id, 1, 3, 4, 101, 103, 104);        // 普通战车可兑换弹药
-    visibility.show_recover_panel = IsOneOf(current_robot_id, 1, 2, 3, 4, 101, 103, 104);  // 多数战车可回血
-    visibility.show_revive_panel = IsOneOf(current_robot_id, 1, 2, 3, 4, 101, 102, 103, 104); // 多数战车可复活
-    visibility.show_deploy_panel = IsOneOf(current_robot_id, 1, 101);  // 英雄专用部署模式
-    visibility.show_assembly_panel = IsOneOf(current_robot_id, 2, 102); // 工程专用装配
-    visibility.show_marker_panel = IsOneOf(current_robot_id, 6, 106);  // 无人机专用地图标记
-    visibility.show_robot_performance_options = IsOneOf(current_robot_id, 1, 3, 4, 101, 103, 104); // 普通战车性能选项
-    visibility.show_sentry_performance_option = IsOneOf(current_robot_id, 6, 106); // 哨兵性能选项（无人机视角）
+    if (is_commander_role()) {                                        // 指挥手不是机器人
+        return visibility;                                            // 全 false：弹药/回血/复活/哨兵/飞镖都在指挥台里
+    }                                                                 // 结束指挥手分支
+    const bool is_sentry = IsOneOf(current_robot_id, 7, 107);          // 是否为哨兵（功能最全，面板最容易挤爆）
+    visibility.show_sentry_panel = is_sentry;                          // 哨兵控制面板（7/107）
+    visibility.show_ammo_panel = !is_sentry && IsOneOf(current_robot_id, 1, 3, 4, 5, 101, 103, 104, 105);        // 重装/步兵可兑换弹药（哨兵见哨兵控制面板）
+    visibility.show_recover_panel = !is_sentry && IsOneOf(current_robot_id, 1, 3, 4, 5, 101, 103, 104, 105);  // 同上可远程回血
+    visibility.show_revive_panel = !is_sentry && IsOneOf(current_robot_id, 1, 3, 4, 5, 101, 103, 104, 105); // 同上可复活
+    visibility.show_assembly_panel = IsOneOf(current_robot_id, 1, 101); // 2027 重装专用装配（模块化 42mm）
+    visibility.show_marker_panel = IsOneOf(current_robot_id, 7, 8, 107, 108);  // 哨兵/飞镖可地图标记
+    visibility.show_robot_performance_options = IsOneOf(current_robot_id, 1, 3, 4, 5, 101, 103, 104, 105); // 重装/步兵性能选项
+    visibility.show_sentry_performance_option = is_sentry;             // 哨兵控制方式（自动/半自动）
     visibility.show_performance_panel = visibility.show_robot_performance_options || visibility.show_sentry_performance_option; // 任一存在则显示性能面板
-    visibility.show_dart_panel = visibility.show_marker_panel;        // 飞镖面板随无人机可见性
-    visibility.show_air_support_panel = visibility.show_marker_panel; // 空中支援面板随无人机可见性
-    visibility.is_hero = IsOneOf(current_robot_id, 1, 101);           // 是否英雄机器人
+    visibility.show_dart_panel = IsOneOf(current_robot_id, 8, 108);   // 飞镖为独立系统（8/108）
+    visibility.is_hero = IsOneOf(current_robot_id, 1, 101);           // 重装（沿用 is_hero 变量名）
     return visibility;   // 返回填充好的可见性集合
 }   // 结束 GetStartPanelVisibility
 
@@ -1015,61 +943,83 @@ void ShowDartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, floa
     }   // 结束确认发射按钮判断
 }   // 结束 ShowDartPanel
 
-// 功能：渲染空中支援面板（状态展示 + 免费/付费呼叫/取消/解除反制四个按钮）。
-// 思路：先显示当前空中支援状态文本；四个按钮依据各自可用性反馈决定是否禁用，点击发送对应 AirSupportCommand。
-void ShowAirSupportPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
-    ScopedTitledPanel air_support_panel("AirSupportPanel", panel_width, "空中支援", ImVec4(0.2f, 0.85f, 1.0f, 1.0f)); // 青色标题子面板
 
-    if (state.air_support_status_sync.has_value()) {                 // 已收到空中支援同步
-        const auto &sync = *state.air_support_status_sync;           // 取同步状态引用
-        ImGui::Text("当前状态: %s", GetAirSupportStatusName(sync.airsupport_status())); // 显示状态中文名
-        ImGui::Text("免费剩余: %u秒", sync.left_time());             // 免费剩余秒数
-        ImGui::SameLine();                                           // 与上一行同行
-        ImGui::Text("已花费: %u", sync.cost_coins());                // 已花费金币
-        ImGui::Text("照射状态: %s", sync.is_being_targeted() != 0 ? "被照射" : "未被照射"); // 是否被照射
-        ImGui::SameLine();                                           // 同行
-        ImGui::Text("发射机构: %s", GetAirSupportShooterStatusName(sync.shooter_status())); // 发射机构状态
-    } else {                                                        // 尚未同步
-        ImGui::TextDisabled("当前状态: 等待同步");                   // 灰色占位
-        ImGui::TextDisabled("免费剩余: 未知");   // 无数据时的灰色占位
-        ImGui::TextDisabled("照射状态: 未知");   // 照射状态的灰色占位
-    }   // 结束无数据分支
-
-    ImGui::Spacing();                                               // 与按钮区留白
-
-    ScopedStyle air_support_button_style = MakeButtonStyle(kAirSupportButtonStyle); // 空中支援按钮样式
-
-    ButtonFeedback free_feedback = GetFreeAirSupportFeedback(state); // 免费呼叫反馈
-    ButtonFeedback paid_feedback = GetPaidAirSupportFeedback(state); // 付费呼叫反馈
-    ButtonFeedback cancel_feedback = GetCancelAirSupportFeedback(state); // 取消呼叫反馈
-    ButtonFeedback release_feedback = GetReleaseAirSupportCountermeasureFeedback(state); // 解除反制反馈
-
-    if (ButtonWithTooltip("免费呼叫", free_feedback.valid_tooltip, free_feedback.disabled_reason)) { // 免费呼叫（command 1）
-        SendAirSupportCommand(mqtt_client, 1);   // command_id 1 = 免费呼叫
-    }   // 结束免费呼叫判断
-    ImGui::SameLine();                                               // 付费呼叫同行
-    if (ButtonWithTooltip("付费呼叫", paid_feedback.valid_tooltip, paid_feedback.disabled_reason)) { // 付费呼叫（command 2）
-        SendAirSupportCommand(mqtt_client, 2);   // command_id 2 = 付费呼叫
-    }   // 结束付费呼叫判断
-    ImGui::SameLine();                                               // 取消呼叫同行
-    if (ButtonWithTooltip("取消呼叫", cancel_feedback.valid_tooltip, cancel_feedback.disabled_reason)) { // 取消（command 0）
-        SendAirSupportCommand(mqtt_client, 0);   // command_id 0 = 取消呼叫
-    }   // 结束取消呼叫判断
-    if (ButtonWithTooltip("解除反制", release_feedback.valid_tooltip, release_feedback.disabled_reason)) { // 解除反制（command 3）
-        SendAirSupportCommand(mqtt_client, 3);   // command_id 3 = 解除反制
-    }   // 结束解除反制判断
-}   // 结束 ShowAirSupportPanel
-
-// 功能：把飞镖面板与空中支援面板排成一行（按可见性自动隐藏空位）。
-void ShowDartAndAirSupportRow(const State &state,
-                              RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端，供子面板下发指令
-                              bool show_dart_panel,   // 飞镖面板是否可见
-                              bool show_air_support_panel) {   // 空中支援面板是否可见
-    ShowPanelRow("DartAirSupportRow", 6.0f, {   // 用行布局工具并排两个面板（行高按 6 倍行高预留）
-            {.visible = show_dart_panel, .render = [&](float width) { ShowDartPanel(state, mqtt_client, width); }},   // 飞镖面板渲染回调（宽度由行工具分配）
-            {.visible = show_air_support_panel, .render = [&](float width) { ShowAirSupportPanel(state, mqtt_client, width); }},   // 空中支援面板渲染回调（宽度由行工具分配）
+// 功能：渲染飞镖面板（2027 起本行仅保留飞镖）。
+void ShowDartRow(const State &state,
+                 RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端，供子面板下发指令
+                 bool show_dart_panel) {   // 飞镖面板是否可见
+    ShowPanelRow("DartRow", 6.0f, {   // 行布局工具
+            {.visible = show_dart_panel, .render = [&](float width) { ShowDartPanel(state, mqtt_client, width); }},   // 飞镖面板渲染回调
     });   // 结束 initializer_list
-}   // 结束 ShowDartAndAirSupportRow
+}   // 结束 ShowDartRow
+
+// 功能：渲染哨兵控制面板（状态显示 + 补给/复活/姿态三组按钮）。
+// 思路：原先 11 个按钮挤成"一行 5 个 + 一行 6 个"，在半个面板宽度下直接横向溢出、
+//       还会压到窗口底部的"进入比赛"按钮上。现在按功能分两行、按钮宽度按可用宽度自适应均分。
+void ShowSentryPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
+    ScopedTitledPanel sentry_panel("SentryPanel", panel_width, "哨兵控制", ImVec4(0.9f, 0.6f, 1.0f, 1.0f)); // 紫色标题子面板
+
+    // 状态与回执压成一行：面板高度是按行数换来的，多一行就会把下面的按钮挤出可视区。
+    std::string status_line;                                           // 待显示的状态文本
+    if (state.sentry_status_sync.has_value()) {                        // 已收到哨兵状态
+        const auto &sync = *state.sentry_status_sync;                  // 取状态引用
+        const char *posture = sync.posture_id() == 1 ? "进攻" : sync.posture_id() == 2 ? "防御" : sync.posture_id() == 3 ? "移动" : "未知"; // 姿态中文名
+        status_line = std::string("姿态: ") + posture +
+                      std::string("  弱化: ") + (sync.is_weakened() ? "是" : "否") +
+                      std::string("  强化: ") + (sync.is_powered() ? "是" : "否");   // 姿态/弱化/强化
+    } else {                                                           // 尚未同步
+        status_line = "哨兵状态: 等待同步";                            // 占位文案
+    }   // 结束状态分支
+    if (state.sentry_ctrl_result.has_value()) {                        // 有上一指令回执
+        status_line += std::string("   上一条 ") + std::to_string(state.sentry_ctrl_result->command_id()) +
+                       "→" + std::to_string(state.sentry_ctrl_result->result_code());   // 指令号→结果码
+    }   // 结束回执分支
+    if (state.sentry_status_sync.has_value()) {                        // 有真实状态时用普通色，否则灰色
+        ImGui::Text("%s", status_line.c_str());                        // 状态行
+    } else {                                                           // 无状态
+        ImGui::TextDisabled("%s", status_line.c_str());                // 灰色占位
+    }   // 结束状态配色判断
+
+    ImGui::Spacing();                                                  // 与按钮区留白
+    ScopedStyle sentry_style = MakeButtonStyle(kPrimaryButtonStyle);   // 复用主按钮样式
+
+    const float item_spacing = ImGui::GetStyle().ItemSpacing.x;        // 按钮间距
+    const float available_width = ImGui::GetContentRegionAvail().x;    // 本行可用宽度
+    // 一行按 6 个按钮均分；窄面板下保底 72px（宁可换行也不把按钮压成点不动的细条）。
+    const float button_width = std::max(72.0f * ImGui::GetScale(), (available_width - item_spacing * 5.0f) / 6.0f);
+    const ImVec2 button_size(button_width, 0.0f);                      // 统一按钮尺寸（高度自适应）
+
+    // 第一行：补给与复活（对应 SentryCtrlCommand 1 / 3 / 4 / 5 / 6）。
+    if (ImGui::Button("补弹", button_size)) SendSentryCtrlCommand(mqtt_client, 1);      // 补血点补弹
+    ImGui::SameLine();
+    if (ImGui::Button("远程补弹", button_size)) SendSentryCtrlCommand(mqtt_client, 3);  // 远程补弹
+    ImGui::SameLine();
+    if (ImGui::Button("远程回血", button_size)) SendSentryCtrlCommand(mqtt_client, 4);  // 远程回血
+    ImGui::SameLine();
+    if (ImGui::Button("确认复活", button_size)) SendSentryCtrlCommand(mqtt_client, 5);  // 确认复活
+    ImGui::SameLine();
+    if (ImGui::Button("金币复活", button_size)) SendSentryCtrlCommand(mqtt_client, 6);  // 花金币立即复活
+
+    // 第二行：姿态与强化姿态（对应 SentryCtrlCommand 7~12）。
+    if (ImGui::Button("进攻", button_size)) SendSentryCtrlCommand(mqtt_client, 7);      // 切换进攻姿态
+    ImGui::SameLine();
+    if (ImGui::Button("防御", button_size)) SendSentryCtrlCommand(mqtt_client, 8);      // 切换防御姿态
+    ImGui::SameLine();
+    if (ImGui::Button("移动", button_size)) SendSentryCtrlCommand(mqtt_client, 9);      // 切换移动姿态
+    ImGui::SameLine();
+    if (ImGui::Button("强化进攻", button_size)) SendSentryCtrlCommand(mqtt_client, 10); // 强化进攻
+    ImGui::SameLine();
+    if (ImGui::Button("强化防御", button_size)) SendSentryCtrlCommand(mqtt_client, 11); // 强化防御
+    ImGui::SameLine();
+    if (ImGui::Button("强化移动", button_size)) SendSentryCtrlCommand(mqtt_client, 12); // 强化移动
+}   // 结束 ShowSentryPanel
+
+// 功能：把哨兵面板单独排成一行。
+void ShowSentryRow(const State &state, RoboGo::io::MqttClient &mqtt_client, const StartPanelVisibility &visibility) {
+    ShowPanelRow("SentryRow", 5.0f, {                                  // 行布局（标题 + 状态 + 两行按钮）
+            {.visible = visibility.show_sentry_panel, .render = [&](float width) { ShowSentryPanel(state, mqtt_client, width); }}, // 哨兵面板回调
+    });   // 结束 initializer_list
+}   // 结束 ShowSentryRow
 
 // 功能：渲染弹药兑换面板（输入允许发弹量 + 兑换/远程兑换按钮）。
 // 思路：数字输入框解析发量；两按钮依据补给区/经济/英雄计价反馈决定是否可用，兑换发送 CommonCommand(cmd 1/2)，远程兑换发送 cmd 5。
@@ -1092,13 +1042,20 @@ void ShowAmmoPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, floa
     {   // 作用域：按钮样式
         ScopedStyle ammo_button_style = MakeButtonStyle(kPrimaryButtonStyle); // 主按钮样式
         if (ButtonWithTooltip("兑换允许发弹量", ammo_feedback.valid_tooltip, ammo_feedback.disabled_reason)) { // 本地兑换
-            SendCommonCommand(mqtt_client, is_hero ? 1 : 2, static_cast<uint32_t>(ammo)); // 英雄 cmd1 / 其他 cmd2
+            SendCommonCommand(mqtt_client, is_hero ? 2 : 1, static_cast<uint32_t>(ammo)); // 重装42mm用cmd2 / 步兵哨兵17mm用cmd1（2027修正）
         }   // 结束本地兑换判断
         ImGui::SameLine();                                           // 远程兑换同行
         if (ButtonWithTooltip("远程兑换", remote_ammo_feedback.valid_tooltip, remote_ammo_feedback.disabled_reason)) {   // 远程兑换按钮（提示/禁用由反馈决定）
             SendCommonCommand(mqtt_client, 5);                       // 远程兑换指令 cmd5
         }   // 结束远程兑换判断
     }   // 结束按钮作用域
+    // 把禁用原因直接写在按钮下面：灰按钮点击没反应时，操作手不必悬停或翻文档就知道卡在哪。
+    // 只占一行（优先报本地兑换的原因），面板行高按 5 行预留，正好容得下。
+    if (ammo_feedback.disabled_reason != nullptr) {                   // 本地兑换不可用
+        ImGui::TextDisabled("兑换允许发弹量不可用：%s", ammo_feedback.disabled_reason);   // 直接给出原因
+    } else if (remote_ammo_feedback.disabled_reason != nullptr) {     // 本地可用但远程不可用
+        ImGui::TextDisabled("远程兑换不可用：%s", remote_ammo_feedback.disabled_reason);   // 给出远程兑换的原因
+    }   // 结束禁用原因判断
 }   // 结束 ShowAmmoPanel
 
 // 功能：渲染装配控制面板（输入难度 + 取消/确认装配按钮）。
@@ -1116,41 +1073,66 @@ void ShowAssemblyPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, 
 
     ImGui::Spacing();                                               // 与按钮区留白
 
+    // 2027 协议 2.2.21 AssemblyCommand.operation：0=开始兑换、1=确认装配、2=取消装配（2026 的"0=取消"写法已废止）。
+    // 2027 协议 2.2.22 TechCoreMotionStateSync.basic_state：1=初始位置(空闲)、2=运动中、3=已到达对应位姿。
+    const bool has_core_state = state.tech_core_motion_state_sync.has_value();  // 是否已收到科技核心状态同步
+    const uint32_t core_basic_state = has_core_state ? state.tech_core_motion_state_sync->basic_state() : 0;  // 0 表示未知
+    const uint32_t max_difficulty = has_core_state ? state.tech_core_motion_state_sync->maximum_difficulty_level() : 0;  // 当前可选最高难度
+    const bool core_idle = core_basic_state == 1;                                  // 核心在初始位：允许"开始兑换"
+    const bool core_in_progress = core_basic_state == 2 || core_basic_state == 3;  // 流程进行中(运动中/已到位)：允许"取消装配"
+    const bool core_ready = core_basic_state == 3;                                 // 核心已到位：允许"确认装配"
+    // 难度合法性：解析成功、在 1~4 范围内，且不超过服务器给出的最高可选难度。
+    const bool difficulty_in_range = is_valid_assembly_difficulty && assembly_difficulty >= 1 &&
+                                     assembly_difficulty <= 4 &&
+                                     (max_difficulty == 0 || assembly_difficulty <= static_cast<long long>(max_difficulty));
+    {   // 作用域：核心状态提示
+        const char *core_state_text = "未知";                                        // 默认文案
+        switch (core_basic_state) {                                                 // 按协议枚举翻译
+            case 1: core_state_text = "初始位"; break;                              // 1 = 初始位置
+            case 2: core_state_text = "运动中"; break;                              // 2 = 运动中
+            case 3: core_state_text = "已到位"; break;                              // 3 = 已到达位姿
+            default: break;                                                         // 0/其它 = 未同步
+        }                                                                           // 结束状态翻译
+        // 状态/难度/剩余时长压在同一行：面板高度是按行数换来的，多占一行会把下面的三个按钮挤出可视区。
+        std::string core_line = std::string("核心: ") + core_state_text + "   上限 " + std::to_string(max_difficulty);  // 基础部分
+        if (has_core_state && state.tech_core_motion_state_sync->remain_time_all() > 0) {  // 四级装配期间服务器才给剩余时长
+            core_line += "   剩余 " + std::to_string(state.tech_core_motion_state_sync->remain_time_all()) + "s";  // 追加总剩余
+        }   // 结束剩余时长追加
+        ImGui::TextUnformatted(core_line.c_str());   // 一行输出，避免额外占高
+    }   // 结束核心状态提示
+
+    ImGui::Spacing();                                               // 与按钮区留白
+
     {   // 作用域：装配按钮样式
         ScopedStyle assembly_button_style = MakeButtonStyle(kAssemblyButtonStyle); // 装配按钮样式
-        // 技术核心未就绪（无同步或 basic_state==1 忙碌中）时禁用取消装配。
-        ImGui::BeginDisabled(!state.tech_core_motion_state_sync.has_value() || state.tech_core_motion_state_sync.value().basic_state() == 1);
-        if (ImGui::Button("取消装配")) {                            // 取消装配（operation 0）
-            SendAssemblyCommand(mqtt_client, 0, 0);   // operation 0 = 取消，难度参数无意义填 0
-        }   // 结束取消装配判断
+
+        // 开始兑换(operation=0)：核心空闲且难度合法才可点。注意这不是"取消"，点下去会启动装配流程。
+        ImGui::BeginDisabled(!core_idle || !difficulty_in_range);    // 不满足条件时禁用
+        if (ImGui::Button("开始兑换")) {                             // 开始兑换（operation 0）
+            SendAssemblyCommand(mqtt_client, static_cast<uint32_t>(assembly_difficulty), 0);  // operation 0 = 开始兑换，带难度
+        }   // 结束开始兑换判断
         ImGui::EndDisabled();                                        // 结束禁用作用域
 
         ImGui::SameLine();                                           // 确认装配同行
 
-        // 难度非法或技术核心状态>1（不可装配）时禁用确认装配。
-        ImGui::BeginDisabled(!is_valid_assembly_difficulty || !state.tech_core_motion_state_sync.has_value() || state.tech_core_motion_state_sync.value().basic_state() > 1);
-        if (ImGui::Button("确认装配")) {                            // 确认装配（operation 1）
-            SendAssemblyCommand(mqtt_client, static_cast<uint32_t>(assembly_difficulty), 1);   // operation 1 = 确认，携带输入解析出的难度
+        // 确认装配(operation=1)：核心已到位才可点。
+        ImGui::BeginDisabled(!core_ready || !difficulty_in_range);   // 不满足条件时禁用
+        if (ImGui::Button("确认装配")) {                             // 确认装配（operation 1）
+            SendAssemblyCommand(mqtt_client, static_cast<uint32_t>(assembly_difficulty), 1);  // operation 1 = 确认，携带输入解析出的难度
         }   // 结束确认装配判断
+        ImGui::EndDisabled();                                        // 结束禁用作用域
+
+        ImGui::SameLine();                                           // 取消装配同行
+
+        // 取消装配(operation=2)：只有流程进行中才可点，难度参数无意义填 0。
+        ImGui::BeginDisabled(!core_in_progress);                     // 未开始装配时禁用取消
+        if (ImGui::Button("取消装配")) {                             // 取消装配（operation 2）
+            SendAssemblyCommand(mqtt_client, 0, 2);                  // operation 2 = 取消装配
+        }   // 结束取消装配判断
         ImGui::EndDisabled();                                        // 结束禁用作用域
     }   // 结束按钮作用域
 }   // 结束 ShowAssemblyPanel
 
-// 功能：渲染英雄部署模式切换面板（进入/退出按钮）。
-// 思路：依据远端部署模式状态显示对应文案；在无法获取状态时禁用按钮，点击发送 HeroDeployModeEventCommand。
-void ShowDeployPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
-    ScopedTitledPanel deploy_panel("DeployPanel", panel_width, "部署模式", ImVec4(0.7f, 0.3f, 1.0f, 1.0f)); // 紫色标题子面板
-
-    bool has_deploy_mode_status = state.deploy_mode_status_sync.has_value(); // 是否已收到部署模式同步
-    const char *label = !has_deploy_mode_status ? "进入/退出部署模式" : state.deploy_mode_status_sync->status() == 0 ? "进入部署模式" : "退出部署模式"; // 按钮文案随状态切换
-    const char *disabled_reason = has_deploy_mode_status ? nullptr : "无法获取当前是否进入了部署模式"; // 无状态则禁用
-    {   // 作用域：部署按钮样式
-        ScopedStyle deploy_button_style = MakeButtonStyle(kDeployButtonStyle); // 部署按钮样式
-        if (ButtonWithTooltip(label, "", disabled_reason)) {              // 悬停提示空、可能禁用
-            SendDeployModeCommand(mqtt_client, state.deploy_mode_status_sync->status() == 0 ? 1 : 0); // 按当前状态取反切换
-        }   // 结束进入/退出判断
-    }   // 结束作用域
-}   // 结束 ShowDeployPanel
 
 // 功能：渲染远程回血面板。
 // 思路：依据经济反馈决定按钮可用性，点击发送 CommonCommand(cmd 6)。
@@ -1206,6 +1188,9 @@ void ShowMarkerPanel(float panel_width) {
     }   // 结束作用域
 
     bool include_sentry = is_marker_mode_include_sentry();            // 取"是否包含哨兵"开关
+    if (is_marker_mode()) {                                          // 标记模式进行中：补一句操作说明
+        ImGui::TextDisabled("在小地图上左键点击即可下发坐标");        // 明确下一步该点哪里
+    }   // 结束说明分支
     ImGui::Spacing();                                                // 与上方留白
     if (ImGui::RadioButton("包含哨兵", include_sentry)) {             // 单选：包含哨兵
         set_marker_mode_include_sentry(true);                        // 写入全局设置
@@ -1257,14 +1242,13 @@ void ShowPerformancePanel(const State &state,
     }   // 结束选项改变判断
 }   // 结束 ShowPerformancePanel
 
-// 功能：把弹药/装配/部署三个面板排成一行（按可见性隐藏空位）。
+// 功能：把弹药/装配两个面板排成一行（按可见性隐藏空位）。
 void ShowAmmoAssemblyDeployRow(const State &state,
                                RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端
                                const StartPanelVisibility &visibility) {   // 可见性集合，决定哪些面板参与排布
-    ShowPanelRow("AmmoAssemblyDeployRow", 4.0f, {   // 三个面板横向排一行（行高按 4 倍行高预留）
+    ShowPanelRow("AmmoAssemblyDeployRow", 5.0f, {   // 两个面板横向排一行（行高 5 倍：装配面板多了"核心状态"一行）
             {.visible = visibility.show_ammo_panel, .render = [&](float width) { ShowAmmoPanel(state, mqtt_client, width, visibility.is_hero); }},   // 弹药兑换面板回调（is_hero 影响计价方式）
             {.visible = visibility.show_assembly_panel, .render = [&](float width) { ShowAssemblyPanel(state, mqtt_client, width); }},   // 装配控制面板回调
-            {.visible = visibility.show_deploy_panel, .render = [&](float width) { ShowDeployPanel(state, mqtt_client, width); }},   // 部署模式面板回调
     });   // 结束 initializer_list
 }   // 结束 ShowAmmoAssemblyDeployRow
 
@@ -1282,7 +1266,7 @@ void ShowRecoverReviveRow(const State &state,
 void ShowMarkerPerformanceRow(const State &state,
                               RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端
                               const StartPanelVisibility &visibility) {   // 可见性集合
-    ShowPanelRow("MarkerPerformanceRow", 4.0f, {   // 标记/性能两个面板排一行（行高 4 倍）
+    ShowPanelRow("MarkerPerformanceRow", 5.0f, {   // 标记/性能两个面板排一行（标记面板在标记模式下会多一行操作说明，按 5 行预留）
             {.visible = visibility.show_marker_panel, .render = [&](float width) { ShowMarkerPanel(width); }},   // 地图标记面板回调（不需要 state）
             {.visible = visibility.show_performance_panel, .render = [&](float width) {   // 性能选择面板回调开始
                  ShowPerformancePanel(state,   // 状态数据
@@ -1300,7 +1284,7 @@ void ShowMouseSensitivityRow() {
     ImGui::Dummy(ImVec2(0.0f, kMouseSensitivityTopGap * ImGui::GetScale())); // 顶部留白
 
     ScopedChildWindow mouse_sensitivity_row("MouseSensitivityRow",         // 不可滚动子窗口
-                                            ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 2), // 两行高
+                                            ImVec2(0, ImGui::GetFrameHeightWithSpacing()), // 单行高（之前给两行，多出的空白把下面的 UDP 行推远了）
                                             false,   // 无边框
                                             ImGuiWindowFlags_NoScrollbar);   // 禁止滚动条（只需两行固定高）
 
@@ -1321,15 +1305,27 @@ void ShowMouseSensitivityRow() {
 }   // 结束 ShowMouseSensitivityRow
 
 // 功能：渲染底部主操作按钮：已登录显示"进入比赛"，否则显示"登录"。
-// 思路：登录时居中放置绿色按钮调用 enter_game_mode()；未登录时调用 SubmitLoginSelection 校验并连接。
+// 思路：按钮改为在正常布局流中居中（原来是 SetCursorPos 绝对定位到窗口底部），
+//       这样"进入比赛"永远排在内容区之后，不会再被上面的功能面板压住。
 void ShowPrimaryActionButton(RoboGo::io::MqttClient &mqtt_client) {
-    ImVec2 window_size = ImGui::GetWindowSize();                      // 当前窗口尺寸
     float button_width = 200 * ImGui::GetScale();                     // 按钮宽度（随缩放）
     float button_height = kPrimaryActionButtonHeight * ImGui::GetScale(); // 按钮高度
     const auto connection_state = mqtt_client.get_connection_state(); // 取连接状态
     const bool is_logged_in = connection_state == RoboGo::io::MqttClient::ConnectionState::Connected; // 是否已登录
 
-    ImGui::SetCursorPos(ImVec2((window_size.x - button_width) / 2, window_size.y - button_height - 15)); // 底部居中定位
+    // 水平居中：按当前行剩余宽度算出左侧偏移，剩余宽度为负（窗口极窄）时不偏移，保证按钮仍可点。
+    const float center_offset = (ImGui::GetContentRegionAvail().x - button_width) * 0.5f; // 居中所需左偏移
+    if (center_offset > 0.0f) {                                       // 只有放得下才偏移
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + center_offset); // 左移（在行首基础上加偏移）
+    }   // 结束居中判断
+
+    if (is_logged_in && is_commander_role()) {                       // 已登录且身份是指挥手
+        ScopedStyle enter_game_button_style = MakeEnterGameButtonStyle(); // 绿色按钮样式
+        if (ImGui::Button("进入指挥台", ImVec2(button_width, button_height))) { // 点击打开指挥台
+            enter_commander_console();                                // 打开指挥台（不进入比赛模式，鼠标保持可见）
+        }   // 结束进入指挥台点击判断
+        return;                                                      // 已处理，结束
+    }   // 结束指挥手分支
 
     if (is_logged_in) {                                              // 已登录：显示"进入比赛"
         ScopedStyle enter_game_button_style = MakeEnterGameButtonStyle(); // 绿色按钮样式
@@ -1345,32 +1341,163 @@ void ShowPrimaryActionButton(RoboGo::io::MqttClient &mqtt_client) {
     }   // 结束登录点击判断
 }   // 结束 ShowPrimaryActionButton
 
+// 功能：绘制「UDP 画面反转」开关行（标题 + 拨动开关 + 状态文字）。
+// 思路：原来用一个 SmallButton 显示「开/关」，深色面板上几乎与背景同色，看不出是可点控件；
+//       改为常见设置项的样式——金色标题右侧紧跟胶囊形拨动开关（轨道 + 圆形滑块，开启绿色靠右、
+//       关闭深灰靠左），开关右边再用文字复述当前状态。标题+开关+状态整体作为点击热区，
+//       悬停时该区域淡高亮并弹提示。控件跟随标题左对齐（而不是贴窗口右边缘）：登录控制面板
+//       右下角会被小地图面板压住，右对齐会被盖掉。
+// 返回：本帧是否点了开关（由调用方翻转实际方向并写日志）。
+bool ShowVideoInvertRow(bool udp_video_inverted) {
+    const float scale = ImGui::GetScale();                              // 全局缩放
+    const float row_height = std::max(ImGui::GetFrameHeight(), 24.0f * scale); // 行高至少放得下开关
+    const float track_width = 40.0f * scale;                            // 轨道宽度
+    const float track_height = 20.0f * scale;                           // 轨道高度
+    const float track_rounding = track_height * 0.5f;                   // 胶囊形圆角
+
+    const char *title_text = "UDP 画面反转";                             // 左侧标题
+    const char *state_text = udp_video_inverted ? "已开启" : "已关闭";    // 右侧状态复述
+    const float title_width = ImGui::CalcTextSize(title_text).x;        // 标题宽度
+    const float state_width = ImGui::CalcTextSize(state_text).x;        // 状态文字宽度
+    const float title_gap = 14.0f * scale;                              // 标题与开关的间距
+    const float state_gap = 10.0f * scale;                              // 开关与状态文字的间距
+    const float control_width = title_width + title_gap + track_width + state_gap + state_width; // 整块控件宽度
+
+    const ImVec2 row_pos = ImGui::GetCursorScreenPos();                 // 行左上角（屏幕坐标）
+    // 只把"标题+开关+状态"这一块当热区：点标题也能切换，但不会把整行空白都变成按钮。
+    const bool toggle_requested = ImGui::InvisibleButton("##udp_invert_toggle", ImVec2(control_width, row_height)); // 按下并抬起才算一次点击，不会拖拽误触
+    const bool hovered = ImGui::IsItemHovered();                        // 鼠标是否落在控件块上
+
+    ImDrawList *draw_list = ImGui::GetWindowDrawList();                 // 本窗口绘制列表
+    if (hovered) {                                                      // 悬停：整块淡高亮，明确"这里能点"
+        draw_list->AddRectFilled(row_pos,                               // 左上角
+                                 ImVec2(row_pos.x + control_width, row_pos.y + row_height), // 右下角
+                                 IM_COL32(255, 255, 255, 16),            // 极淡白
+                                 5.0f * scale,                           // 圆角
+                                 ImDrawFlags_None);                      // 无特殊标志
+    }   // 结束悬停高亮
+
+    const float text_y = row_pos.y + (row_height - ImGui::GetTextLineHeight()) * 0.5f; // 文字垂直居中
+
+    // 左侧标题
+    draw_list->AddText(ImVec2(row_pos.x, text_y),                       // 行首
+                       IM_COL32(255, 204, 77, 255),                      // 与灵敏度标签同款金色
+                       title_text);                                      // 标题文字
+
+    // 拨动开关：紧跟标题，垂直居中
+    const ImVec2 track_min(row_pos.x + title_width + title_gap,          // 轨道左边界
+                           row_pos.y + (row_height - track_height) * 0.5f); // 轨道上边界
+    const ImVec2 track_max(track_min.x + track_width, track_min.y + track_height); // 轨道右/下边界
+    const ImU32 track_color = udp_video_inverted                        // 开：绿色
+                                      ? (hovered ? IM_COL32(58, 202, 120, 255) : IM_COL32(42, 176, 98, 255))
+                                      : (hovered ? IM_COL32(62, 74, 92, 255) : IM_COL32(46, 56, 70, 255)); // 关：深灰蓝
+    draw_list->AddRectFilled(track_min, track_max, track_color, track_rounding, ImDrawFlags_None); // 轨道底色
+    draw_list->AddRect(track_min,                                       // 描边：深色底上勾出边界
+                       track_max,
+                       udp_video_inverted ? IM_COL32(102, 228, 158, 255) : IM_COL32(100, 114, 138, 255),
+                       track_rounding,
+                       1.0f * scale,
+                       ImDrawFlags_None);
+
+    const float knob_radius = track_height * 0.5f - 3.0f * scale;        // 滑块半径
+    const float knob_center_x = udp_video_inverted                      // 开：贴右
+                                        ? track_max.x - 3.0f * scale - knob_radius
+                                        : track_min.x + 3.0f * scale + knob_radius; // 关：贴左
+    draw_list->AddCircleFilled(ImVec2(knob_center_x, track_min.y + track_height * 0.5f), // 滑块圆心
+                               knob_radius,                             // 半径
+                               IM_COL32(238, 243, 250, 255),            // 近白
+                               24);                                     // 分段数（够圆滑）
+
+    // 状态文字：开关右侧，把"开/关"用文字再说一遍，单看滑块也不至于误读
+    draw_list->AddText(ImVec2(track_max.x + state_gap, text_y),         // 紧接开关右边
+                       udp_video_inverted ? IM_COL32(124, 222, 166, 255) // 开：浅绿
+                                          : IM_COL32(148, 160, 180, 255), // 关：灰蓝
+                       state_text);
+
+    return toggle_requested;                                            // 返回本帧是否请求翻转
+}   // 结束 ShowVideoInvertRow
+
 }// namespace
 
+// 功能：本地联调用的自动登录钩子——设置了环境变量 ROBOGO_DEV_ROBOT_ID 时，直接以该编号作为 client_id 连接。
+// 思路：只在首次调用时执行一次；未设置环境变量则完全不影响原有登录流程（比赛现场不会设置它）。
+//       配套 tools/mock_rm_server.py 使用，可跳过每次点选队伍/机器人，方便验证 HUD 排版。
+void ApplyDevAutoLogin(RoboGo::io::MqttClient &mqtt_client) {
+    static bool already_applied = false;                                  // 保证只执行一次
+    if (already_applied) {                                                // 已执行过
+        return;                                                           // 直接返回
+    }                                                                     // 结束重复执行保护
+    already_applied = true;                                               // 标记已执行
+    const char *dev_robot_id = std::getenv("ROBOGO_DEV_ROBOT_ID");        // 读取调试用 robot_id
+    if (dev_robot_id == nullptr || *dev_robot_id == '\0') {               // 未设置或为空
+        return;                                                           // 走正常登录流程
+    }                                                                     // 结束未设置分支
+    const char *dev_host = std::getenv("ROBOGO_DEV_MQTT_HOST");           // 可选：覆盖 broker 地址
+    const char *dev_port = std::getenv("ROBOGO_DEV_MQTT_PORT");           // 可选：覆盖 broker 端口
+    mqtt_client.set_server_endpoint(dev_host != nullptr && *dev_host != '\0' ? dev_host : "127.0.0.1",  // 默认本地假数据源
+                                    dev_port != nullptr && *dev_port != '\0' ? dev_port : "3333");      // 默认 3333
+    mqtt_client.set_client_id(dev_robot_id);                              // 以指定编号连接，触发 MQTT 握手
+    // 可选：把本次会话标记为"指挥手"，方便联调指挥台（ROBOGO_DEV_COMMANDER=1）。
+    const char *dev_commander = std::getenv("ROBOGO_DEV_COMMANDER");      // 读取指挥手调试开关
+    if (dev_commander != nullptr && dev_commander[0] == '1' && dev_commander[1] == '\0') {   // 严格等于 "1"
+        set_commander_role(true);                                         // 以指挥手身份进入
+    }                                                                     // 结束指挥手开关判断
+    SPDLOG_INFO("调试自动登录已启用 client_id={} server={}:{}",            // 记录一条日志便于确认
+                dev_robot_id,                                             // 机器人编号
+                dev_host != nullptr ? dev_host : "127.0.0.1",             // 实际使用的主机
+                dev_port != nullptr ? dev_port : "3333");                 // 实际使用的端口
+}   // 结束 ApplyDevAutoLogin
+
 // 功能：开局面板总入口。组织登录区、各赛前指令行、鼠标灵敏度与底部主按钮。仅当未进入比赛时由主窗口调用。
-void StartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client) {
+bool StartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, bool udp_video_inverted) {
+    ApplyDevAutoLogin(mqtt_client);                                    // 联调时可自动登录（未设环境变量则无副作用）
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings; // 无导航/装饰/移动/保存
     ScopedStyle window_style = MakeStartPanelWindowStyle();            // 半透明背景样式
     if (!ImGui::Begin("StartPanel", nullptr, window_flags)) {          // 开窗口（被裁剪则跳过）
         ImGui::End();   // 内容区不可见时仍需配对 End
-        return;   // 本帧不渲染直接返回
+        return false;   // 本帧不渲染直接返回（无翻转请求）
     }   // 结束 Begin 失败分支
 
     const bool is_logged_in = mqtt_client.get_connection_state() == RoboGo::io::MqttClient::ConnectionState::Connected; // 是否已登录
-    // 始终先渲染登录/队伍选择区域。
-    ShowTeamRobotSelection(mqtt_client);
+    // 底部固定区（灵敏度 + UDP 反转 + 主按钮）占多高，直接决定内容区还剩多少。
+    // 以前是拍一个公式估，估多了内容被白挤、估少了主按钮被窗口裁——改成用上一帧的实测值自校准（首帧才用保守估计）。
+    static float measured_footer_height = 0.0f;                        // 上一帧底部固定区的实测高度
+    const float footer_height_guess = ImGui::GetFrameHeightWithSpacing() * 3.0f + (kPrimaryActionButtonHeight + 26.0f) * ImGui::GetScale(); // 首帧兜底估计
+    const float footer_height = measured_footer_height > 0.0f ? measured_footer_height : footer_height_guess; // 稳态用实测值
 
-    // 已登录后按当前兵种可见性渲染各赛前指令行。
-    if (is_logged_in) {
-        const StartPanelVisibility visibility = GetStartPanelVisibility(state); // 计算当前兵种可见性
-        ShowAmmoAssemblyDeployRow(state, mqtt_client, visibility);    // 弹药/装配/部署行
-        ShowRecoverReviveRow(state, mqtt_client, visibility);         // 回血/复活行
-        ShowMarkerPerformanceRow(state, mqtt_client, visibility);     // 标记/性能行
-        ShowDartAndAirSupportRow(state, mqtt_client, visibility.show_dart_panel, visibility.show_air_support_panel); // 飞镖/空中支援行
-    }   // 结束已登录分支
-    // 底部：鼠标灵敏度与"进入比赛/登录"主按钮。
+    {   // 作用域：可滚动的内容区（登录区 + 各兵种功能面板）
+        const float available_height = ImGui::GetContentRegionAvail().y;          // 当前剩余高度
+        const float content_height = std::max(available_height - footer_height,    // 扣掉底部固定区
+                                              120.0f * ImGui::GetScale());        // 保底高度，避免窗口过小时内容区被压成 0
+        ScopedChildWindow content_area("StartPanelContent", ImVec2(0, content_height), false, ImGuiWindowFlags_NoScrollbar); // 不画滚动条（滚轮仍可滚）：面板横向尚有富余，声明条只会弄脏界面
+
+        // 注：这里以前有一句"小幅溢出就把滚动偏移清零"的钳制，本意是防顶部被顶出去，
+        // 但它每帧都会把用户刚滚出的位移拽回去，表现为滚轮一滚界面就抽搐、内容还看不全。
+        // 已删除——放得下时本就不会有滚动量，放不下时应当让用户正常滚。
+
+        // 先渲染登录/队伍选择区域。
+        ShowTeamRobotSelection(mqtt_client);
+
+        // 已登录后按当前兵种可见性渲染各赛前指令行。
+        if (is_logged_in) {
+            const StartPanelVisibility visibility = GetStartPanelVisibility(state); // 计算当前兵种可见性
+            ShowAmmoAssemblyDeployRow(state, mqtt_client, visibility);    // 弹药/装配行
+            ShowRecoverReviveRow(state, mqtt_client, visibility);         // 回血/复活行
+            ShowMarkerPerformanceRow(state, mqtt_client, visibility);     // 标记/性能行
+            ShowSentryRow(state, mqtt_client, visibility);                // 哨兵控制行
+            ShowDartRow(state, mqtt_client, visibility.show_dart_panel);   // 飞镖控制行（此前定义了却从未调用，飞镖号登录后看不到面板）
+        }   // 结束已登录分支
+    }   // 结束内容区作用域（子窗口析构即 EndChild）
+
+    // 底部固定区：灵敏度、UDP 画面反转与"进入比赛/登录"主按钮，始终可见、不会被内容压住。
+    const float footer_top_y = ImGui::GetCursorPosY();                 // 记录底部固定区起始位置（窗口内相对坐标）
     ShowMouseSensitivityRow();                                        // 灵敏度滑块行
+    const bool video_invert_requested = ShowVideoInvertRow(udp_video_inverted); // UDP 反转开关行
     ShowPrimaryActionButton(mqtt_client);                             // 主操作按钮
+    if (footer_top_y > 0.0f) {                                        // 首帧或异常时（起点为 0）不采样
+        measured_footer_height = ImGui::GetCursorPosY() - footer_top_y; // 实测高度，供下一帧给内容区让位
+    }                                                                 // 结束实测采样
 
     ImGui::End();                                                    // 结束窗口
+    return video_invert_requested;                                    // 返回本帧是否请求翻转
 }   // 结束 StartPanel 总入口

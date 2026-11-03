@@ -4,8 +4,8 @@
 #include "logging/logging.h"// 日志封装：提供 SPDLOG_INFO/WARN/ERROR/DEBUG 等宏(spdlog 的薄封装)
 #include "panel/bottom_panel.h"// 底部信息条面板：显示操作提示/状态摘要
 #include "panel/buff_panel.h"// 增益面板：显示当前生效的 Buff 列表
+#include "panel/commander_panel.h"// 指挥手综合指挥台：全屏地图 + 双方信息 + 哨兵/飞镖/空中指令
 #include "panel/crosshair.h"// 准星面板：比赛中在全屏覆盖层上绘制自瞄准星
-#include "panel/custom_video_panel.h"// 次视频面板：显示另一路视频并提供翻转等开关
 #include "panel/header_panel.h"// 顶部状态栏：比分/阶段/倒计时
 #include "panel/log_panel.h"// 日志面板：滚动显示本车日志与系统日志
 #include "panel/mini_map.h"// 小地图面板：绘制场地、自身与友军/敌方位置
@@ -14,6 +14,10 @@
 
 // 无名命名空间：本文件内部使用的 UI 辅助函数集合（字符串解析、日志缓存、视频缩放、标尺绘制），不对外暴露。
 namespace {// 匿名命名空间开始：内部符号仅在当前翻译单元可见，避免与其他文件的同名函数冲突
+
+    // 系统日志去重窗口：同一条文本在该时间窗内再次到达，视为发送端重复投递，折叠成 ×N 而不新增一行。
+    // 取值依据：实测发送端会在同一毫秒内连发 4 份同一条判罚，且断流补发时整轮重复，2 秒足够覆盖这类突发。
+    constexpr auto kSystemLogDedupeWindow = std::chrono::seconds(2);
 
     // 功能：把形如 "a,b" 的字符串按首个逗号拆成两段的键值对。
     // 思路：用 string::find 定位首个逗号，分别取左右子串；找不到逗号则返回空。
@@ -24,20 +28,6 @@ namespace {// 匿名命名空间开始：内部符号仅在当前翻译单元可
         }// if 结束
         return std::nullopt;// 无逗号(格式不符合预期)时返回空 optional，调用方用 has_value() 判断
     }// SplitByComma 结束
-
-    // 功能：将十进制字符串解析为 uint8_t。
-    // 思路：用 strtol 系列的 std::stoul 解析，要求整串都被消费且不超出 uint8_t 范围；否则捕获异常返回空。
-    std::optional<uint8_t> ParseByteParam(const std::string &param) {// 声明：输入十进制文本，成功返回 0~255 的字节值
-        try {// 进入异常保护块：std::stoul 在非法字符/溢出时会抛 std::invalid_argument / std::out_of_range
-            size_t parsed_size = 0;// 出参：记录实际被解析消费的字符数，用于判断是否整串都被消费
-            const unsigned long value = std::stoul(param, &parsed_size, 10);// 以 10 进制解析为无符号长整型(负数会被转成巨大值，从而被下面的范围检查拦住)
-            if (parsed_size == param.size() && value <= std::numeric_limits<uint8_t>::max()) {// 要求整串都被消费(排除 "12abc")且不超过 255
-                return static_cast<uint8_t>(value);// 通过校验，收窄成 uint8_t 返回
-            }// if 结束
-        } catch (const std::exception &) {// 捕获任何解析异常，统一视为解析失败
-        }// catch 结束：此处故意空实现，靠下面的 return 表示失败
-        return std::nullopt;// 解析失败或超出范围，返回空 optional
-    }// ParseByteParam 结束
 
     // 功能：构造一条带本地时间戳与自增序号的日志并追加到指定缓冲区。
     // 思路：取当前时间格式化为 "HH:MM:SS"，分配自增 sequence，超 50 条则丢弃最旧一条以限长。
@@ -54,6 +44,41 @@ namespace {// 匿名命名空间开始：内部符号仅在当前翻译单元可
             buffer.erase(buffer.begin());// 丢弃最旧的一条(队首)，整体前移
         }// if 结束
     }// AppendLogBuffer 结束
+
+    // 功能：把一条 Event 事件推进"顶部提示队列"，只保留需要在几秒内被看见的事件。
+    // 思路：按 event_id 定紧要程度(0普通/1重要/2危急)，先清掉超过 6 秒的旧提示，再追加并限制总条数。
+    void PushEventToast(State &state, uint32_t event_id, const std::string &text) {// 入参：全局状态、事件号、已翻译好的中文描述
+        int level = -1;// -1 表示不提示(纯日志事件)
+        switch (event_id) {// 按事件号决定是否需要弹提示
+            case 1: level = 0; break;// 击杀：普通提示
+            case 2: level = 2; break;// 前哨站被摧毁：危急
+            case 5: case 6: case 7: case 8: level = 1; break;// 阵地控制变更：重要
+            case 9: level = 2; break;// 飞镖命中：危急(2027 命中会致盲并大幅扣血)
+            case 10: level = 1; break;// 对方飞镖闸门开启：重要
+            case 11: level = 2; break;// 基地遭到攻击：危急
+            case 12: level = 1; break;// 对方前哨站停转：重要
+            case 13: level = 1; break;// 对方基地护甲展开：重要
+            case 14: level = 2; break;// 重装战亡进入缓冲期：危急
+            case 15: level = 1; break;// 装配结果：重要
+            case 16: level = 1; break;// 模块化42mm安装成功：重要
+            default: break;// 其余事件(能量机关等)只进日志，不弹提示
+        }// switch 结束
+        if (level < 0) {// 不需要提示的事件
+            return;// 直接返回
+        }// if 结束
+        const auto now = std::chrono::steady_clock::now();// 当前单调时钟时刻
+        // 先剔除超过 6 秒的旧提示(与渲染端的淡出时长一致)，避免队列越积越长。
+        state.event_toasts.erase(// 用 remove_if + erase 做条件删除
+                std::remove_if(state.event_toasts.begin(), state.event_toasts.end(),// 遍历全部提示
+                               [&now](const EventToast &toast) {// 判定：是否已过期
+                                   return std::chrono::duration_cast<std::chrono::milliseconds>(now - toast.time).count() > 6000;// 超过 6 秒视为过期
+                               }),// remove_if 结束
+                state.event_toasts.end());// 真正删除被移到尾部的元素
+        state.event_toasts.push_back(EventToast{text, now, level});// 追加新提示(正文/时刻/级别)
+        if (state.event_toasts.size() > 6) {// 同时最多保留 6 条
+            state.event_toasts.erase(state.event_toasts.begin());// 丢弃最旧的一条
+        }// if 结束
+    }// PushEventToast 结束
 
     // 功能：按日志类型把文案输出到终端（spdlog），便于现场调试。
     // 思路：根据 type(0/1/2) 分别走 INFO/WARN/ERROR 级别，其余按 INFO 处理。
@@ -74,44 +99,8 @@ namespace {// 匿名命名空间开始：内部符号仅在当前翻译单元可
         }// switch 结束
     }// EmitUiLog 结束
 
-    // 功能：在给定可用矩形内按比例缩放，得到保持视频原始宽高比的最大居中显示尺寸。
-    // 思路：比较图像宽高比与可用区域宽高比，谁更"宽"就以宽（或高）为基准计算另一边。
-    ImVec2 FitImageSize(const ImVec2 &available_size, const ImVec2 &texture_size) {// 输入可用区域尺寸与纹理原始像素尺寸，返回适配后的显示尺寸
-        if (available_size.x <= 0.0f || available_size.y <= 0.0f || texture_size.x <= 0.0f || texture_size.y <= 0.0f) {// 任一维度非正数则无法计算比例(还会导致除零)
-            return ImVec2(0.0f, 0.0f);// 返回零尺寸，调用方据此可跳过贴图
-        }// if 结束
-
-        const float image_aspect = texture_size.x / texture_size.y;// 视频原始宽高比 = 宽/高
-        const float available_aspect = available_size.x / available_size.y;// 可用区域宽高比
-        if (image_aspect > available_aspect) {// 视频比可用区域更"宽"：宽度受限，以可用宽度为基准
-            return ImVec2(available_size.x, available_size.x / image_aspect);// 宽度撑满，高度按原始比例反推
-        }// if 结束
-        return ImVec2(available_size.y * image_aspect, available_size.y);// 否则高度受限：高度撑满，宽度按比例反推
-    }// FitImageSize 结束
-
-    // 英雄部署模式下叠加在视频主画面上的辅助标尺参数：像素间隔、刻度线色、标签色。
-    constexpr float kHeroRulerSpacingPx = 200.0f;// 标尺每隔 200 视频像素画一条线(用于估测部署距离)
-    constexpr ImU32 kRulerLineColor = IM_COL32(180, 80, 255, 120);// 刻度线颜色：紫色、半透明(alpha=120/255)，避免遮挡画面
-    constexpr ImU32 kRulerLabelColor = IM_COL32(255, 255, 255, 180);// 刻度文字颜色：白色、略透明
-
-    // 功能：在英雄机器人部署模式的视频主画面上按固定像素间距绘制水平刻度线（标尺）。
-    // 思路：把视频像素间距换算成屏幕像素间距（乘缩放比），自上而下逐条画线并标注对应像素高度标签。
-    void DrawHeroRulerLines(ImDrawList *draw_list,// 目标绘制列表(这里传的是 ImGui 背景绘制层)
-                            const ImVec2 &image_min,// 视频画面在屏幕上的左上角坐标
-                            const ImVec2 &image_max,// 视频画面在屏幕上的右下角坐标
-                            const ImVec2 &video_size,// 视频原始像素尺寸，用于把"视频像素"换算成"屏幕像素"
-                            float spacing_px) {// 刻度间距(视频像素)
-        if (video_size.y <= 0.0f) return;// 视频高度非法时无法换算比例，直接跳过绘制(防止除零)
-        const float scale_y = (image_max.y - image_min.y) / video_size.y;// 纵向缩放比 = 屏幕显示高度 / 视频原始高度
-        for (int i = 1;; ++i) {// 从第 1 条线(距顶部 1 个间距)开始无限循环，靠内部 break 退出
-            const float screen_y = image_min.y + i * spacing_px * scale_y;// 第 i 条线的屏幕 Y 坐标 = 画面顶端 + 视频偏移 × 缩放比
-            if (screen_y >= image_max.y) break;// 超出画面底边即停止(循环的退出条件)
-            draw_list->AddLine(ImVec2(image_min.x, screen_y), ImVec2(image_max.x, screen_y),// 从左边界画到右边界
-                               kRulerLineColor, 1.0f);// 线色与线宽(1 像素)
-            const std::string label = std::to_string(static_cast<int>(i * spacing_px));// 标签文本 = 该线对应的视频像素高度(如 200/400/600)
-            draw_list->AddText(ImVec2(image_min.x + 4.0f, screen_y + 2.0f), kRulerLabelColor, label.c_str());// 在线的左端稍微内缩处写标签，避免压线
-        }// for 结束
-    }// DrawHeroRulerLines 结束
+    // 【2027 变更】原 FitImageSize（自定义视频等比居中显示）已随"双路主画面切换"一起删除：
+    // 背景层现在固定铺 UDP 图传，直接拉伸铺满视口；次画面面板有自己的等比缩放实现。
 
 }// namespace// 匿名命名空间结束
 
@@ -125,8 +114,20 @@ void AppendVehicleLog(State &state, int type, const std::string &text) {// 对�
 // 功能：追加系统日志（裁判系统事件/判罚）。
 // 思路：写入系统日志缓冲区并打印终端日志。
 void AppendSystemLog(State &state, int type, const std::string &text) {// 对外接口：用于裁判系统事件、判罚、解析异常等
+    // 去重：发送端在断流补发/整轮广播时会把同一条消息连发多份（实测同一毫秒 4 条判罚），
+    // 若每条都记一行，日志面板会被无意义的重复文本刷满。这里在窗口期内把相同文本折叠成 ×N。
+    const auto now = std::chrono::steady_clock::now();// 当前单调时钟时刻（不受系统改时间影响）
+    if (!state.system_logs.empty()) {// 缓冲区非空才可能与上一条比较
+        LogEntry &last_entry = state.system_logs.back();// 只看最后一条：日志是追加写入的，重复必然相邻
+        if (last_entry.text == text && now - state.last_system_log_time <= kSystemLogDedupeWindow) {// 文本相同且在去重窗口内
+            ++last_entry.repeat_count;// 只累加次数，不新增行
+            state.last_system_log_time = now;// 顺延窗口，连续重复时始终折叠在同一条上
+            return;// 直接返回：既不写新行，也不打终端日志，避免终端同样刷屏
+        }// if 结束
+    }// if 结束
     AppendLogBuffer(state, state.system_logs, type, text);// 写入系统日志缓冲区
-    EmitUiLog(type, "系统日志: ", text);// 同步输出终端日志
+    state.last_system_log_time = now;// 记录本条写入时刻，作为下一次去重的基准
+    EmitUiLog(type, "系统日志: ", text);// 同步输出到终端日志(spdlog)，便于离屏排查
 }// AppendSystemLog 结束
 
 // 功能：构造初始状态。
@@ -151,119 +152,69 @@ bool ShowMainWindow(const State &state,// 全局状态快照(各面板只读渲�
                     const ImVec2 &video_size,// UDP 视频原始像素尺寸
                     ImTextureRef custom_video_texture_ref,// CustomByteBlock 自定义视频纹理引用
                     const ImVec2 &custom_video_size,// 自定义视频原始像素尺寸
-                    const bool using_custom_video_as_main,// 当前实际以哪一路为主画面
-                    const bool prefer_custom_video_as_main,// 用户偏好以哪一路为主画面
                     const bool udp_video_display_ready,// UDP 视频是否有可显示帧
                     const bool custom_video_display_ready,// 自定义视频是否有可显示帧
                     const bool udp_video_inverted,// UDP 视频当前是否上下翻转
                     const ImTextureRef mini_map_texture_ref,// 小地图底图纹理引用
                     const ImVec2 &mini_map_texture_size) {// 小地图底图原始像素尺寸
+    // CustomByteBlock 次视频面板已删除，这三个入参暂无界面消费；保留形参是为了不动上层调用与纹理管线。
+    (void) custom_video_texture_ref;
+    (void) custom_video_size;
+    (void) custom_video_display_ready;
+
     const ImGuiViewport *viewport = ImGui::GetMainViewport(); // 获取 ImGui 主视口(覆盖整个窗口的工作区矩形，用于全屏布局)
     ImGuiStyle &style = ImGui::GetStyle(); // 获取全局 ImGui 样式(含窗口内边距/间距/分隔线尺寸等布局参数)
     float font_size = ImGui::GetFontSize(); // 获取当前字体一行高度(像素)，用于估算面板尺寸
 
-    // 根据"是否把自定义视频作为主画面"选择背景视频纹理、尺寸及就绪标志。
-    const ImTextureRef background_video_texture_ref = using_custom_video_as_main// 三元表达式：按"当前主画面"选纹理
-                                                              ? custom_video_texture_ref// 自定义视频做主：用自定义纹理
-                                                              : video_texture_ref;// 否则用 UDP 视频纹理
-    const ImVec2 background_video_size = using_custom_video_as_main// 主画面的原始像素尺寸同理二选一
-                                                 ? custom_video_size// 自定义视频尺寸
-                                                 : video_size;// UDP 视频尺寸
-    const bool background_video_display_ready = using_custom_video_as_main// "主画面是否有可用帧"同样二选一
-                                                        ? custom_video_display_ready// 自定义视频就绪标志
-                                                        : udp_video_display_ready;// UDP 视频就绪标志
-    ImVec2 main_image_min(0.0f, 0.0f); // 视频主画面左上角屏幕坐标(默认原点，自定义视频居中时会重算)
-    ImVec2 main_image_max = viewport->Size; // 视频主画面右下角屏幕坐标(默认铺满整个视口)
-    // 视频就绪则把整张视频贴到背景绘制层；自定义视频需先按比例居中，UDP 视频直接拉伸铺满。
+    // 【2027 变更】英雄部署模式已删除，不再有第二路可选主画面：主画面固定为 UDP 图传。
+    const ImTextureRef background_video_texture_ref = video_texture_ref;      // 主画面纹理：UDP
+    const ImVec2 background_video_size = video_size;                          // 主画面尺寸：UDP
+    const bool background_video_display_ready = udp_video_display_ready;      // 主画面就绪标志：UDP
+
+    // 指挥手：登录成功就直接铺开指挥台，不再停留在赛前那一页（那一页对指挥手没有任何可用指令）。
+    maybe_auto_enter_commander_console(mqtt_client);
+
+    // 指挥手：整页就是综合指挥台，与普通 HUD 互斥。
+    // 这里直接分流并返回，避免两套布局在同一帧里互相压盖（指挥台自己会画顶栏、地图与指令区）。
+    if (is_commander_console_active()) {// 指挥台已打开
+        ShowCommanderPanel(state, mqtt_client,// 状态 + MQTT（指挥台要下发哨兵/飞镖/地图标记）
+                           background_video_texture_ref, background_video_size, background_video_display_ready,// 现场画面预览
+                           mini_map_texture_ref, mini_map_texture_size);// 战术地图底图
+        return false;// 指挥台不需要翻转 UDP 视频，直接返回
+    }// 指挥台分支结束
+    // 视频就绪则把整张 UDP 图传贴到背景绘制层；2027 只剩一路，直接拉伸铺满，不再做等比适配。
     if (background_video_display_ready && background_video_texture_ref.GetTexID() != ImTextureID_Invalid) {// 就绪且纹理句柄有效(无效句柄贴图会画不出东西)
-        ImDrawList *draw_list = ImGui::GetBackgroundDrawList();// 背景绘制层：位于所有 ImGui 窗口之下，适合当视频底图
-        if (background_video_size.x > 0.0f && background_video_size.y > 0.0f && using_custom_video_as_main) {// 自定义视频为主且尺寸合法才做等比适配
-            const ImVec2 fitted_size = FitImageSize(viewport->Size, background_video_size);// 求出保持宽高比的最大显示尺寸
-            main_image_min = ImVec2((viewport->Size.x - fitted_size.x) * 0.5f, // 居中后左上角 X = (视口宽-适配宽)/2
-                                    (viewport->Size.y - fitted_size.y) * 0.5f); // 居中后左上角 Y = (视口高-适配高)/2
-            main_image_max = ImVec2(main_image_min.x + fitted_size.x, main_image_min.y + fitted_size.y); // 右下角 = 左上角 + 适配尺寸
-            draw_list->AddImage(background_video_texture_ref, main_image_min, main_image_max, ImVec2(0, 0), ImVec2(1, 1)); // 用背景绘制层贴自定义视频(UV 0..1 铺满矩形)
-        } else {// 否则是 UDP 视频(或尺寸非法)：不做等比适配
-            draw_list->AddImage(background_video_texture_ref, ImVec2(0, 0), viewport->Size, ImVec2(0, 0), ImVec2(1, 1)); // UDP 视频直接拉伸铺满背景层(不保持比例)
-        }// if-else 结束
+        ImGui::GetBackgroundDrawList()->AddImage(background_video_texture_ref, ImVec2(0, 0), viewport->Size, ImVec2(0, 0), ImVec2(1, 1)); // 铺满背景层
     }// if 结束(未就绪则本帧不绘制视频底图)
-    // 仅在英雄机器人且处于部署模式下，在视频主画面上叠加辅助标尺刻度线。
-    {// 用一对花括号限定局部变量作用域，避免影响函数其余部分
-        const uint32_t robot_id = state.robot_static_status.has_value()// 先判断是否已收到静态属性，防止对空 optional 解引用
-                                          ? state.robot_static_status->robot_id() : 0;// 有则取本机 robot_id，否则用 0 表示未知
-        const bool is_hero = (robot_id == 1 || robot_id == 101);// 1=红方英雄，101=蓝方英雄
-        const bool is_deploy_mode = state.deploy_mode_status_sync.has_value()// 必须已收到部署模式同步消息
-                                    && state.deploy_mode_status_sync->status() == 1;// 且 status==1(已部署)
-        if (is_hero && is_deploy_mode && background_video_display_ready) {// 三条件同时满足才画标尺(没有画面也没必要画)
-            DrawHeroRulerLines(ImGui::GetBackgroundDrawList(),// 同样画在背景绘制层，与视频同层叠加
-                               main_image_min, main_image_max,// 视频画面在屏幕上的矩形范围
-                               background_video_size, kHeroRulerSpacingPx);// 视频原始尺寸与刻度间距
-        }// if 结束
-    }// 作用域结束
+    // 【2027 变更】英雄部署模式已在 2027 协议中删除，原叠加在视频上的辅助标尺一并移除。
 
     // 顶部状态栏（高度占窗口 15%）。
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always); // 固定顶部栏到窗口左上角(ImGuiCond_Always=每帧都应用该位置)
     ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, viewport->Size.y * 0.15f)); // 顶部栏宽=全宽，高=窗口高 15%
     ShowHeaderPanel(state); // 绘制顶部状态栏(比分/比赛阶段倒计时等)
 
+
     // 左下角本车状态面板（宽 20%，高度按字体估算）。
-    float robot_status_panel_height = font_size * 10 + style.SeparatorSize + 4.0f * 4 + style.ItemSpacing.y * 10 + style.WindowPadding.y * 2; // 估算本车状态面板高度(基于字体行高+分隔线+内边距)
-    ImGui::SetNextWindowPos(ImVec2(0, viewport->Size.y - robot_status_panel_height), ImGuiCond_Always); // 本车状态面板定位到左下角(贴底)，宽 20%
+    float robot_status_panel_height = font_size * 11 + style.SeparatorSize + 4.0f * 4 + style.ItemSpacing.y * 11 + style.WindowPadding.y * 2;   // 2027 新增了"模块化42mm装配权限"一行，行数 10→11 // 估算本车状态面板高度(基于字体行高+分隔线+内边距)
+    // 底部条也是贴底的，而且行数会变（多一行"控制度构成"就高 20px）。本车状态面板按底栏上一帧的高度往上让位，
+    // 否则两块贴底面板会叠在一起，底栏那行的"控制度"会压在本车状态最后一行上。
+    const float bottom_panel_height = GetBottomPanelHeight();   // 上一帧底部条高度（首帧为 0）
+    ImGui::SetNextWindowPos(ImVec2(0, viewport->Size.y - robot_status_panel_height - bottom_panel_height), ImGuiCond_Always); // 本车状态面板定位到左下角(贴底，且让开底栏)
     ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.2f, robot_status_panel_height)); // 本车状态面板尺寸=全宽20% × 估算高度
     ShowRobotStatusPanel(state); // 绘制本车状态面板(红蓝机器人血条/弹量)
 
-    // 左侧栏：上下分为"次视频面板"与"日志面板"两个区域，宽均 20%。
+    // 左侧栏：2027 取消部署模式后不再有 CustomByteBlock 次视频画面，整栏留给日志面板。
+    // UDP 画面反转开关已一并挪进登录控制面板（见 StartPanel）。
     const float left_panel_width = viewport->Size.x * 0.2f; // 左侧栏宽度=全宽 20%
     const float left_panel_top = viewport->Size.y * 0.15f; // 左侧栏顶部起点=窗口高 15%(顶部栏下方)
-    const float left_panel_total_height = viewport->Size.y - viewport->Size.y * 0.2f - robot_status_panel_height; // 左栏总高=窗口高 - 顶部15% - 底部本车面板
-    const float left_panel_spacing = style.ItemSpacing.y; // 左栏内两个子面板之间的垂直间距
-    const float custom_video_panel_height = (left_panel_total_height - left_panel_spacing) * 0.5f; // 次视频面板占左栏上半(一半)
-    const float log_panel_height = left_panel_total_height - left_panel_spacing - custom_video_panel_height; // 日志面板占左栏下半
-    // 次视频源即"非主画面"的另一路视频（UDP 或自定义），并据此准备标题与不可用提示文案。
-    const ImTextureRef secondary_video_texture_ref = using_custom_video_as_main// 与主画面相反的那一路
-                                                             ? video_texture_ref// 主画面是自定义视频时，次画面用 UDP 视频
-                                                             : custom_video_texture_ref;// 否则次画面用自定义视频
-    const ImVec2 secondary_video_size = using_custom_video_as_main// 次画面的原始尺寸同理
-                                                ? video_size// UDP 视频尺寸
-                                                : custom_video_size;// 自定义视频尺寸
-    const bool secondary_video_display_ready = using_custom_video_as_main// 次画面是否有可用帧
-                                                       ? udp_video_display_ready// 次画面是 UDP 时看 UDP 标志
-                                                       : custom_video_display_ready;// 次画面是自定义时看自定义标志
-    const char *secondary_video_title = using_custom_video_as_main// 次视频面板标题
-                                                ? "UDP 视频流"// 主画面为自定义视频，次画面标题显示 UDP
-                                                : "本车视频";// 主画面为 UDP，次画面标题显示本车(自定义)视频
-    std::string secondary_video_unavailable_message; // 次视频不可用时的提示文案(按需填充)
-    if (!secondary_video_display_ready) {// 次视频没有可用帧时，按当前组合挑选最贴切的提示语
-        if (using_custom_video_as_main) {// 情况一：主画面是自定义视频，次画面(UDP)不可用
-            secondary_video_unavailable_message = prefer_custom_video_as_main// 再看用户偏好，决定提示的详略
-                                                          ? "UDP 视频流当前不可用。"// 用户本就偏好自定义视频：简单提示即可
-                                                          : "UDP 视频流当前不可用，主画面正在临时使用 CustomByteBlock 视频流；UDP 恢复后会自动切回。";// 用户偏好 UDP：说明这只是临时回退
-        } else if (udp_video_display_ready) {// 情况二：主画面是 UDP，且 UDP 正常，说明次画面(自定义)不可用
-            secondary_video_unavailable_message = prefer_custom_video_as_main// 用户偏好自定义视频时，说明恢复后会自动切换
-                                                          ? "CustomByteBlock 视频流当前不可用，恢复后会自动切换到主画面。"// 偏好自定义：强调会自动切主
-                                                          : "等待 CustomByteBlock 视频流...";// 偏好 UDP：只是等待次画面出流
-        } else {// 情况三：两路都不可用
-            secondary_video_unavailable_message = prefer_custom_video_as_main// 仅提示偏好，方便排查
-                                                          ? "当前两路视频都不可用，主画面偏好为 CustomByteBlock 视频流。"// 偏好自定义视频
-                                                          : "当前两路视频都不可用，主画面偏好为 UDP 视频流。";// 偏好 UDP 视频
-        }// 内层 if-else 结束
-    }// if 结束
+    const float left_panel_total_height = viewport->Size.y - viewport->Size.y * 0.2f - robot_status_panel_height - bottom_panel_height; // 左栏总高=窗口高 - 顶部15% - 底部本车面板 - 底栏（三者都不能压）
 
-    // 左上：次视频面板，并显示是否请求翻转 UDP 视频。
-    ImGui::SetNextWindowPos(ImVec2(0, left_panel_top), ImGuiCond_Always); // 次视频面板定位到左上(顶部栏下方)
-    ImGui::SetNextWindowSize(ImVec2(left_panel_width, custom_video_panel_height)); // 次视频面板尺寸=左栏宽 × 上半高
-    const bool toggle_udp_video_inversion_requested = ShowCustomVideoPanel(// 该面板返回"用户是否点了翻转开关"
-            secondary_video_texture_ref,// 要显示的次视频纹理
-            secondary_video_size,// 次视频原始像素尺寸(用于等比缩放)
-            secondary_video_title,// 面板标题
-            secondary_video_display_ready,// 是否有可用帧(否则显示提示文案)
-            secondary_video_unavailable_message,// 不可用时的提示文案
-            udp_video_inverted);// 当前 UDP 翻转状态(用于回显勾选态)
-
-    // 左中：日志面板。
-    ImGui::SetNextWindowPos(ImVec2(0, left_panel_top + custom_video_panel_height + left_panel_spacing), ImGuiCond_Always); // 日志面板定位到次视频面板正下方
-    ImGui::SetNextWindowSize(ImVec2(left_panel_width, log_panel_height)); // 日志面板尺寸=左栏宽 × 下半高
+    ImGui::SetNextWindowPos(ImVec2(0, left_panel_top), ImGuiCond_Always); // 日志面板贴左栏顶部
+    ImGui::SetNextWindowSize(ImVec2(left_panel_width, left_panel_total_height)); // 占满整个左栏
     ShowLogPanel(state); // 绘制日志面板(本车/系统日志列表)
+
+    // 本帧是否请求翻转 UDP 画面：按钮在登录控制面板里，比赛中不再有（键盘 I 仍可用）。
+    bool toggle_udp_video_inversion_requested = false;
 
     // 比赛中绘制准星覆盖全屏；否则绘制开局准备面板（居中 750x500 窗口）。
     if (is_in_game_mode()) {// 全局函数：当前是否已进入比赛(由上层状态机维护)
@@ -272,21 +223,25 @@ bool ShowMainWindow(const State &state,// 全局状态快照(各面板只读渲�
         ShowCrosshair(state); // 绘制全屏准星(比赛中显示)
     } else {// 未进入比赛：显示开局面板
         float width = 750 * ImGui::GetScale(); // 开局面板基准宽度=750 × 全局 UI 缩放
-        float height = 500 * ImGui::GetScale(); // 开局面板基准高度=500 × 全局 UI 缩放
+        // 高度从 500 加到 560：2027 里重装/哨兵的功能面板比 2026 多（装配+核心状态、哨兵 12 条指令），
+        // 500 高装不下，只能靠滚动；加高 60px 后「登录区 + 全部功能面板 + 进入比赛」基本能一屏放完。
+        float height = 560 * ImGui::GetScale(); // 开局面板基准高度=560 × 全局 UI 缩放
         ImGui::SetNextWindowPos(ImVec2((viewport->Size.x - width) / 2, (viewport->Size.y - height) / 2), ImGuiCond_Always); // 开局面板居中放置
-        ImGui::SetNextWindowSize(ImVec2(width, height)); // 开局面板尺寸=750×500(按缩放)
-        StartPanel(state, mqtt_client); // 绘制开局准备面板(选型/开始比赛等)
+        ImGui::SetNextWindowSize(ImVec2(width, height)); // 开局面板尺寸=750×560(按缩放)
+        toggle_udp_video_inversion_requested = StartPanel(state, mqtt_client, udp_video_inverted); // 绘制开局准备面板，并取回是否点了 UDP 反转
     }// if-else 结束
 
     // 右下：小地图（按 28:15 标准场地比例计算高度）。
-    float mini_map_width = viewport->Size.x * 0.2f; // 小地图宽度=全宽 20%
+    // 右侧整栏宽度 20% → 24%：20% 时地图只有 ~380px 宽，地形缩得看不清，标点也显得很大。
+    const float right_column_ratio = 0.24f; // 右侧栏（小地图 + Buff 面板）占全宽比例
+    float mini_map_width = viewport->Size.x * right_column_ratio; // 小地图宽度=全宽 24%
     float mini_map_height = mini_map_width / 28 * 15; // 小地图高度按 28:15 标准场地比例换算
     ImGui::SetNextWindowPos(ImVec2(viewport->Size.x - mini_map_width, viewport->Size.y - mini_map_height), ImGuiCond_Always); // 小地图定位到右下角
     ImGui::SetNextWindowSize(ImVec2(mini_map_width, mini_map_height)); // 小地图尺寸
     ShowMiniMap(state, mqtt_client, mini_map_texture_ref, mini_map_texture_size); // 绘制小地图面板(自身/友军/雷达位置)
 
     // 右侧中部：增益/Buff 面板，占据顶部栏以下到小地图以上的区域。
-    float buff_panel_width = viewport->Size.x * 0.2f; // Buff 面板宽度=全宽 20%
+    float buff_panel_width = viewport->Size.x * right_column_ratio; // Buff 面板宽度与小地图同宽，保证右边缘对齐
     float buff_panel_height = viewport->Size.y - viewport->Size.y * 0.15f - mini_map_height; // Buff 面板高=窗口高-顶部15%-小地图高
     ImGui::SetNextWindowPos(ImVec2(viewport->Size.x - buff_panel_width, viewport->Size.y * 0.15f), ImGuiCond_Always); // Buff 面板定位到右上(顶部栏下方)
     ImGui::SetNextWindowSize(ImVec2(buff_panel_width, buff_panel_height)); // Buff 面板尺寸
@@ -295,6 +250,11 @@ bool ShowMainWindow(const State &state,// 全局状态快照(各面板只读渲�
     // 底部信息条。
     ShowBottomPanel(state); // 底部条不预设位置/尺寸，由面板自身定位
 
+    // 三个覆盖层放在最后创建：ImGui 按窗口创建顺序叠放，放早了会被开局面板/小地图盖住
+    // （实测判罚横幅正好落在开局面板范围内，看不见）。
+    ShowPenaltyBanner(state); // 生效判罚的顶部横幅(黄牌/红牌/超限)
+    ShowEventToasts(state); // 重要事件的顶部浮层提示
+
     // 把"是否请求翻转 UDP 视频"沿调用链返回给上层。
     return toggle_udp_video_inversion_requested;// 返回值=true 表示用户本帧点击了翻转开关
 }// ShowMainWindow 结束
@@ -302,23 +262,31 @@ bool ShowMainWindow(const State &state,// 全局状态快照(各面板只读渲�
 // 功能：每帧推进本地状态。目前负责清理已超出剩余时间的 Buff。
 // 思路：遍历 active_buffs，用当前时间减去更新时间得到已持续秒数，若 >= buff 剩余时间则移除；并统计清理条数用于调试日志。
 void UpdateState(State &state) {// 由主循环每帧调用一次
-    auto now = std::chrono::steady_clock::now();// 取单调时钟当前时刻(不受系统时间调整影响，适合做间隔/超时判断)
+    // 取单调时钟当前时刻(不受系统时间调整影响，适合做间隔/超时判断)
+    auto now = std::chrono::steady_clock::now();
+
     const std::size_t previous_size = state.active_buffs.size();// 记录清理前的条数，用于后面算出"清掉了几条"
-    std::erase_if(state.active_buffs,// C++20 的"按谓词删除"算法：遍历容器，谓词为 true 的元素被移除
-                  [now](const BuffWithTimestamp &buff_entry) {// 判据 lambda：捕获 now(值捕获)，入参是一条 Buff 记录
-                      auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(// 把时间差强制转换成整秒
-                                             now - buff_entry.update_time)// 已持续时间 = 当前时刻 - 该 Buff 的接收时刻
-                                             .count();// 取出秒数的数值部分(long long)
-                      return elapsed >= static_cast<int>(buff_entry.buff.buff_left_time());// 已持续时间 >= 协议给的剩余时间 → 判定过期，返回 true 触发删除
-                  });// erase_if 结束
-    const std::size_t removed = previous_size - state.active_buffs.size();// 前后条数相减即本次清理掉的条数
-    if (removed > 0) {// 仅在有清理时打日志，避免每帧刷屏
+    // C++20 的"按谓词删除"算法：遍历容器，谓词为 true 的元素被移除
+    std::erase_if(state.active_buffs,
+            // 判据 lambda：捕获 now(值捕获)，入参是一条 Buff 记录
+            [now](const BuffWithTimestamp &buff_entry) {
+                // 把时间差强制转换成整秒，已持续时间 = 当前时刻 - 该 Buff 的接收时刻
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                                        now - buff_entry.update_time)// 
+                                        .count();// 取出秒数的数值部分(long long)
+                return elapsed >= static_cast<int>(buff_entry.buff.buff_left_time());// 已持续时间 >= 协议给的剩余时间 → 判定过期，返回 true 触发删除
+            });// erase_if 结束
+
+    // 前后条数相减即本次清理掉的条数
+    const std::size_t removed = previous_size - state.active_buffs.size();
+    // 仅在有清理时打日志，避免每帧刷屏
+    if (removed > 0) {
         SPDLOG_DEBUG("清理过期Buff removed={} remaining={}", removed, state.active_buffs.size());// DEBUG 级：清掉几条、还剩几条
     }// if 结束
 }// UpdateState 结束
 
-// 功能：按需（到达发布周期）构造并下发 CustomControl 控制包，把敌方血量/空中支援状态等透传给机器人电控。
-// 思路：先判断是否到发布时刻及基本状态是否就绪；再从 GlobalUnitStatus 取出对方阵营血量组装成定长字节载荷，附加上空中支援控制与自增调试计数后序列化发布。
+// 功能：按需（到达发布周期）构造并下发 CustomControl 控制包，把敌方血量透传给机器人电控。
+// 思路：先判断是否到发布时刻及基本状态是否就绪；再从 GlobalUnitStatus 取出对方阵营血量组装成定长字节载荷，附加自增调试计数后序列化发布。
 void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client) {// 由主循环每帧调用，内部自行节流
     const auto now = std::chrono::steady_clock::now();// 取本次调用的单调时钟时刻，作为节流基准与时间戳
     // 未到发布周期则跳过，避免高频下发。
@@ -330,32 +298,45 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
         return;// 尚未收到必要数据，跳过本次下发
     }// if 结束
 
-    // 血量数组前半为己方、后半为对方，需保证至少有 kCustomControlRobotCount 个对方单位。
+    // 血量数组前半为己方、后半为对方。2027 协议每方 4 台(1,3,4,7)，旧协议为 5 台，故只做基本尺寸校验。
     const auto &robot_health = state.global_unit_status->robot_health();// 取血量数组(protobuf repeated 字段的只读引用，避免拷贝)
-    const auto robot_health_size = robot_health.size();// 数组总长度(通常是 10：己方 5 + 对方 5)
+    const auto robot_health_size = robot_health.size();// 数组总长度(2027 通常是 8：己方 4 + 对方 4)
     const auto half_robot_health_size = robot_health_size / 2;// 折半点，即"己方"段长度，也是对方段起始下标
-    if (half_robot_health_size < static_cast<int>(kCustomControlRobotCount)// 己方段长度不足，说明数组格式不符合预期
-        || robot_health_size < half_robot_health_size + static_cast<int>(kCustomControlRobotCount)) {// 对方段长度也不足 5 台
+    if (half_robot_health_size < 4// 每方至少 4 台才有意义(2027 下限)
+        || robot_health_size < half_robot_health_size * 2) {// 前后两段长度必须自洽
         return;// 数据不足，放弃本次下发(否则会越界读数)
     }// if 结束
 
     std::array<uint16_t, kCustomControlRobotCount> enemy_health{}; // 准备敌方血量缓冲(定长 5 台)
-    for (size_t k = 0; k < kCustomControlRobotCount; k++) {// 依次拷贝 5 台敌方机器人的血量
-        const int enemy_index = half_robot_health_size + static_cast<int>(k);// 敌方段起始下标 + 偏移
-        // 取对方单位血量并钳制到 uint16 范围。
-        const uint16_t hp = static_cast<uint16_t>(std::min(robot_health[enemy_index], uint32_t{65535}));// 协议里血量是 uint32，下行包只有 2 字节，故先钳位再收窄
-        enemy_health[k] = hp; // 写入第 k 个敌方机器人血量
-    }// for 结束
+    if (half_robot_health_size == 4) {// 2027 标准：每方 4 台，顺序为 1,3,4,7（已去掉 2 号工程）
+        // 4 台/方时协议段内下标 0..3 分别对应 1号/3号/4号/7号；
+        // 载荷槽位固定为 重装(0)/保留(1)/步兵3(2)/步兵4(3)/哨兵(4)，因此映射为 0←1号, 2←3号, 3←4号, 4←7号。
+        constexpr int kEnemySlotFromIndex[4] = {0, 2, 3, 4};// 段内下标 -> 载荷槽位
+        for (int k = 0; k < 4; k++) {// 依次拷贝 4 台敌方机器人的血量
+            // 取对方单位血量并钳制到 uint16 范围。
+            const uint16_t hp = static_cast<uint16_t>(std::min(robot_health[half_robot_health_size + k], uint32_t{65535}));// 协议里血量是 uint32，下行包只有 2 字节，故先钳位再收窄
+            enemy_health[kEnemySlotFromIndex[k]] = hp; // 写入对应的载荷槽位
+        }// for 结束
+        enemy_health[1] = 0; // 工程槽位(2 号)在 2027 血量数组中已不存在，先填 0，槽位定义待机器人端确认
+    } 
+    else if (robot_health_size >= half_robot_health_size + static_cast<int>(kCustomControlRobotCount)) {// 旧协议容错：每方 ≥5 台时按旧顺序直取 5 台
+        for (size_t k = 0; k < kCustomControlRobotCount; k++) {// 依次拷贝 5 台敌方机器人的血量
+            const int enemy_index = half_robot_health_size + static_cast<int>(k);// 敌方段起始下标 + 偏移
+            // 取对方单位血量并钳制到 uint16 范围。
+            const uint16_t hp = static_cast<uint16_t>(std::min(robot_health[enemy_index], uint32_t{65535}));// 协议里血量是 uint32，下行包只有 2 字节，故先钳位再收窄
+            enemy_health[k] = hp; // 写入第 k 个敌方机器人血量
+        }// for 结束
+    } 
+    else {// 段长度既不是 2027 的 4，也不够旧协议的 5
+        return;// 数据不足，放弃本次下发
+    }// if-else 结束
 
     // 自增调试计数器，用于下位机识别每帧控制包的新鲜度。
     static uint8_t debug_increment_counter = 0; // 模块级自增调试计数器(跨调用保持，供下位机判断控制包新鲜度)
     const uint8_t current_debug_counter = debug_increment_counter;// 先取出当前值，作为本次包的计数
     debug_increment_counter = static_cast<uint8_t>(debug_increment_counter + 1);// 再自增(uint8_t 会自然回绕 255→0)
-    auto data = BuildCustomControlPayload(enemy_health,// 组装定长字节载荷：敌方 5 台血量
-                                          state.air_support_custom_control,// 空中支援本地状态(是否呼叫/剩余反制次数/冷却)
-                                          current_debug_counter,// 本次包的调试计数
-                                          now);// 当前时刻，用于推算反制冷却剩余秒数
-
+    auto data = BuildCustomControlPayload(enemy_health,// 组装定长字节载荷：敌方 5 个血量槽
+                                          current_debug_counter);// 本次包的调试计数
     CustomControl custom_control; // 构造 CustomControl 协议消息
     custom_control.set_data(std::string(data.begin(), data.end()));// 把字节数组塞进 protobuf 的 bytes 字段(用迭代器区间构造 std::string)
     std::string serialized; // 准备接收序列化后的字节串
@@ -364,24 +345,13 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
         mqtt_client.publish("CustomControl", serialized);// 通过 MQTT 发布到自定义控制话题，机器人电控订阅该话题
         state.last_custom_control_publish_time = now; // 记录本次发布时刻，供下次节流判断
     }// if 结束(序列化失败则保持上次时间戳不变，下帧会再试)
-    SPDLOG_INFO("空中支援呼叫数据: 是否呼叫={}", data[kCustomControlAirSupportCallOffset]);// 打印载荷中的"是否呼叫"字节，便于现场核对
-    if (state.air_support_custom_control.previous_counter_remaining.has_value()) {// 上一条反制次数已知才打印具体数值
-        SPDLOG_INFO("空中支援反制次数数据: 剩余反制次数={}",// 格式串：一个占位符对应剩余次数
-                    *state.air_support_custom_control.previous_counter_remaining);// 解引用 optional 取剩余次数
-    } else {// 尚未收到过反制事件
-        SPDLOG_INFO("空中支援反制次数数据: 剩余反制次数=unknown");// 打印 unknown 表示暂无数据
-    }// if-else 结束
-    if (data[kCustomControlCounterCooldownOffset] != kInactiveAirSupportCounterCooldown) {// 冷却字节不等于"无冷却"哨兵值时才值得打印
-        SPDLOG_INFO("空中支援反制45s倒计时: 剩余={}s", data[kCustomControlCounterCooldownOffset]);// 打印剩余冷却秒数
-    }// if 结束
-    SPDLOG_INFO("CustomControl 已发出: 英雄={} 工程={} 步兵3={} 步兵4={} 哨兵={} 空中支援={} 反制倒计时={} 计数器={}",// 汇总打印本次下发的完整内容
-                enemy_health[0],// 敌方英雄血量
-                enemy_health[1],// 敌方工程血量
+    // 【2027 变更】原空中支援的"呼叫标志/反制冷却"两字节已改为保留位并固定填 0，不再打印其内容。
+    SPDLOG_INFO("CustomControl 已发出: 重装={} 保留={} 步兵3={} 步兵4={} 哨兵={} 计数器={}",// 汇总打印本次下发的完整内容
+                enemy_health[0],// 敌方重装血量
+                enemy_health[1],// 保留槽(2027 无 2 号，恒为 0)
                 enemy_health[2],// 敌方步兵3血量
                 enemy_health[3],// 敌方步兵4血量
                 enemy_health[4],// 敌方哨兵血量
-                data[kCustomControlAirSupportCallOffset],// 是否呼叫空中支援
-                data[kCustomControlCounterCooldownOffset],// 反制冷却剩余秒数
                 data[kCustomControlDebugCounterOffset]);// 调试计数器
 }// PublishCustomControlIfDue 结束
 
@@ -391,15 +361,19 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                        RoboGo::io::MqttClient &mqtt_client,// MQTT 客户端引用(本函数暂未使用，保留以便将来下行应答)
                        const std::string &topic,// 话题名 = 裁判系统消息类型
                        const std::string &payload,// 消息二进制载荷
-                       const CustomByteBlockPacketHandler &custom_byte_block_packet_handler) {// 自定义字节块(视频帧)透传回调
-    (void) mqtt_client; // 下行分发本文件暂未使用 mqtt_client 参数，显式 void 转换以抑制未使用警告
+                       const CustomByteBlockPacketHandler &custom_byte_block_packet_handler) // 自定义字节块(视频帧)透传回调
+{   
+    // 下行分发本文件暂未使用 mqtt_client 参数，显式 void 转换以抑制未使用警告
+    (void) mqtt_client; 
     // MQTT 入站消息的统一分发入口：
     // 1. 根据 topic 选择对应的 protobuf 类型并反序列化 payload。
     // 2. 把最新数据写入 State，供各个 ImGui 面板读取显示。
-    const auto log_parse_failure = [&](const std::string &current_topic) {// lambda：统一的解析失败日志(捕获 payload 以取长度)
+    const auto log_parse_failure = [&](const std::string &current_topic) {
+        // lambda：统一的解析失败日志(捕获 payload 以取长度)
         SPDLOG_ERROR("MQTT消息解析失败 topic={} bytes={}", current_topic, payload.size());// ERROR 级：打出话题名与载荷字节数，便于排查协议不匹配
     };// lambda 结束
-    const auto log_parse_success = [&](const std::string &current_topic, const auto &) {// lambda：统一的解析成功日志(第二个参数为消息本体，仅用于类型推导，不直接使用)
+    const auto log_parse_success = [&](const std::string &current_topic, const auto &) {
+        // lambda：统一的解析成功日志(第二个参数为消息本体，仅用于类型推导，不直接使用)
         SPDLOG_DEBUG("MQTT消息解析成功 topic={}", current_topic);// DEBUG 级：高频消息(10Hz)只在调试时输出，避免刷屏
     };// lambda 结束
 
@@ -408,15 +382,7 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         GameStatus game_status;// 在栈上构造消息对象(protobuf 生成类)，字段默认零值
         if (game_status.ParseFromString(payload)) {// 反序列化：从 payload 解析，成功返回 true，失败返回 false(数据损坏或类型不符)
             log_parse_success(topic, game_status);// 打一条调试日志
-            constexpr uint32_t kGameStagePlaying = 4;// 协议定义：阶段 4 = 比赛中
-            const bool was_playing = state.game_status.has_value()// 先看本地是否已有旧快照
-                                     && state.game_status->current_stage() == kGameStagePlaying;// 且旧快照处于"比赛中"
-            const bool is_playing = game_status.current_stage() == kGameStagePlaying;// 新快照是否处于"比赛中"
-            if (!was_playing && is_playing) {// 上升沿检测：从"非比赛中"进入"比赛中"= 新一局开始
-                ResetAirSupportCounterForMatchStart(state.air_support_custom_control);// 把空中支援反制次数重置为开局初值
-                SPDLOG_INFO("比赛开始，空中支援剩余反制次数初始化为{}",// 格式串：一个占位符对应初始反制次数
-                            kInitialAirSupportCounterRemaining);// 开局初始的可反制次数常量
-            }// if 结束
+            // 【2027 变更】空中支援已移除，原"进入比赛中即重置空中支援反制次数"的上升沿处理一并删除。
             state.game_status = game_status; // 解析成功，覆盖本地比赛状态快照(供面板读取)
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
@@ -438,23 +404,25 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
             auto robot_health_size = robot_health.size();// 血量数组总长度
             auto half_robot_health_size = robot_health_size / 2;// 折半点：前半为己方、后半为对方
 
-            // 根据 proto V1.3.0 规范，robot_health 数组顺序：
-            // 己方 1,2,3,4,7 + 对方 1,2,3,4,7 (共10个)
+            // 【2027 规范】robot_health 数组顺序：己方 1,3,4,7 + 对方 1,3,4,7 (共8个，每方4台，已去掉 2 号工程)
             // 映射到客户端数组：red_robots/blue_robots[0-8]，其中：
-            // 0=英雄(1), 1=工程(2), 2=步兵(3), 3=步兵(4), 4=废弃步兵(5), 5=无人机(6), 6=哨兵(7), 7=飞镖(8), 8=雷达(9)
-            // 服务器发送的机器人 ID 顺序：1,2,3,4,7 (映射到客户端索引 0,1,2,3,6)
+            // 0=重装(1), 1=保留(2), 2=步兵(3), 3=步兵(4), 4=废弃步兵(5), 5=空中系统(6), 6=哨兵(7), 7=飞镖(8), 8=雷达(9)
+            // 服务器发送的 2027 顺序 1,3,4,7 对应客户端索引 0,2,3,6；旧协议(每方5台)顺序 1,2,3,4,7 对应 0,1,2,3,6。
+            const int client_indices_2027[] = {0, 2, 3, 6};// 2027：1号->0, 3号->2, 4号->3, 7号->6
+            const int client_indices_legacy[] = {0, 1, 2, 3, 6};// 旧协议：1号->0, 2号->1, 3号->2, 4号->3, 7号->6
+            // 自适应：每方 4 台按 2027 映射，否则沿用旧的 5 台映射。
+            const int *client_indices = half_robot_health_size == 4 ? client_indices_2027 : client_indices_legacy;// 选出本帧使用的映射表
+            const int health_count = std::min<int>(half_robot_health_size,// 本帧要遍历的台数，不能超过前半段长度
+                                                  half_robot_health_size == 4 ? 4 : 5);// 2027 取 4 台，旧协议取 5 台
+            const int enemy_offset = half_robot_health_size;// 对方段起始下标
 
-            // 定义服务器发送的机器人 ID 数组（对应的客户端索引）
-            // const int robot_ids[] = {1, 2, 3, 4, 7};  // 服务器发送的机器人 ID
-            const int client_indices[] = {0, 1, 2, 3, 6};// 对应的客户端数组索引
-
-            for (int i = 0; i < half_robot_health_size && i < 5; i++) {// 遍历前 5 项(服务器只发 5 台)，i<5 是防数组越界的兜底
+            for (int i = 0; i < health_count; i++) {// 遍历前半段(己方)的下标
                 // 根据 proto 注释，robot_health 数组顺序固定为「己方在前，对方在后」
                 int self_index = i;// 己方元素下标：就在前半段内
-                int enemy_index = i + half_robot_health_size;// 对方元素下标：前半段长度 + 偏移
+                int enemy_index = i + enemy_offset;// 对方元素下标：前半段长度 + 偏移
 
                 // 映射到客户端数组的正确索引
-                int client_index = client_indices[i];// 把协议顺序(1,2,3,4,7)换算成本地数组下标(0,1,2,3,6)
+                int client_index = client_indices[i];// 把协议顺序换算成本地数组下标
                 if (is_red_team) {// 本机是红方
                     update_robot_health(state.red_robots[client_index], robot_health[self_index]);// 前半段写入红方
                     update_robot_health(state.blue_robots[client_index], robot_health[enemy_index]);// 后半段写入蓝方
@@ -469,7 +437,10 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
             for (int i = 0; i < half_robot_bullets_size; i++) {// 遍历前半段(己方)的下标
                 int index = i;// 默认认为协议顺序与本地数组顺序一一对应
                 // 由于官方没有明确说明顺序，以防万一，这里做一些容错处理
-                if (half_robot_bullets_size == 6) {// 若数组是 6 台/方，说明包含了 6 号无人机
+                if (half_robot_bullets_size == 4) {// 2027：每方 4 台，顺序 1 3 4 7
+                    // 映射到本地数组索引 0,2,3,6（与血量数组一致）
+                    index = client_indices_2027[i];// 直接查 2027 映射表
+                } else if (half_robot_bullets_size == 6) {// 若数组是 6 台/方，说明包含了 6 号无人机
                     // 实际顺序
                     // 1 2 3 4 6 7
                     if (i >= 4) {// 从第 5 项起是 6 号和 7 号
@@ -505,7 +476,8 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         }// if-else 结束
     } else if (topic == "GlobalLogisticsStatus") {// 2.2.5 全局后勤信息(1Hz)：剩余经济、累计经济、科技等级、加密等级
         GlobalLogisticsStatus global_logistics_status;// 构造消息对象
-        if (global_logistics_status.ParseFromString(payload)) {// 反序列化成功
+        if (global_logistics_status.ParseFromString(payload)) {
+            // 反序列化成功
             log_parse_success(topic, global_logistics_status);// 调试日志
             state.global_logistics_status = global_logistics_status; // 解析成功，覆盖本地全局后勤状态快照
         } else {// 解析失败
@@ -519,7 +491,7 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
-    } else if (topic == "Event") {// 2.2.7 比赛事件(触发式)：击杀、前哨站被毁、能量机关、空中支援等
+    } else if (topic == "Event") {// 2.2.7 比赛事件(触发式)：击杀、前哨站被毁、能量机关、阵地控制、装配结果等
         Event event;// 构造消息对象
         if (event.ParseFromString(payload)) {// 反序列化成功
             log_parse_success(topic, event);// 调试日志
@@ -530,7 +502,7 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
             log_entry.type = 0; // 事件日志默认 INFO 级别
             switch (event.event_id()) {// 按事件 ID 分派，拼出人类可读的事件描述
                 case 1: {// 1 = 击杀事件
-                    // 击杀事件（参数 1 为被击杀者，参数 2 为击杀者，如"1,101"，代表蓝方英雄击击毁红方英雄）
+                    // 击杀事件（参数 1 为被击杀者，参数 2 为击杀者，如"1,101"，代表蓝方重装击毁红方重装）
                     auto parts = SplitByComma(event.param());// 把 "被击杀者,击杀者" 按首个逗号拆开
                     if (parts.has_value()) {// 拆分成功：两侧都能翻译成中文名
                         log_entry.text = GetRobotName(parts->first) + " 击杀了 " + GetRobotName(parts->second);// 拼出"红方X 击杀了 蓝方Y"这样的句子
@@ -577,37 +549,60 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     }// if-else 结束
                     break;// 跳出 switch
                 }// case 4 结束
-                case 5: {// 5 = 己方英雄造成狙击伤害
-                    // TODO 暂时不处理
-                    return;// 暂不处理，直接返回
-                    // 己方英雄造成狙击伤害（参数值为累计造成狙击伤害数量）
-                    log_entry.text = "己方英雄累计狙击伤害: " + event.param();// (不可达)拼出累计伤害描述
-                    break;// (不可达)跳出 switch
+                case 5: {// 5 = R 前哨阵地改变控制状态
+                    // R 前哨阵地改变控制状态（参数 1 红方临时控制，2 红方完全控制，3 蓝方临时控制，4 蓝方完全控制）
+                    const std::string &param = event.param();// 参数即控制状态码
+                    std::string state_name;// 待翻译的控制状态文案
+                    if (param == "1") state_name = "红方临时控制";// 1 = 红方临时控制
+                    else if (param == "2")// 2 = 红方完全控制
+                        state_name = "红方完全控制";// 红方完全掌控
+                    else if (param == "3")// 3 = 蓝方临时控制
+                        state_name = "蓝方临时控制";// 蓝方临时掌控
+                    else if (param == "4")// 4 = 蓝方完全控制
+                        state_name = "蓝方完全控制";// 蓝方完全掌控
+                    else// 未知状态码
+                        state_name = "未知状态(" + param + ")";// 兜底：把原始码嵌进文案
+                    log_entry.text = "R 前哨阵地控制状态变更: " + state_name;// 组合成完整描述
+                    break;// 跳出 switch
                 }// case 5 结束
-                case 6: {// 6 = 对方英雄造成狙击伤害
-                    // TODO 暂时不处理
-                    return;// 暂不处理，直接返回
-                    // 对方英雄造成狙击伤害（参数值为累计造成狙击伤害数量）
-                    log_entry.text = "对方英雄累计狙击伤害: " + event.param();// (不可达)拼出累计伤害描述
-                    break;// (不可达)跳出 switch
+                case 6: {// 6 = B 前哨阵地改变控制状态
+                    // B 前哨阵地改变控制状态（参数含义与 case 5 相同：1 红临时 / 2 红完全 / 3 蓝临时 / 4 蓝完全）
+                    const std::string &param = event.param();// 参数即控制状态码
+                    std::string state_name;// 待翻译的控制状态文案
+                    if (param == "1") state_name = "红方临时控制";// 1 = 红方临时控制
+                    else if (param == "2")// 2 = 红方完全控制
+                        state_name = "红方完全控制";// 红方完全掌控
+                    else if (param == "3")// 3 = 蓝方临时控制
+                        state_name = "蓝方临时控制";// 蓝方临时掌控
+                    else if (param == "4")// 4 = 蓝方完全控制
+                        state_name = "蓝方完全控制";// 蓝方完全掌控
+                    else// 未知状态码
+                        state_name = "未知状态(" + param + ")";// 兜底：把原始码嵌进文案
+                    log_entry.text = "B 前哨阵地控制状态变更: " + state_name;// 组合成完整描述
+                    break;// 跳出 switch
                 }// case 6 结束
-                case 7: {// 7 = 对方呼叫空中支援
-                    // 对方呼叫空中支援（无参数值）
-                    NoteOpponentAirSupportCalled(state.air_support_custom_control);// 标记本地空中支援状态：记录"对方已呼叫"，供下发 CustomControl 使用
-                    log_entry.text = "对方呼叫空中支援";// 日志文案
+                case 7: {// 7 = R 基地阵地改变控制方
+                    // R 基地阵地改变控制方（参数 1 红方完全控制，2 蓝方临时控制）
+                    const std::string &param = event.param();// 参数即控制方状态码
+                    if (param == "1") {// 1 = 红方完全控制
+                        log_entry.text = "R 基地阵地控制方变更: 红方完全控制";// 红方完全掌控 R 基地
+                    } else if (param == "2") {// 2 = 蓝方临时控制
+                        log_entry.text = "R 基地阵地控制方变更: 蓝方临时控制";// 蓝方临时掌控 R 基地
+                    } else {// 未知状态码
+                        log_entry.text = "R 基地阵地控制方变更: 未知状态(" + param + ")";// 兜底：附上原始码
+                    }// if-else 结束
                     break;// 跳出 switch
                 }// case 7 结束
-                case 8: {// 8 = 对方空中支援被反制
-                    // 对方空中支援被反制（参数值为己方还剩余的可反制次数）
-                    const std::string &param = event.param();// 参数是剩余可反制次数(十进制文本)
-                    if (auto remaining = ParseByteParam(param); remaining.has_value()) {// C++17 带初始化的 if：解析成字节并判断是否成功
-                        if (NoteAirSupportCounterRemaining(state.air_support_custom_control,// 记录新的剩余次数
-                                                           *remaining,// 解引用得到次数值
-                                                           std::chrono::steady_clock::now())) {// 同时记录时刻，用于推算 45s 冷却
-                            SPDLOG_INFO("空中支援反制45s倒计时开始: 己方剩余反制次数={}", *remaining);// 仅当次数"恰好减一"时才会返回 true 并打印
-                        }// 内层 if 结束
-                    }// 外层 if 结束(解析失败则不改状态，只写日志)
-                    log_entry.text = "对方空中支援被反制，己方剩余反制次数: " + param;// 无论解析成功与否都生成一条文字日志
+                case 8: {// 8 = B 基地阵地改变控制方
+                    // B 基地阵地改变控制方（参数 1 蓝方完全控制，2 红方临时控制）
+                    const std::string &param = event.param();// 参数即控制方状态码
+                    if (param == "1") {// 1 = 蓝方完全控制
+                        log_entry.text = "B 基地阵地控制方变更: 蓝方完全控制";// 蓝方完全掌控 B 基地
+                    } else if (param == "2") {// 2 = 红方临时控制
+                        log_entry.text = "B 基地阵地控制方变更: 红方临时控制";// 红方临时掌控 B 基地
+                    } else {// 未知状态码
+                        log_entry.text = "B 基地阵地控制方变更: 未知状态(" + param + ")";// 兜底：附上原始码
+                    }// if-else 结束
                     break;// 跳出 switch
                 }// case 8 结束
                 case 9: {// 9 = 飞镖命中
@@ -658,13 +653,13 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     log_entry.text = "对方基地护甲展开";// 固定文案
                     break;// 跳出 switch
                 }// case 13 结束
-                case 14: {// 14 = 装配过程中对方请求四级装配
-                    // 装配过程中对方请求四级装配，进入强制退出缓冲期（无参数）
-                    log_entry.text = "装配过程中对方请求四级装配，进入强制退出缓冲期";// 固定文案
+                case 14: {// 14 = 重装战亡临时激活，进入强制退出缓冲期
+                    // 重装战亡临时激活，进入强制退出缓冲期（无参数）
+                    log_entry.text = "重装战亡临时激活，进入强制退出缓冲期";// 固定文案
                     break;// 跳出 switch
                 }// case 14 结束
                 case 15: {// 15 = 装配结果事件
-                    // 装配结果事件(0 成功，1 拔出，2 超时，3 离开装配区过久，4 工程战亡，5 四级难度未满足完成协作时限，6 主动退出，7 完成装配但结算时未检测到有能量单元，8 缓冲期到期，装配流程强制结束)
+                    // 装配结果事件(0 成功，1 拔出，2 超时，3 离开装配区过久，4 重装战亡，5 四级难度未满足完成协作时限，6 主动退出，7 完成装配但结算时未检测到有能量单元，8 缓冲期到期，装配流程强制结束)
                     const std::string &param = event.param();// 参数即结果码
                     std::string result_name;// 待翻译的结果文案
                     if (param == "0") result_name = "成功";// 0 = 装配成功
@@ -674,8 +669,8 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                         result_name = "超时";// 协作时限内未完成
                     else if (param == "3")// 3 = 离开装配区过久
                         result_name = "离开装配区过久";// 工程离开区域
-                    else if (param == "4")// 4 = 工程战亡
-                        result_name = "工程战亡";// 工程机器人被击毁
+                    else if (param == "4")// 4 = 重装战亡
+                        result_name = "重装战亡";// 重装机器人被击毁
                     else if (param == "5")// 5 = 四级难度未满足协作时限
                         result_name = "四级难度未满足完成协作时限";// 四级特殊规则
                     else if (param == "6")// 6 = 主动退出
@@ -689,12 +684,18 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     log_entry.text = "装配结果: " + result_name;// 组合成完整描述
                     break;// 跳出 switch
                 }// case 15 结束
+                case 16: {// 16 = 重装成功安装模块化 42mm 发射机构
+                    // 重装机器人成功安装模块化 42mm 发射机构（无参数）
+                    log_entry.text = "重装机器人成功安装模块化42mm发射机构";// 固定文案
+                    break;// 跳出 switch
+                }// case 16 结束
                 default: {// 未识别的事件 ID
                     log_entry.text = "未知事件: ID=" + std::to_string(event.event_id()) + ", 参数=" + event.param();// 兜底：打印 ID 与原始参数，便于后续补全处理
                     break;// 跳出 switch
                 }// default 结束
             }// switch 结束
             AppendSystemLog(state, log_entry.type, log_entry.text);// 把拼好的事件描述写入系统日志(同时输出终端)
+            PushEventToast(state, event.event_id(), log_entry.text);// 重要事件额外推一条顶部提示(2027 致盲等窗口只有几秒，日志来不及看)
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
@@ -810,7 +811,14 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
                     break;// 跳出 switch
             }// switch 结束
             log_entry.text = penalty_name + ", 受罚效果时长" + std::to_string(penalty_effect_sec) + "秒";// 拼出"黄牌, 受罚效果时长10秒"
-            AppendSystemLog(state, log_entry.type, log_entry.text);// 写入系统日志(WARNING 级)
+            if (penalty_effect_sec > 0) {// 有时长的才是真实判罚
+                AppendSystemLog(state, log_entry.type, log_entry.text);// 写入系统日志(WARNING 级)
+            } else {// 时长为 0：协议里表示"没有实际受罚效果"
+                // 这类消息常见于发送端整轮广播默认值，既不影响比赛也没必要占用操作手视线，只留终端调试记录。
+                SPDLOG_DEBUG("收到无实际效果的判罚消息，已忽略: {}", log_entry.text);// 终端留痕便于排查
+            }// if-else 结束
+            state.penalty_info = penalty_info;// 快照最近一次判罚，供顶部判罚横幅显示
+            state.penalty_received_time = std::chrono::steady_clock::now();// 记录本地接收时刻，横幅据此自行倒数
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
@@ -868,14 +876,6 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
-    } else if (topic == "DeployModeStatusSync") {// 2.2.26 英雄部署模式(1Hz)：0 未部署 / 1 已部署
-        DeployModeStatusSync deploy_mode_status_sync;// 构造消息对象
-        if (deploy_mode_status_sync.ParseFromString(payload)) {// 反序列化成功
-            log_parse_success(topic, deploy_mode_status_sync);// 调试日志
-            state.deploy_mode_status_sync = deploy_mode_status_sync; // 解析成功，覆盖本地英雄部署模式快照
-        } else {// 解析失败
-            log_parse_failure(topic);// 记录错误日志
-        }// if-else 结束
     } else if (topic == "RuneStatusSync") {// 2.2.28 能量机关状态(1Hz)：未激活/激活中/已激活 + 灯臂数 + 平均环数
         RuneStatusSync rune_status_sync;// 构造消息对象
         if (rune_status_sync.ParseFromString(payload)) {// 反序列化成功
@@ -908,45 +908,6 @@ void HandleMqttMessage(State &state,// 待刷新的全局状态
         } else {// 解析失败
             log_parse_failure(topic);// 记录错误日志
         }// if-else 结束
-    } else if (topic == "AirSupportStatusSync") {// 2.2.35 空中支援状态(1Hz)：进行状态/免费时长/金币/激光照射/发射机构
-        AirSupportStatusSync air_support_status_sync;// 构造消息对象
-        if (air_support_status_sync.ParseFromString(payload)) {// 反序列化成功
-            log_parse_success(topic, air_support_status_sync);// 调试日志
-            auto previous = state.air_support_status_sync; // 取出上一次空中支援状态快照，用于与本次做边沿比较
-            state.air_support_status_sync = air_support_status_sync; // 用本次同步覆盖本地状态
-
-            if (!previous.has_value()) {// 首次收到该话题：没有旧值可比较，只在"正在进行"时补一条开始日志
-                if (air_support_status_sync.airsupport_status() == 1) {// 1 = 空中支援进行中
-                    AppendSystemLog(state, 0, "空中支援已开始");// 记录一条 INFO 系统日志
-                }// if 结束
-            } else if (previous->airsupport_status() != air_support_status_sync.airsupport_status()) {// 状态码发生变化(边沿触发)
-                if (air_support_status_sync.airsupport_status() == 1) {// 变为进行中
-                    AppendSystemLog(state, 0, "空中支援已开始");// 记录开始
-                } else {// 变为未进行
-                    AppendSystemLog(state, 0, "空中支援已结束");// 记录结束
-                }// if-else 结束
-            }// if-else 结束
-
-            if (!previous.has_value() || previous->is_being_targeted() != air_support_status_sync.is_being_targeted()) {// 首次收到 或 激光照射状态发生变化
-                if (air_support_status_sync.is_being_targeted() != 0) {// 非 0 表示正被激光照射
-                    AppendSystemLog(state, 1, "空中机器人正在被激光照射");// WARNING 级提醒操作手
-                } else if (previous.has_value()) {// 有旧值且新值为 0：说明是"刚刚脱离"
-                    AppendSystemLog(state, 0, "空中机器人已脱离激光照射");// 恢复正常
-                }// if-else 结束
-            }// if 结束
-
-            if (!previous.has_value() || previous->shooter_status() != air_support_status_sync.shooter_status()) {// 首次收到 或 发射机构状态变化
-                if (air_support_status_sync.shooter_status() == 0) {// 0 = 锁定且无法解除
-                    AppendSystemLog(state, 1, "空中机器人发射机构被锁定，无法解除");// 最坏情况，警告
-                } else if (air_support_status_sync.shooter_status() == 2) {// 2 = 锁定但可花金币解除
-                    AppendSystemLog(state, 1, "空中机器人发射机构被锁定，可花费金币解除");// 提示可解除
-                } else if (previous.has_value()) {// 其余情况(1)且有旧值：视为恢复正常
-                    AppendSystemLog(state, 0, "空中机器人发射机构恢复正常");// 恢复
-                }// if-else 结束
-            }// if 结束
-        } else {// 解析失败
-            log_parse_failure(topic);// 记录错误日志
-        }// if-else 结束
     } else {// 所有已知话题都不匹配
         SPDLOG_WARN("收到未处理MQTT话题 topic={} bytes={}", topic, payload.size());// WARNING 级：可能是协议新增话题，打出话题名与长度
     }// if-else 链结束
@@ -974,11 +935,11 @@ std::string GetRobotName(const std::string &robot_id) {// 形参为十进制 ID 
     std::string suffix;// 兵种后缀
 
     switch (num) {// 按兵种编号映射中文名
-        case 1:// 1 = 英雄
-            suffix = "英雄";// 英雄机器人
+        case 1:// 1 = 重装
+            suffix = "重装";// 重装机器人
             break;// 跳出 switch
-        case 2:// 2 = 工程
-            suffix = "工程";// 工程机器人
+        case 2:// 2 = 保留位
+            suffix = "保留位";// 2027 起 2 号为保留位
             break;// 跳出 switch
         case 3:// 3 = 步兵(3 号)
             suffix = "步兵3";// 三号步兵
@@ -989,8 +950,8 @@ std::string GetRobotName(const std::string &robot_id) {// 形参为十进制 ID 
         case 5:// 5 = 步兵(5 号)
             suffix = "步兵5";// 五号步兵
             break;// 跳出 switch
-        case 6:// 6 = 空中机器人
-            suffix = "无人机";// 无人机/空中机器人
+        case 6:// 6 = 空中系统
+            suffix = "空中系统";// 2027 称空中系统
             break;// 跳出 switch
         case 7:// 7 = 哨兵
             suffix = "哨兵";// 哨兵机器人
@@ -1015,28 +976,3 @@ std::string GetRobotName(const std::string &robot_id) {// 形参为十进制 ID 
     return prefix + suffix;// 拼接成"红方英雄"这样的完整名称
 }// GetRobotName 结束
 
-// 功能：翻译空中支援状态码（0 未开始 / 1 进行中）为中文。
-const char *GetAirSupportStatusName(uint32_t airsupport_status) {// 形参为协议里的空中支援状态码
-    switch (airsupport_status) {// 按状态码返回静态字符串(常量区，无需分配)
-        case 0:// 0 = 未进行
-            return "未进行空中支援";// 未开始空中支援
-        case 1:// 1 = 进行中
-            return "正在空中支援";// 空中支援生效中
-        default:// 其他值
-            return "未知空中支援状态";// 兜底文案
-    }// switch 结束
-}// GetAirSupportStatusName 结束
-
-// 功能：翻译空中机器人发射机构状态码（0 锁定不可解除 / 1 正常 / 2 锁定可解除）为中文。
-const char *GetAirSupportShooterStatusName(uint32_t shooter_status) {// 形参为空中机器人发射机构状态码
-    switch (shooter_status) {// 按状态码返回静态字符串
-        case 0:// 0 = 锁定且不可解除
-            return "已锁定(不可解除)";// 最严重：本局无法恢复射击
-        case 1:// 1 = 正常
-            return "正常";// 可以正常发射
-        case 2:// 2 = 锁定但可解除
-            return "已锁定(可解除)";// 花金币可解锁
-        default:// 其他值
-            return "未知";// 兜底文案
-    }// switch 结束
-}// GetAirSupportShooterStatusName 结束

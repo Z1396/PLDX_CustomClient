@@ -9,7 +9,8 @@
 //       原子修订号(endpoint_revision)与标志(is_client_id_updated)感知主线程的参数变更并重建连接。
 // 依赖：async_mqtt、Boost.Asio 协程、spdlog、RoboGo::logging（网络抓包）。
 // ============================================================================
-#include "mqtt_client.h"  // 本编译单元的主头文件(声明 MqttClient)
+#include "mqtt_client.h"
+// 本编译单元的主头文件(声明 MqttClient)
 #include "logging/logging.h"  // 网络报文抓包接口(log_network_payload)
 
 // 匿名命名空间：本编译单元内部的辅助函数与类型，不对外暴露
@@ -25,75 +26,13 @@ namespace {  // 匿名命名空间：本编译单元内部辅助函数与类型�
     // MQTT 心跳（keep-alive）间隔，单位秒
     constexpr std::uint16_t mqtt_keep_alive_seconds = 5;  // 交给 broker 的心跳周期，超过 1.5 倍未通信即判定断线
 
-    // 功能：等待一次 MQTT 操作超时（用定时器协程实现）。
-    // 思路：创建一个 steady_timer，时长 mqtt_operation_timeout；到点若未被取消则抛出异常，从而打断等待中的 MQTT 操作。
-    // 参数：无（超时时长取全局常量 mqtt_operation_timeout）。
-    // 返回值：awaitable<void>；到点后抛 boost::system::system_error，由 RunMqttOperationWithTimeout 的超时分支捕获。
-    boost::asio::awaitable<void> WaitForMqttOperationTimeout() {  // 作为 awaitable_operators::operator|| 的一个分支被并发等待
-        // 取当前协程所在执行器，定时器需要在同一执行器上运行
-        auto executor = co_await boost::asio::this_coro::executor;  // this_coro::executor 是 Asio 提供的"取本协程执行器"的 awaitable
-        boost::asio::steady_timer timer(executor, mqtt_operation_timeout);  // steady_timer 基于单调时钟，不受系统时间跳变影响
-        // 异步等待并捕获错误码；as_tuple 把结果拆成 (error_code) 形式
-        auto [error_code] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // as_tuple：出错时不抛异常，而是把 error_code 作为返回值
-        if (error_code) {  // 只有被取消(operation_aborted)等异常情况才会带错误码
-            // 定时器本身出错时抛出异常，交由上层处理
-            throw boost::system::system_error(error_code);  // 抛出 system_error，使命运共同体(||)的该分支以异常结束
-        }  // if 结束
-    }  // WaitForMqttOperationTimeout 结束
-
-    // 功能：安全关闭 MQTT 客户端连接，忽略“已中断/未连接/描述符失效”等可预期的关闭错误。
-    // 思路：调用 async_close，对特定错误码（operation_aborted / not_connected / bad_descriptor）不告警，其余才记录 WARN。
-    // 参数 client：要关闭的连接；peer：用于日志的“地址:端口”；reason：触发关闭的原因（如操作名）。
-    // 返回值：awaitable<void>；正常无异常，预期内错误被吞掉。
-    boost::asio::awaitable<void> CloseMqttClientNoThrow(MqttAsyncClient &client, std::string_view peer, std::string_view reason) {  // string_view 避免为日志拼接临时 std::string
-        try {  // 关闭流程中的任何 system_error 都在此吞掉，保证上层 continue/重连不被中断
-            co_await client.async_close(boost::asio::use_awaitable);  // async_close：关闭底层 socket 并释放会话相关资源
-        } catch (const boost::system::system_error &error) {  // 捕获关闭期间的异常
-            if (error.code() != boost::asio::error::operation_aborted &&  // 已取消：说明有并发关闭，属正常
-                error.code() != boost::asio::error::not_connected &&  // 未连接：本来就没连上，无需关
-                error.code() != boost::asio::error::bad_descriptor) {  // 描述符已失效：socket 早已被关闭
-                // 仅对真正的异常错误码记录告警，避免重连/超时时刷屏
-                SPDLOG_WARN("MQTT关闭连接失败 peer={} reason={} code={} message={}",  // 打印对端、原因与错误详情
-                            peer,  // 对端 "host:port"
-                            reason,  // 触发关闭的操作名
-                            static_cast<long long>(error.code().value()),  // 错误码数值
-                            error.code().message());  // 错误码可读文本
-            }  // if 结束
-        }  // try-catch 结束
+    // 功能：安全关闭 MQTT 客户端连接，不产生任何异常。
+    // 思路：async_close 的完成签名没有 error_code，配合 as_tuple 后关闭失败也只是静默返回。
+    // 参数 client：要关闭的连接；peer/reason 仅用于 DEBUG 日志。
+    boost::asio::awaitable<void> CloseMqttClientNoThrow(MqttAsyncClient &client, std::string_view peer, std::string_view reason) {
+        SPDLOG_DEBUG("MQTT关闭连接 peer={} reason={}", peer, reason);  // 仅调试级别，避免刷屏
+        co_await client.async_close(boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
     }  // CloseMqttClientNoThrow 结束
-
-    // 功能：为任意 MQTT 操作包裹超时控制，超时则按策略关闭连接并抛异常。
-    // 思路：用 awaitable_operators 的 || 并发等待“业务操作”与“超时等待”，谁先完成谁获胜；
-    //       若超时分支先完成（result.index()==1），记录告警并可选地关闭客户端后抛出 timed_out。
-    // 参数：client 客户端；peer 用于日志的“地址:端口”；operation_name 操作名；operation_factory 返回协程的可调用对象；
-    //       close_client_on_timeout 超时后是否主动关闭连接（publish 等轻量操作传 false）。
-    // 返回值：awaitable<void>；成功则正常返回，超时或业务异常则抛出 system_error（timed_out 或原错误）。
-    template <typename OperationFactory>  // 模板参数：一个无参、返回 awaitable<void> 的工厂，用于按需创建协程
-    boost::asio::awaitable<void> RunMqttOperationWithTimeout(MqttAsyncClient &client,  // 被保护的目标客户端
-                                                             std::string_view peer,  // 日志用对端地址
-                                                             std::string_view operation_name,  // 日志用操作名(handshake/connect/subscribe/publish)
-                                                             OperationFactory &&operation_factory,  // 转发引用：支持 lambda 就地构造协程
-                                                             bool close_client_on_timeout = true) {  // 默认超时即关连接，轻量操作可显式关掉
-        using namespace boost::asio::experimental::awaitable_operators;  // 引入 operator|| 等"等待多个 awaitable"的运算符
-
-        auto operation = std::forward<OperationFactory>(operation_factory)();  // 先创建业务协程(尚未开始执行，co_await 时才驱动)
-        // || 表示“任意一个完成即返回”，variant 的 index 指示哪个分支先完成：0=操作，1=超时
-        auto result = co_await (std::move(operation) || WaitForMqttOperationTimeout());  // 并发等待：任一分支结束即整体恢复，另一分支被取消
-        if (result.index() == 1) {  // index==1 说明先完成的是右操作数，即超时分支
-            // 超时分支先完成，记录告警
-            const auto timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(mqtt_operation_timeout).count();  // 转成毫秒便于日志阅读
-            SPDLOG_WARN("MQTT操作超时 peer={} operation={} timeout_ms={}", peer, operation_name, timeout_ms);  // 记录是哪个操作、等了多久
-            if (close_client_on_timeout) {  // 需要主动断开时
-                // 默认超时后直接关闭连接，回收底层资源
-                co_await CloseMqttClientNoThrow(client, peer, operation_name);  // 关闭时不再抛异常，避免掩盖"超时"这一根因
-            } else {  // 不主动关闭时
-                // 部分场景（如 publish）交由调用方自行处理，不主动关闭
-                SPDLOG_WARN("MQTT操作超时后不主动关闭连接 peer={} operation={}", peer, operation_name);  // 仅提示，连接仍保留以继续收包
-            }  // if-else 结束
-            // 抛出 timed_out，使上层 run() 捕获并进入重连流程
-            throw boost::system::system_error(boost::asio::error::timed_out);  // 用标准 timed_out 错误码统一表达超时
-        }  // if 结束
-    }  // RunMqttOperationWithTimeout 结束
 
     // 功能：发布一条 MQTT 消息（QoS1，至少一次）。
     // 思路：先取得唯一 packet_id（会话未就绪则跳过），按 network_capture 格式记录发送负载，再用超时包裹的 publish 发出；
@@ -122,20 +61,18 @@ namespace {  // 匿名命名空间：本编译单元内部辅助函数与类型�
                                                  message,  // 原始负载(protobuf 序列化字节)
                                                  peer);  // 对端地址
             SPDLOG_DEBUG("发送MQTT消息 topic={} bytes={} peer={}", topic, message.size(), peer);  // DEBUG 级别：高频发送时不刷屏
-            // 用超时包裹 publish，注意此处 close_client_on_timeout=false，避免单次发送超时误关连接
-            co_await RunMqttOperationWithTimeout(*client,  // 被包裹的客户端
-                                                 peer,  // 对端地址
-                                                 "publish",  // 操作名，用于超时日志
-                                                 [&]() -> boost::asio::awaitable<void> {  // 工厂 lambda：返回真正的 publish 协程
-                                                     co_await client->async_publish(  // async_publish：发送 PUBLISH 报文，QoS1 下会等待 PUBACK
-                                                             async_mqtt::v3_1_1::publish_packet{  // 手工构造 MQTT 3.1.1 的 PUBLISH 报文
-                                                                     *packet_id,  // 报文标识符，用于与 PUBACK 匹配
-                                                                     topic,  // 话题名
-                                                                     message,  // 负载(payload)
-                                                                     async_mqtt::qos::at_least_once},  // QoS1：至少一次，broker 需回 PUBACK
-                                                             boost::asio::use_awaitable);  // 以 awaitable 形式等待发送完成
-                                                 },  // 工厂 lambda 结束
-                                                 false);  // 发送超时不关闭整条连接，交由下一次操作自行恢复
+            // 发送：as_tuple，失败只记日志，绝不抛异常（见文件头关于"异常展开会崩"的说明）
+            auto [publish_ec, publish_result] = co_await client->async_publish(  // async_publish：发 PUBLISH，QoS1 等 PUBACK
+                    async_mqtt::v3_1_1::publish_packet{  // 手工构造 MQTT 3.1.1 的 PUBLISH 报文
+                            *packet_id,  // 报文标识符，用于与 PUBACK 匹配
+                            topic,  // 话题名
+                            message,  // 负载(payload)
+                            async_mqtt::qos::at_least_once},  // QoS1：至少一次
+                    boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
+            if (publish_ec) {  // 发送失败（链路断了/超时/未就绪）
+                SPDLOG_DEBUG("MQTT发送失败 topic={} code={} message={}",  // 高频发送用 DEBUG，避免刷屏
+                             topic, static_cast<long long>(publish_ec.value()), publish_ec.message());  // 错误码与文本
+            }  // if 结束
         } catch (const boost::system::system_error &error) {  // 捕获超时/网络错误
             // 发送失败仅记录，不向上抛，保证主循环稳定
             const auto error_code = static_cast<long long>(error.code().value());  // 错误码数值
@@ -280,7 +217,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                     connection_state.store(ConnectionState::Idle, std::memory_order_release);  // 对外表现为空闲
                     SPDLOG_WARN("MQTT服务端地址为空，等待后重试");  // 提示配置缺失
                     boost::asio::steady_timer timer(executor, std::chrono::milliseconds(100));  // 100ms 轮询间隔，避免忙等占满 CPU
-                    co_await timer.async_wait(boost::asio::use_awaitable);  // 挂起协程，让出 IO 线程
+                    co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // 挂起协程让出 IO 线程；不抛异常
                     continue;  // 回到 while 顶部重新取配置
                 }  // if 结束
 
@@ -306,7 +243,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                     connection_state.store(ConnectionState::Idle, std::memory_order_release);  // 对外为空闲
                     SPDLOG_DEBUG("MQTT尚未设置客户端ID，等待后重试 peer={}", peer);  // DEBUG 级别：这是常见的等待状态
                     boost::asio::steady_timer timer(executor, std::chrono::milliseconds(100));  // 同样 100ms 轮询
-                    co_await timer.async_wait(boost::asio::use_awaitable);  // 让出 IO 线程
+                    co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // 让出 IO 线程；不抛异常
                     continue;  // 重新开始一轮
                 }  // if 结束
                 if (connection_state.load(std::memory_order_acquire) != ConnectionState::Failed) {  // Failed 是对外暴露的"上次失败"提示，不要立刻覆盖
@@ -322,41 +259,52 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
 
                 // 底层网络协议握手
                 SPDLOG_INFO("MQTT开始底层网络协议握手 peer={} client_id={}", peer, client_id_cloned);  // 握手=建立 TCP 连接(非 TLS 时)
-                co_await RunMqttOperationWithTimeout(*client,  // 目标客户端
-                                                     peer,  // 对端地址
-                                                     "underlying_handshake",  // 操作名
-                                                     [&]() -> boost::asio::awaitable<void> {  // 工厂：返回握手协程
-                                                         co_await client->async_underlying_handshake(host_ip_cloned, port_cloned, boost::asio::use_awaitable);  // 按 host/port 建立底层传输连接
-                                                     });  // 超过 5s 未完成会抛 timed_out
+                auto [handshake_ec] = co_await client->async_underlying_handshake(  // 按 host/port 建立底层 TCP 连接
+                        host_ip_cloned, port_cloned,  // 目标地址
+                        boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常，失败返回错误码
+                if (handshake_ec) {  // 连接失败：拒绝/不可达/超时
+                    SPDLOG_WARN("MQTT底层握手失败 peer={} code={} message={}",  // 记录失败原因
+                                peer, static_cast<long long>(handshake_ec.value()), handshake_ec.message());  // 错误码与文本
+                    if (is_running.load(std::memory_order_relaxed)) {  // 非 stop() 触发
+                        connection_state.store(ConnectionState::Failed, std::memory_order_release);  // 对外显示"连接失败"
+                    }  // if 结束
+                    need_reconnect = true;  // 走退避重连
+                    continue;  // 本轮作废
+                }  // if 结束
                 SPDLOG_INFO("MQTT底层网络协议握手成功 peer={} client_id={}", peer, client_id_cloned);  // TCP 已连通
 
                 // 检查在握手过程中是否已经更新了客户端ID
                 if (is_client_id_updated.load(std::memory_order_relaxed) || is_endpoint_updated()) {  // 握手期间参数被改
                     SPDLOG_INFO("MQTT握手完成后检测到参数变更，关闭当前连接 peer={}", peer);  // 说明需要立刻重建
-                    co_await client->async_close(boost::asio::use_awaitable);  // 只关了 TCP，未发 DISCONNECT(此时还没 CONNECT)
+                    co_await client->async_close(boost::asio::as_tuple(boost::asio::use_awaitable));  // 只关了 TCP，未发 DISCONNECT(此时还没 CONNECT)；不抛异常
                     continue;  // 重新开始
                 }  // if 结束
 
                 // 发送连接请求并接收回复
                 SPDLOG_INFO("MQTT开始连接 peer={} client_id={}", peer, client_id_cloned);  // 发送 CONNECT 并等 CONNACK
-                co_await RunMqttOperationWithTimeout(*client,  // 目标客户端
-                                                     peer,  // 对端地址
-                                                     "connect",  // 操作名
-                                                     [&]() -> boost::asio::awaitable<void> {  // 工厂：返回 connect 协程
-                                                                 co_await client->async_start(  // async_start：发送 CONNECT 报文并等待 CONNACK
-                                                                         async_mqtt::v3_1_1::connect_packet{  // 构造 MQTT 3.1.1 CONNECT 报文
-                                                                                 true, // clean_session=true：断开后 broker 不保留本会话的订阅与未确认报文，重连即全新会话
-                                                                                 mqtt_keep_alive_seconds,  // keep-alive 秒数，broker 据此判定超时
-                                                                                 std::move(client_id_cloned)},  // 客户端 ID：move 进报文，避免大字符串拷贝
-                                                                 boost::asio::use_awaitable);  // 以 awaitable 等待 CONNACK
-                                                     });  // 超时/拒绝都会抛出
+                auto [start_ec, connack_opt] = co_await client->async_start(  // 发送 CONNECT 并等待 CONNACK
+                        async_mqtt::v3_1_1::connect_packet{  // 构造 MQTT 3.1.1 CONNECT 报文
+                                true, // clean_session=true：断开后 broker 不保留订阅与未确认报文，重连即全新会话
+                                mqtt_keep_alive_seconds,  // keep-alive 秒数，broker 据此判定超时
+                                std::move(client_id_cloned)},  // 客户端 ID：move 进报文，避免大字符串拷贝
+                        boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常，失败返回错误码
+                if (start_ec) {  // 连接被拒绝/超时
+                    SPDLOG_WARN("MQTT连接失败 peer={} code={} message={}",  // 记录原因（凭据错、broker 拒绝等）
+                                peer, static_cast<long long>(start_ec.value()), start_ec.message());  // 错误码与文本
+                    if (is_running.load(std::memory_order_relaxed)) {  // 非 stop 触发
+                        connection_state.store(ConnectionState::Failed, std::memory_order_release);  // 对外显示失败
+                    }  // if 结束
+                    need_reconnect = true;  // 退避重连
+                    continue;  // 本轮作废
+                }  // if 结束
                 SPDLOG_INFO("MQTT连接成功 peer={}", peer);  // CONNACK 返回成功
 
                 // 检查在连接过程中是否已经更新了客户端ID
                 if (is_client_id_updated.load(std::memory_order_relaxed) || is_endpoint_updated()) {  // 连接期间参数被改
                     SPDLOG_INFO("MQTT连接后检测到参数变更，主动断开 peer={}", peer);  // 已建会话，需先 DISCONNECT 再 close
-                    co_await client->async_disconnect(async_mqtt::v3_1_1::disconnect_packet{}, boost::asio::use_awaitable);  // 发送 DISCONNECT，正常结束会话
-                    co_await client->async_close(boost::asio::use_awaitable);  // 关闭底层 socket
+                    co_await client->async_disconnect(async_mqtt::v3_1_1::disconnect_packet{},  // 发送 DISCONNECT
+                                                      boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
+                    co_await client->async_close(boost::asio::as_tuple(boost::asio::use_awaitable));  // 关闭底层 socket，不抛异常
                     continue;  // 回到顶部重建
                 }  // if 结束
 
@@ -384,23 +332,31 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                         {"CustomByteBlock", async_mqtt::qos::at_most_once},                 // 自定义字节块（自定义客户端收发通道）
                         {"TechCoreMotionStateSync", async_mqtt::qos::at_most_once},         // 技术核心运动状态同步
                         {"RobotPerformanceSelectionSync", async_mqtt::qos::at_most_once},   // 机器人性能方案选择同步
-                        {"DeployModeStatusSync", async_mqtt::qos::at_most_once},            // 部署模式状态同步
                         {"RuneStatusSync", async_mqtt::qos::at_most_once},                  // 神符状态同步
                         {"SentryStatusSync", async_mqtt::qos::at_most_once},                // 哨兵机器人状态同步
                         {"DartSelectTargetStatusSync", async_mqtt::qos::at_most_once},      // 飞镖选择目标状态同步
-                        {"SentryCtrlResult", async_mqtt::qos::at_most_once},                // 哨兵控制结果反馈
-                        {"AirSupportStatusSync", async_mqtt::qos::at_most_once}};           // 空中支援状态同步
-                co_await RunMqttOperationWithTimeout(*client,  // 目标客户端
-                                                     peer,  // 对端地址
-                                                     "subscribe",  // 操作名
-                                                     [&]() -> boost::asio::awaitable<void> {  // 工厂：返回 subscribe 协程
-                                                                 co_await client->async_subscribe(  // async_subscribe：发送 SUBSCRIBE 并等待 SUBACK
-                                                                         async_mqtt::v3_1_1::subscribe_packet{  // 构造 SUBSCRIBE 报文
-                                                                                 *client->acquire_unique_packet_id(), // 申请唯一 packet_id 用于匹配 SUBACK
-                                                                                 async_mqtt::force_move(sub_entry)}, // force_move 把订阅表移入报文，避免一次大向量拷贝
-                                                                 boost::asio::use_awaitable);  // 以 awaitable 等待 SUBACK
-                                                     });  // 超时则抛 timed_out 并关闭连接重连
-                SPDLOG_INFO("MQTT话题订阅成功 peer={} topic_count={}", peer, 25);  // 25 与上面订阅项数量一致
+                        {"SentryCtrlResult", async_mqtt::qos::at_most_once}};               // 哨兵控制结果反馈（2027 删除部署/空中支援后，本项为列表末项）
+                const auto subscribe_packet_id = client->acquire_unique_packet_id();  // 申请唯一 packet_id 用于匹配 SUBACK
+                if (!subscribe_packet_id.has_value()) {  // 会话未就绪时拿不到 ID
+                    SPDLOG_WARN("MQTT订阅失败：无可用报文ID peer={}", peer);  // 记录原因
+                    need_reconnect = true;  // 重连重建会话
+                    continue;  // 本轮作废
+                }  // if 结束
+                auto [subscribe_ec, suback_opt] = co_await client->async_subscribe(  // 发送 SUBSCRIBE 并等待 SUBACK
+                        async_mqtt::v3_1_1::subscribe_packet{  // 构造 SUBSCRIBE 报文
+                                *subscribe_packet_id,  // 报文标识符
+                                async_mqtt::force_move(sub_entry)},  // force_move 把订阅表移入报文，避免一次大向量拷贝
+                        boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常，失败返回错误码
+                if (subscribe_ec) {  // 订阅失败
+                    SPDLOG_WARN("MQTT订阅失败 peer={} code={} message={}",  // 记录原因
+                                peer, static_cast<long long>(subscribe_ec.value()), subscribe_ec.message());  // 错误码与文本
+                    if (is_running.load(std::memory_order_relaxed)) {  // 非 stop 触发
+                        connection_state.store(ConnectionState::Failed, std::memory_order_release);  // 对外显示失败
+                    }  // if 结束
+                    need_reconnect = true;  // 退避重连
+                    continue;  // 本轮作废
+                }  // if 结束
+                SPDLOG_INFO("MQTT话题订阅成功 peer={} topic_count={}", peer, 23);  // 23 与上面订阅项数量一致（2027 下行话题总数）
                 // 订阅完成即视为已连接，唤醒业务层上行发布
                 connection_state.store(ConnectionState::Connected, std::memory_order_release);  // publish() 只在此状态之后才真正发送
 
@@ -408,8 +364,9 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                 if (is_client_id_updated.load(std::memory_order_relaxed) || is_endpoint_updated()) {  // 订阅期间参数被改
                     connection_state.store(ConnectionState::Connecting, std::memory_order_release);  // 先退回"连接中"，避免对外短暂显示可用
                     SPDLOG_INFO("MQTT订阅后检测到参数变更，主动断开 peer={}", peer);  // 记录触发重连的原因
-                    co_await client->async_disconnect(async_mqtt::v3_1_1::disconnect_packet{}, boost::asio::use_awaitable);  // 正常结束会话
-                    co_await client->async_close(boost::asio::use_awaitable);  // 关闭 socket
+                    co_await client->async_disconnect(async_mqtt::v3_1_1::disconnect_packet{},  // 正常结束会话
+                                                      boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
+                    co_await client->async_close(boost::asio::as_tuple(boost::asio::use_awaitable));  // 关闭 socket，不抛异常
                     continue;  // 回到顶部
                 }  // if 结束
 
@@ -418,7 +375,33 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                 while (is_running.load(std::memory_order_relaxed)  // 未收到 stop
                        && !is_client_id_updated.load(std::memory_order_relaxed)  // client_id 未被修改
                        && !is_endpoint_updated()) {  // endpoint 未被修改
-                    if (std::optional<async_mqtt::packet_variant> pv_opt = co_await client->async_recv(boost::asio::use_awaitable)) {  // async_recv：等下一个报文，返回 variant 的可选项
+                    // 关键：这里用 as_tuple 而不是 use_awaitable。
+                    // 链路断开时 use_awaitable 会抛 boost::system::system_error，
+                    // 而实测"抛异常 + 栈展开"这条路径在 Windows 上会触发访问冲突（0xC0000005，
+                    // 崩溃栈落在 _CxxFrameHandler3 / is_exception_typeof / RtlCaptureContext2，即异常展开阶段）。
+                    // 改成 as_tuple 后错误码直接作为返回值，全程不产生异常，断线可以平滑走到重连。
+                    auto [recv_ec, pv_opt] = co_await client->async_recv(  // async_recv：等下一个报文
+                            boost::asio::as_tuple(boost::asio::use_awaitable));  // as_tuple：出错不抛异常，返回 error_code
+                    if (recv_ec) {  // 收包失败：对端关闭 / 连接被复位 / 心跳超时
+                        SPDLOG_WARN("MQTT收包中断 peer={} code={} message={}",  // 记录原因，便于区分"网络断"与"服务端主动踢"
+                                    peer,  // 对端地址
+                                    static_cast<long long>(recv_ec.value()),  // 错误码
+                                    recv_ec.message());  // 错误文本
+                        if (is_running.load(std::memory_order_relaxed)) {  // 非 stop() 触发的取消
+                            connection_state.store(ConnectionState::Failed, std::memory_order_release);  // 对外显示"连接失败"
+                        }  // if 结束
+                        need_reconnect = true;  // 交给下面的退避重连
+                        break;  // 退出收包循环
+                    }  // if 结束
+                    if (!pv_opt.has_value()) {  // 没有错误码但没有报文：对端已正常关闭连接
+                        SPDLOG_INFO("MQTT连接已被对端关闭 peer={}", peer);  // 记录一次
+                        if (is_running.load(std::memory_order_relaxed)) {  // 同样只在非 stop 时标失败
+                            connection_state.store(ConnectionState::Failed, std::memory_order_release);  // 对外显示"连接失败"
+                        }  // if 结束
+                        need_reconnect = true;  // 触发重连
+                        break;  // 退出收包循环
+                    }  // if 结束
+                    {  // 有报文才分发（花括号避免与上方变量作用域混淆）
                         // 对收到的报文按类型分发处理
                         pv_opt->visit(  // visit：按 variant 的实际类型分发到下面某个 lambda
                                 async_mqtt::overload{  // overload：把多个 lambda 合成一个可按类型重载的访问器
@@ -443,16 +426,27 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                                             // 其它非业务类型报文（如 PINGRESP）仅追踪
                                             SPDLOG_TRACE("收到非业务MQTT数据包 peer={}", peer);  // TRACE 级别：正常情况下不输出
                                         }});  // visit 调用结束
-                    }  // if 结束(无报文时继续循环等待)
+                    }  // 报文分发作用域结束
                 }  // 收包 while 结束
 
-                // 发送断开连接请求
+                // 发送断开连接请求（同样用 as_tuple：断线后 DISCONNECT 必然失败，不能让异常再走展开路径）
                 SPDLOG_INFO("MQTT开始主动断开连接 peer={}", peer);  // 走到这里说明需要停/重建连接
-                co_await client->async_disconnect(async_mqtt::v3_1_1::disconnect_packet{}, boost::asio::use_awaitable);  // 发送 DISCONNECT，礼貌结束会话
-                SPDLOG_INFO("MQTT断开连接成功 peer={}", peer);  // broker 已收到断开通知
+                {
+                    auto [disconnect_ec] = co_await client->async_disconnect(  // 发送 DISCONNECT，礼貌结束会话
+                            async_mqtt::v3_1_1::disconnect_packet{},  // 断开报文
+                            boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
+                    if (disconnect_ec) {  // 对端已断开时这里几乎必然失败，属正常现象
+                        SPDLOG_DEBUG("MQTT发送DISCONNECT失败(通常对端已断开) peer={} code={}",  // 仅 DEBUG
+                                     peer, static_cast<long long>(disconnect_ec.value()));  // 错误码
+                    } else {  // 正常发出
+                        SPDLOG_INFO("MQTT断开连接成功 peer={}", peer);  // broker 已收到断开通知
+                    }  // if-else 结束
+                }
 
-                // 关闭底层socket，确保状态重置
-                co_await client->async_close(boost::asio::use_awaitable);  // 释放文件描述符，避免句柄泄漏
+                // 关闭底层socket，确保状态重置。
+                // async_close 的完成签名没有 error_code（as_tuple 得到空 tuple），因此这里不取返回值；
+                // 关闭失败也不会抛异常，异常路径彻底绕开。
+                co_await client->async_close(boost::asio::as_tuple(boost::asio::use_awaitable));  // 释放文件描述符，避免句柄泄漏
 
             } catch (const boost::system::system_error &error) {  // 网络/协议层异常(含超时 timed_out)
                 // 网络/协议层异常：记录并将状态置 Failed，准备重连

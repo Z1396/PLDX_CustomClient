@@ -27,7 +27,28 @@ constexpr ImU32 kMapMarkerBorderColor = IM_COL32(255, 176, 64, 235);   // 标记
 constexpr ImU32 kUnitCoreColor = IM_COL32(26, 28, 34, 255);   // 单位内芯色（深色实心圆，与外圈组成圆环效果）
 constexpr ImU32 kUnitTextColor = IM_COL32(255, 255, 255, 255);   // 单位编号文字色（白色）
 constexpr ImU32 kHighlightColor = IM_COL32(255, 215, 0, 255);  // 高亮（被锁定）标识色
-constexpr ImU32 kPathColor = IM_COL32(255, 153, 51, 220);  // 哨兵路径色
+
+// 标记点相关配色：琥珀色与"标记模式"边框同色，视觉上属于同一套语义。
+// 标记点本体带渐隐，alpha 是动态的，所以颜色在绘制处用 IM_COL32 现算，这里只放固定色的元素。
+constexpr ImU32 kMarkerPinTextColor = IM_COL32(255, 232, 190, 255);   // 标记点坐标文字色
+constexpr ImU32 kMarkerHintBackground = IM_COL32(38, 28, 10, 210);   // 标记模式提示条底色（深琥珀）
+constexpr ImU32 kMarkerHintTextColor = IM_COL32(255, 206, 128, 255);   // 标记模式提示条文字色
+constexpr ImU32 kMarkerCrosshairColor = IM_COL32(255, 196, 96, 190);   // 标记模式下鼠标准星色
+
+// 标记点保留时长与淡出时长：下发后留在地图上 8 秒，最后 2 秒渐隐，避免"点完就什么都不剩"。
+constexpr auto kMarkerVisibleDuration = std::chrono::seconds(8);
+constexpr auto kMarkerFadeDuration = std::chrono::seconds(2);
+
+// 最近一次本地下发的标记点。放在小地图内部而不是放进 State：
+// 它是纯 UI 反馈（"我刚才点的那一下发到哪了"），不参与任何业务判断，也不该被网络线程影响。
+struct LocalMapMarker {
+    bool valid = false;                                   // 是否有点过标记
+    float map_x = 0.0f;                                   // 地图坐标 X（0~kMapWidth）
+    float map_y = 0.0f;                                   // 地图坐标 Y（0~kMapHeight）
+    std::chrono::steady_clock::time_point send_time{};     // 下发时刻（用于计时淡出）
+};   // LocalMapMarker 定义结束
+
+LocalMapMarker g_local_map_marker;   // 全局唯一实例：本地最近一次标记点
 
 // 功能：返回地图内边框颜色，未识别阵营时给中性灰。
 ImU32 GetMapInnerBorderColor(bool team_known, bool is_red_team) {
@@ -134,13 +155,16 @@ void ShowMiniMap(const State &state,
     if (team_known && state.radar_info_to_client.has_value()) {
         const auto &radar_info = *state.radar_info_to_client;   // 取雷达信息的常量引用，避免多次拷贝
 
-        // robots_info 按顺序：对方 1,2,3,4,6,7 号 (索引 0-5)，己方 1,2,3,4,6,7 号 (索引 6-11)
-        // 如果己方是红方，则对方是蓝方(100+)，如果己方是蓝方，则对方是红方(1-99)
-        const std::array<uint32_t, 12> robot_ids = is_red_team
-            ? std::array<uint32_t, 12>{101, 102, 103, 104, 106, 107, 1, 2, 3, 4, 6, 7}  // 红方视角：对方蓝方在前，己方红方在后
-            : std::array<uint32_t, 12>{1, 2, 3, 4, 6, 7, 101, 102, 103, 104, 106, 107}; // 蓝方视角：对方红方在前，己方蓝方在后
+        // 2027：robots_info 顺序为「对方 1,3,4,7 号 + 己方 1,3,4,7 号」共 8 项；
+        // 兼容旧协议 12 项（对方 1,2,3,4,6,7 + 己方 1,2,3,4,6,7）。
+        const bool radar_has_12 = radar_info.robots_info_size() >= 12;
+        const std::vector<uint32_t> robot_ids = radar_has_12
+            ? (is_red_team ? std::vector<uint32_t>{101,102,103,104,106,107,1,2,3,4,6,7}
+                           : std::vector<uint32_t>{1,2,3,4,6,7,101,102,103,104,106,107})
+            : (is_red_team ? std::vector<uint32_t>{101,103,104,107,1,3,4,7}
+                           : std::vector<uint32_t>{1,3,4,7,101,103,104,107});
 
-        for (int i = 0; i < radar_info.robots_info_size(); ++i) {   // 遍历雷达上报的每个机器人槽位（数量应为 12）
+        for (int i = 0; i < radar_info.robots_info_size() && i < static_cast<int>(robot_ids.size()); ++i) {   // 遍历雷达槽位，按映射表长度防越界
             const auto &robot_info = radar_info.robots_info(i);  // 第 i 个机器人雷达信息
             uint32_t robot_id = robot_ids[i];  // 映射到实际 robot_id
 
@@ -176,29 +200,73 @@ void ShowMiniMap(const State &state,
         }   // 结束单个单位绘制循环
     }   // 结束单位位置绘制（需阵营已知且有雷达数据）
 
-    // 绘制哨兵路径
-    if (state.robot_path_plan_info.has_value()) {
-        auto current_x = static_cast<float>(state.robot_path_plan_info->start_pos_x());  // 路径起点 X
-        auto current_y = static_cast<float>(state.robot_path_plan_info->start_pos_y());  // 路径起点 Y
-        float next_x;                                                 // 下一点 X（由起点累加偏移）
-        float next_y;                                                 // 下一点 Y（由起点累加偏移）
-        int point_count = std::min(state.robot_path_plan_info->offset_x_size(),   // 路径由起点+若干相对偏移组成，取两组偏移的较小长度防越界
-                                   state.robot_path_plan_info->offset_y_size());  // 取两组偏移中较小者，避免越界
-        for (int i = 0; i < point_count; i++) {   // 逐段遍历路径偏移点
-            next_x = current_x + static_cast<float>(state.robot_path_plan_info->offset_x(i));  // 累加偏移得到下一点
-            next_y = current_y + static_cast<float>(state.robot_path_plan_info->offset_y(i));   // 下一点 Y = 当前点 Y + 本段 y 偏移（相对路径累加）
+    // 【2027 调整】哨兵轨迹（2.2.16 RobotPathPlanInfo）不再画在地图上：
+    // 这条线是服务器下发的规划路线，形状完全由数据决定，画在 200px 的小图上既容易和标记点混淆，
+    // 对实际操作也没帮助。数据仍照常解析进 state，需要时随时可以恢复绘制。
+    // 地图上只保留"我标的点"这一个视觉元素。
 
-            float x1 = map_min.x + current_x / kMapWidth * map_content_width;  // 当前点屏幕坐标
-            float y1 = map_min.y + current_y / kMapHeight * map_content_height;   // 当前点屏幕 Y：地图坐标按内容区高度线性映射
-            float x2 = map_min.x + next_x / kMapWidth * map_content_width;  // 下一点屏幕坐标
-            float y2 = map_min.y + next_y / kMapHeight * map_content_height;   // 下一点屏幕 Y：同样按内容区高度映射
+    // ---- 标记点可视化：把"刚才那一击发到哪了"直接画在地图上 ----
+    // 之前这里只有网络发送、没有任何绘制，操作手点完地图看到的是"什么都没发生"，因此误以为打点功能坏了。
+    if (g_local_map_marker.valid) {   // 本地记录过标记点才有东西可画
+        const auto marker_age = std::chrono::steady_clock::now() - g_local_map_marker.send_time;   // 距下发已过去的时间
+        if (marker_age > kMarkerVisibleDuration) {   // 超过保留时长就不再画
+            g_local_map_marker.valid = false;   // 顺手复位，避免每帧重复判断
+        } else {   // 处于保留期内
+            float alpha = 1.0f;   // 不透明度（1=完全实体）
+            if (marker_age > kMarkerVisibleDuration - kMarkerFadeDuration) {   // 进入最后 2 秒的淡出区间
+                const auto elapsed_in_fade = marker_age - (kMarkerVisibleDuration - kMarkerFadeDuration);   // 已经淡出的时长
+                alpha = 1.0f - static_cast<float>(elapsed_in_fade.count()) / static_cast<float>(kMarkerFadeDuration.count());   // 线性渐隐
+                alpha = std::clamp(alpha, 0.0f, 1.0f);   // 夹紧到 [0,1]，防浮点误差越界
+            }   // 结束淡出判断
+            const int pin_alpha = static_cast<int>(alpha * 255.0f);   // 换算成 0~255 的 alpha
+            const float pin_x = map_min.x + g_local_map_marker.map_x / kMapWidth * map_content_width;   // 地图坐标 -> 屏幕 X
+            const float pin_y = map_min.y + g_local_map_marker.map_y / kMapHeight * map_content_height;   // 地图坐标 -> 屏幕 Y
+            const ImVec2 pin_center(pin_x, pin_y);   // 标记点圆心
+            // 标记点要"小到不挡地形"：地图本身只有 200 多像素高，半径 6px×缩放 画出来比一个单位图标还大，
+            // 会盖住半个通道。这里收到 2.5px（≈单位图标 1/4），靠"亮点 + 细准线"表达位置而不是靠面积。
+            const float pin_radius = 2.5f * scale;   // 标记点半径（随缩放）
 
-            draw_list->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), kPathColor, 2.0f * scale);  // 逐段连线绘制路径
+            draw_list->AddCircleFilled(pin_center, pin_radius + 2.0f * scale, IM_COL32(255, 176, 64, pin_alpha / 5));   // 极淡光晕，只为在小图上"跳"出来
+            draw_list->AddCircleFilled(pin_center, pin_radius, IM_COL32(255, 176, 64, pin_alpha));   // 实心点
+            draw_list->AddCircle(pin_center, pin_radius + 1.5f * scale, IM_COL32(255, 214, 130, pin_alpha), 0, 1.0f * scale);   // 浅色外圈
+            draw_list->AddLine(ImVec2(pin_x - 6.0f * scale, pin_y), ImVec2(pin_x + 6.0f * scale, pin_y), IM_COL32(255, 214, 130, pin_alpha), 1.0f * scale);   // 水平准线
+            draw_list->AddLine(ImVec2(pin_x, pin_y - 6.0f * scale), ImVec2(pin_x, pin_y + 6.0f * scale), IM_COL32(255, 214, 130, pin_alpha), 1.0f * scale);   // 垂直准线
 
-            current_x = next_x;  // 推进到下一节点
-            current_y = next_y;   // 当前点推进到下一点，作为下一段的起点
-        }   // 结束路径分段循环
-    }   // 结束哨兵路径绘制
+            ImFormatStringToTempBuffer(&text_begin, &text_end, "标记 %d,%d",
+                                       static_cast<int>(g_local_map_marker.map_x),   // 取整显示，地图坐标精度到 cm 足够
+                                       static_cast<int>(g_local_map_marker.map_y));  // 同上
+            ImGui::PushFont(ImGui::GetFont(), 12);   // 坐标文字用 12px，和单位编号同一档，避免压住地形
+            const ImVec2 pin_text_size = ImGui::CalcTextSize(text_begin, text_end);   // 文字尺寸（用于防出界）
+            float pin_text_x = pin_x + 7.0f * scale;   // 默认画在标记点右侧
+            if (pin_text_x + pin_text_size.x > map_max.x) {   // 右侧放不下就翻到左侧
+                pin_text_x = pin_x - 7.0f * scale - pin_text_size.x;   // 左侧对齐
+            }   // 结束右侧越界判断
+            draw_list->AddText(ImVec2(pin_text_x, pin_y - pin_text_size.y * 0.5f), IM_COL32(255, 232, 190, pin_alpha), text_begin, text_end);   // 坐标文字
+            ImGui::PopFont();   // 恢复字号，避免影响后续文本绘制
+        }   // 结束保留期判断
+    }   // 结束标记点绘制
+
+    // ---- 标记模式提示 + 悬停准星：让"现在处于打点状态"这件事看得见 ----
+    if (marker_mode_active) {   // 仅标记模式需要提示
+        const float hint_height = ImGui::GetTextLineHeight() + 6.0f * scale;   // 提示条高度
+        draw_list->AddRectFilled(map_min, ImVec2(map_max.x, map_min.y + hint_height), kMarkerHintBackground);   // 顶部提示条底色
+        ImFormatStringToTempBuffer(&text_begin, &text_end, "标记模式：点击地图下发坐标，在面板点\"退出\"结束");   // 提示文案
+        const ImVec2 hint_size = ImGui::CalcTextSize(text_begin, text_end);   // 文案尺寸
+        draw_list->AddText(ImVec2(map_min.x + (window_size.x - hint_size.x) * 0.5f, map_min.y + 3.0f * scale),
+                           kMarkerHintTextColor, text_begin, text_end);   // 居中绘制提示
+    }   // 结束标记模式提示
+
+    if (marker_mode_active && ImGui::IsItemHovered()) {   // 标记模式下鼠标停在地图上：跟随画准星
+        const ImVec2 hover_pos = ImGui::GetIO().MousePos;   // 鼠标屏幕坐标
+        draw_list->AddLine(ImVec2(map_min.x, hover_pos.y), ImVec2(map_max.x, hover_pos.y), kMarkerCrosshairColor, 1.0f);   // 水平参考线
+        draw_list->AddLine(ImVec2(hover_pos.x, map_min.y), ImVec2(hover_pos.x, map_max.y), kMarkerCrosshairColor, 1.0f);   // 垂直参考线
+        const float hover_map_x = (hover_pos.x - map_min.x) / map_content_width * kMapWidth;   // 悬停处的实时地图 X
+        const float hover_map_y = (hover_pos.y - map_min.y) / map_content_height * kMapHeight;   // 悬停处的实时地图 Y
+        ImFormatStringToTempBuffer(&text_begin, &text_end, "%d,%d",
+                                   static_cast<int>(hover_map_x),   // 实时坐标 X（取整）
+                                   static_cast<int>(hover_map_y));  // 实时坐标 Y（取整）
+        draw_list->AddText(ImVec2(hover_pos.x + 8.0f * scale, hover_pos.y + 6.0f * scale), kMarkerPinTextColor, text_begin, text_end);   // 光标旁显示实时坐标
+    }   // 结束准星绘制
 
     // 处理标记模式下的点击事件
     if (is_marker_mode() && ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {  // 标记模式 + 悬停 + 左键
@@ -210,6 +278,12 @@ void ShowMiniMap(const State &state,
         float map_y = (mouse_pos.y - map_min.y) / map_content_height * kMapHeight;  // 屏幕 -> 地图 Y
 
         send_map_marker(mqtt_client, map_x, map_y);  // 经 MQTT 下发标记坐标
+
+        // 立刻记录本地标记点：发送成功与否由网络层记日志，这里负责"点完马上看得见"。
+        g_local_map_marker.valid = true;   // 置位：地图上出现标记点
+        g_local_map_marker.map_x = std::clamp(map_x, 0.0f, kMapWidth);   // 夹到地图范围内，防止拖到边框外坐标越界
+        g_local_map_marker.map_y = std::clamp(map_y, 0.0f, kMapHeight);  // 同上
+        g_local_map_marker.send_time = std::chrono::steady_clock::now();   // 记录下发时刻，用于 8 秒后自动淡出
     }   // 结束标记模式点击处理
 
     ImGui::End();   // 结束小地图窗口（与 Begin 配对）

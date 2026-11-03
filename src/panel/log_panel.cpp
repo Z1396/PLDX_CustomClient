@@ -29,7 +29,7 @@ struct CombinedLogLine {
 // 功能：合并本车日志与系统日志并按序号排序后滚动展示。详见头文件。
 // 思路：预留容量避免反复分配，按 sequence 升序合并，新日志到达时自动滚到底部。
 void ShowLogPanel(const State &state) {  // state：全局状态（含本车/系统日志）
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings;  // 无导航/无标题栏/不可拖动/透明背景/不保存布局，作为纯覆盖层
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;  // 无导航/无标题栏/不可拖动/透明背景/不保存布局，作为纯覆盖层
     if (!ImGui::Begin("LogPanel", nullptr, window_flags)) {  // 窗口创建失败则结束
         ImGui::End();  // 配对 End
         return;  // 不绘制
@@ -58,7 +58,11 @@ void ShowLogPanel(const State &state) {  // state：全局状态（含本车/系
         ImGui::PushTextWrapPos(0.0f);  // 开启自动换行（0 表示按内容区域宽度）
         for (const CombinedLogLine &line: combined_logs) {  // 逐行绘制合并日志
             const ImVec4 color = GetLogTextColor(*line.entry);  // 按类型取色
-            ImGui::TextColored(color, "[%s][%s] %s", line.entry->time, line.source, line.entry->text.c_str());  // 时间 + 来源 + 内容
+            if (line.entry->repeat_count > 1) {  // 被去重折叠过的行：补一个 "x N" 后缀，说明实际收到过 N 条
+                ImGui::TextColored(color, "[%s][%s] %s  x%u", line.entry->time, line.source, line.entry->text.c_str(), line.entry->repeat_count);  // 时间 + 来源 + 内容 + 重复次数
+            } else {  // 普通单条日志
+                ImGui::TextColored(color, "[%s][%s] %s", line.entry->time, line.source, line.entry->text.c_str());  // 时间 + 来源 + 内容
+            }  // 结束重复次数判断
         }  // 逐行绘制结束
         ImGui::PopTextWrapPos();  // 恢复换行设置
         if (newest_sequence != last_rendered_sequence) {  // 有新日志时才滚到底部
