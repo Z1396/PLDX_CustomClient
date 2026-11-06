@@ -3,6 +3,6 @@
 
 #include "main_window.h"  // 引入主窗口头文件（提供 State 类型与 ImGui/ImVec 等依赖）
 
-// 功能：在屏幕中心绘制十字准星，并环绕热量环实时反映枪管热量。
-// 思路：使用 ImDrawList 直接画线/圆弧，热量比例由动态/静态状态计算。
-void ShowCrosshair(const State &state);  // state：全局状态（含动态/静态机器人状态）
+// 功能：在屏幕中心绘制十字准星，并用官方分档的环形读条实时反映枪管热量（含数值）。
+// 思路：ImDrawList 直接画底环 + 从 12 点逆时针的填充弧；热量冷却时弧平滑倒退。
+void ShowCrosshair(const State &state);

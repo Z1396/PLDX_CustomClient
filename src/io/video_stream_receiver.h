@@ -60,6 +60,6 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         // 参数：无（使用类成员）。
         // 返回值：awaitable<void>，由 co_spawn(detached) 驱动，仅在 stop() 时返回。
         boost::asio::awaitable<void> receive_loop();  // 持续接收 UDP 包的主协程
-    };  // VideoStreamReceiver 类定义结束
+    };
 
-}// namespace RoboGo::io  // 网络 IO 命名空间结束
+}  // namespace RoboGo::io

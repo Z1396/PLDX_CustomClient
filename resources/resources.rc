@@ -1,4 +1,6 @@
 // RoboGo Resource File
+// 注意：llvm-rc 不支持 VERSIONINFO 字符串里的 UTF-8 中文（#pragma code_page(65001) 也无效），
+// 因此 exe 版本信息用 ASCII 队名；中文全称「PLDX 破浪笃行战队」写在 README 与项目文档中。
 #include "resources.h"   // 引入 IDI_APP_ICON 等资源 ID 定义
 
 // Icon resource
@@ -22,11 +24,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"   // 语言/代码页组合：0409(英语-美国) + 04b0(Unicode 代码页 1200)
         BEGIN
-            VALUE "CompanyName", "ACE"   // 公司/团队名称
+            VALUE "CompanyName", "PLDX PoLangDuXing Team"   // 公司/团队名称（ASCII 版，对应中文「PLDX 破浪笃行战队」）
             VALUE "FileDescription", "RoboGo - RoboMaster Control Software"   // 文件描述
             VALUE "FileVersion", "1.0.0.0"   // 文件版本字符串
             VALUE "InternalName", "RoboGo"   // 内部名称
-            VALUE "LegalCopyright", "Copyright (C) 2026 Yingjie Huang"   // 版权信息
+            VALUE "LegalCopyright", "Copyright (C) 2026 PLDX PoLangDuXing Team"   // 版权信息（ASCII 版）
             VALUE "OriginalFilename", "RoboGo.exe"   // 原始文件名
             VALUE "ProductName", "RoboGo"   // 产品名称
             VALUE "ProductVersion", "1.0.0.0"   // 产品版本字符串

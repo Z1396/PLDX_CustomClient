@@ -21,4 +21,8 @@ std::optional<DecodedImage> LoadEmbeddedImage(std::span<const uint8_t> encoded_b
 // 思路：内部读取 CMake 生成的内嵌数组并调用 LoadEmbeddedImage。
 std::optional<DecodedImage> LoadEmbeddedMapImage();
 
-}// namespace RoboGo::resource
+// 功能：加载内嵌的「地形分层叠加层」PNG（2027 场地高度掩膜上色版，地面透明）。
+// 说明：小地图底图上叠这一层就能区分高地/道路，按 M 键开关。
+std::optional<DecodedImage> LoadEmbeddedMapTerrainImage();
+
+}  // namespace RoboGo::resource

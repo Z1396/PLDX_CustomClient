@@ -12,6 +12,6 @@ constexpr std::uint32_t kNetworkCaptureFlagInvertUdpVideo = 1U << 0U;  // 1U 左
 // 思路：开启则置 bit0，否则为 0；供抓包文件头写入，复盘时据此还原处理选项。
 constexpr std::uint32_t BuildNetworkCaptureFlags(const bool invert_udp_video) {  // constexpr 允许编译期求值，无运行时开销
     return invert_udp_video ? kNetworkCaptureFlagInvertUdpVideo : 0U;  // 三元运算：true→置 bit0，false→全 0 标志字
-}  // BuildNetworkCaptureFlags 函数体结束
+}
 
-}// namespace RoboGo::logging
+}  // namespace RoboGo::logging

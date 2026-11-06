@@ -6,15 +6,16 @@
 #elif defined(__GNUC__)  // GCC 分支：同样的告警抑制
 #pragma GCC diagnostic push  // 保存当前告警状态
 #pragma GCC diagnostic ignored "-Wunused-function"  // 屏蔽未使用函数告警
-#endif  // 结束编译器条件编译
+#endif
 #include <pch.h>   // 引入预编译头：集中包含 STL、spdlog、imgui、stb 等公共依赖
 #if defined(__clang__)  // Clang 分支：还原告警状态
 #pragma clang diagnostic pop  // 恢复之前保存的告警设置
 #elif defined(__GNUC__)  // GCC 分支：还原告警状态
 #pragma GCC diagnostic pop  // 恢复之前保存的告警设置
-#endif  // 结束编译器条件编译
+#endif
 #include "resource/resources.h"   // 引入本模块头文件：DecodedImage 结构与加载函数声明
 #include "embedded_map_png.h"      // 引入 CMake 生成的头文件：内嵌小地图 PNG 字节数组与其长度
+#include "embedded_map_terrain_png.h"  // 内嵌地形分层叠加层 PNG（带 alpha）
 
 namespace RoboGo::resource {   // 进入资源命名空间，集中管理内嵌资源的加载逻辑
 
@@ -29,7 +30,7 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     if (encoded_bytes.empty()) {   // 防御性校验：传入字节为空无法解码
         SPDLOG_ERROR("{}解码失败 reason=empty resource bytes", display_name);   // 记录错误日志
         return std::nullopt;   // 返回空可选值表示解码失败
-    }  // 结束空数据校验分支
+    }
 
     int width = 0;       // 解码后的图像宽度
     int height = 0;      // 解码后的图像高度
@@ -47,7 +48,7 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
         const char *failure_reason = stbi_failure_reason();   // 获取 stb 内部失败原因字符串
         SPDLOG_ERROR("{}解码失败 reason={}", display_name, failure_reason != nullptr ? failure_reason : "unknown");   // 记录失败原因(空则标记 unknown)
         return std::nullopt;   // 返回空可选值
-    }  // 结束解码失败分支
+    }
 
     DecodedImage image;   // 构造返回用的图像结构
     image.width = width;  // 赋值解码后的图像宽度
@@ -58,7 +59,7 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
 
     SPDLOG_INFO("{}已解码 width={} height={} channels={}", display_name, width, height, channels_in_file);   // 输出解码成功信息，便于调试
     return image;   // 返回解码完成的图像
-}  // LoadEmbeddedImage 结束
+}
 
 // 功能：加载内嵌的小地图 PNG 图像。
 // 思路：把 CMake 生成的内嵌数组 embedded_map_png_data/len 包装为 span，转交给通用解码函数处理。
@@ -66,6 +67,14 @@ std::optional<DecodedImage> LoadEmbeddedMapImage() {  // 无参数：数据在�
     return LoadEmbeddedImage(  // 直接返回通用解码结果
             std::span<const uint8_t>(embedded_map_png_data, static_cast<std::size_t>(embedded_map_png_data_len)),   // 用内嵌字节数组与其长度构造只读 span
             "内嵌小地图");   // 指定资源显示名为"内嵌小地图"
-}  // LoadEmbeddedMapImage 结束
+}
 
-}// namespace RoboGo::resource
+// 功能：加载内嵌的地形分层叠加层（2027 高度掩膜上色版）。
+// 思路：与底图相同，只是换一份内嵌数组；图像本身带 alpha，地面区域完全透明。
+std::optional<DecodedImage> LoadEmbeddedMapTerrainImage() {
+    return LoadEmbeddedImage(
+            std::span<const uint8_t>(embedded_map_terrain_png_data, static_cast<std::size_t>(embedded_map_terrain_png_data_len)),
+            "内嵌地形分层");
+}
+
+}  // namespace RoboGo::resource

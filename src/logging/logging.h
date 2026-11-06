@@ -57,11 +57,20 @@ inline void log_network_payload(std::string_view transport,  // 同上：传输�
                                 std::string_view payload,  // 字符串载荷，内部按字节视图转发
                                 std::string_view peer = {}) {  // 同上：对端地址，缺省为空
     const auto *begin = reinterpret_cast<const uint8_t *>(payload.data());  // 把 char 指针重新解释为字节指针，仅改变内存解读方式、不拷贝数据
+    // clang 的 -Wunsafe-buffer-usage-in-container 无法跨调用证明「首指针 + 长度」同源；
+    // 这里 data()/size() 都来自同一个 string_view，边界必然匹配，因此只在本处局部抑制。
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsafe-buffer-usage-in-container"
+#endif
     log_network_payload(transport,  // 转发传输类型("mqtt"/"udp-video")
                         direction,  // 转发方向("rx"/"tx")
                         channel,  // 转发通道名(如 MQTT topic)
                         std::span<const uint8_t>(begin, payload.size()),  // 用首指针 + 字节数构造只读 span 视图
                         peer);  // 转发对端地址(默认空表示未知)
-}  // 便捷重载函数体结束
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+}
 
-}// namespace RoboGo::logging
+}  // namespace RoboGo::logging

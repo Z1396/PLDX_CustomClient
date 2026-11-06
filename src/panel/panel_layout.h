@@ -5,20 +5,30 @@
 
 namespace RoboGo::panel {  // 面板工具统一放在 RoboGo::panel 命名空间
 
-// 按钮配色与尺寸样式：常态/悬停/按下三色 + 内边距 + 圆角。
+// 按钮层级：一屏只保留一个 Primary（实心主操作），其余为 Secondary（幽灵按钮）。
+// Selected 用于队伍/机器人选中态（保留红蓝色相但降饱和），Danger 仅用于退出登录等破坏性操作。
+enum class ButtonVariant {
+    Secondary,
+    Selected,
+    Primary,
+    Danger,
+};
+
+// 按钮配色与尺寸样式：常态/悬停/按下三色 + 内边距 + 圆角 + 层级。
 struct ButtonStyle {
     ImVec4 button_color;                   // 常态背景色
     ImVec4 hovered_color;                  // 鼠标悬停时的背景色
     ImVec4 active_color;                   // 鼠标按下时的背景色
     ImVec2 padding = ImVec2(12.0f, 8.0f);  // 按钮内边距（横向、纵向）
-    float rounding = 6.0f;                 // 按钮圆角半径
-};  // ButtonStyle 定义结束
+    float rounding = 6.0f;                 // 按钮圆角半径（统一主题下由 kRadiusControl 接管）
+    ButtonVariant variant = ButtonVariant::Secondary;  // 层级；带默认值，旧常量的聚合初始化无需改动
+};
 
 // 一行中一个子面板的单元：是否可见 + 渲染回调（接收分配到的宽度）。
 struct PanelRowItem {
     bool visible = false;               // 是否参与排版：false 时该子面板不占宽度
     std::function<void(float)> render;  // 渲染回调，参数为分配到的宽度
-};  // PanelRowItem 定义结束
+};
 
 // RAII 风格的 ImGui 样式栈管理：析构时按计数统一 Pop，避免遗漏。
 class ScopedStyle {
@@ -46,7 +56,7 @@ private:  // 私有实现细节
 
     int color_count_ = 0; // 已压入的颜色数量，析构时按此计数 Pop
     int var_count_ = 0;   // 已压入的样式变量数量，析构时按此计数 Pop
-};  // ScopedStyle 定义结束
+};
 
 // RAII 风格的子窗口：构造 BeginChild，析构 EndChild。
 class ScopedChildWindow {
@@ -55,7 +65,7 @@ public:  // 公有接口
     ScopedChildWindow(const ScopedChildWindow &) = delete;  // 禁止拷贝：子窗口必须严格配对 Begin/End
     ScopedChildWindow &operator=(const ScopedChildWindow &) = delete;  // 禁止拷贝赋值，原因同上
     ~ScopedChildWindow();  // 析构即 EndChild，保证与构造配对
-};  // ScopedChildWindow 定义结束
+};
 
 // 带标题的命名子面板：构造时先绘制彩色标题，再开启子窗口。
 class ScopedTitledPanel {
@@ -64,7 +74,7 @@ public:  // 公有接口
 
 private:  // 私有成员
     ScopedChildWindow child_;  // 底层子窗口，生命周期与本节面板绑定（构造 BeginChild、析构 EndChild）
-};  // ScopedTitledPanel 定义结束
+};
 
 // 构造仅修改文字颜色的 ScopedStyle。
 ScopedStyle MakeTextColorStyle(const ImVec4 &color);
@@ -83,4 +93,11 @@ void DrawPanelTitle(const char *title, const ImVec4 &color);
 // 把若干可见子面板横向排成一行，并均分宽度（隐藏不可见项）。name 为子窗口标识，frame_row_count 控制行高。
 void ShowPanelRow(const char *name, float frame_row_count, std::initializer_list<PanelRowItem> panels);
 
-}// namespace RoboGo::panel
+// 估算一行（含 frame_row_count 个「行高+行间距」再加上一条分隔线）的像素高度。
+// 供 ShowPanelRow 等需要把"N 行内容塞进一个固定高子窗口"时使用，避免各处手算 GetFrameHeightWithSpacing 造成偏差。
+float EstimateRowHeight(float frame_row_count);
+
+// 取单行「行高+行间距」的像素高度（ImGui 当前字号/缩放下的标准控件行高）。
+float EstimateLineHeight();
+
+}  // namespace RoboGo::panel

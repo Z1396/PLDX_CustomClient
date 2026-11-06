@@ -12,4 +12,4 @@ void InitializeCommonImGui(float main_scale);
 // 功能：向 ImGui 字体图集加载内嵌的 ZCOOL 中文字体，并关闭自动保存的 ini/日志文件。
 void LoadEmbeddedImGuiFont();
 
-}// namespace RoboGo::app
+}  // namespace RoboGo::app

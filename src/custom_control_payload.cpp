@@ -18,8 +18,8 @@ std::array<uint8_t, kCustomControlPayloadSize> BuildCustomControlPayload(  // �
     for (size_t k = 0; k < kCustomControlRobotCount; k++) {  // 遍历 5 台机器人
         const uint16_t hp = enemy_health[k];  // 取出第 k 台机器人的血量
         data[k * 2]     = static_cast<uint8_t>(hp & 0xFF);       // 低字节放前面（小端）
-        data[k * 2 + 1] = static_cast<uint8_t>((hp >> 8) & 0xFF);// 高字节放后面
-    }  // 结束血量小端写入循环
+        data[k * 2 + 1] = static_cast<uint8_t>((hp >> 8) & 0xFF);  // 高字节放后面
+    }
 
     // 2027 协议删除空中支援后，原"呼叫标志"与"冷却计数"两字节改为保留位：固定写 0，偏移不变
     data[kCustomControlAirSupportCallOffset] = 0;  // 保留字节：固定 0，待与机器人端协商后再定义用途
@@ -28,7 +28,7 @@ std::array<uint8_t, kCustomControlPayloadSize> BuildCustomControlPayload(  // �
     data[kCustomControlDebugCounterOffset] = debug_counter;  // 逐帧自增，便于观察到丢失
 
     return data; // 返回组装完成的定长字节载荷
-}  // BuildCustomControlPayload 结束
+}
 
 // 功能：判断这一时刻该不该发布这条自定义控制载荷（用来控制MQTT发包频率）
 // 思路：节流逻辑，防止高频刷屏发包；
@@ -37,4 +37,4 @@ bool IsCustomControlPublishDue(std::optional<std::chrono::steady_clock::time_poi
                               std::chrono::steady_clock::time_point now) {  // 当前时刻
     // last_publish_time无值 = 从未发布，允许发；否则判断间隔是否达标
     return !last_publish_time.has_value() || now - *last_publish_time >= kCustomControlPublishInterval;  // 短路或：首次立即发，之后按间隔节流
-}  // 函数结束
+}

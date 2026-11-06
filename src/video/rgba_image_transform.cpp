@@ -13,7 +13,7 @@ bool ApplyRgba180Rotation(std::vector<uint8_t> &rgba, // 待原地翻转的 RGBA
     // 尺寸不可为负
     if (width < 0 || height < 0) { // 尺寸不可为负
         return false; // 参数非法，拒绝
-    } // 尺寸为负的非法情况处理结束
+    }
 
     const auto width_size = static_cast<std::size_t>(width); // 转无符号便于乘法与比较
     const auto height_size = static_cast<std::size_t>(height); // 转无符号便于乘法与比较
@@ -21,17 +21,17 @@ bool ApplyRgba180Rotation(std::vector<uint8_t> &rgba, // 待原地翻转的 RGBA
     // 防止 width*height 乘法溢出 size_t
     if (height_size != 0 && width_size > std::numeric_limits<std::size_t>::max() / height_size) { // 检测乘法溢出风险
         return false; // 溢出风险，拒绝
-    } // 宽高乘积溢出检测结束
+    }
     const std::size_t pixel_count = width_size * height_size; // 计算单帧总像素数
     // 防止像素数*通道数溢出，且缓冲长度必须与预期完全一致
     if (pixel_count > std::numeric_limits<std::size_t>::max() / channels // 像素总数乘 4 是否仍能放进 size_t
         || rgba.size() != pixel_count * channels) { // 防止像素*通道溢出且缓冲长度须精确匹配
         return false; // 像素数溢出或缓冲长度不符，拒绝
-    } // 字节总数与缓冲长度校验结束
+    }
     // 未启用或像素不足两个则无需处理，直接成功返回
     if (!enabled || pixel_count < 2) { // 未启用或像素不足两个则无需旋转
         return true; // 原样返回成功
-    } // 未启用旋转的快速返回分支结束
+    }
 
     // 双指针从两端向中间逼近，逐像素交换实现 180° 旋转
     for (std::size_t left = 0, right = pixel_count - 1; left < right; ++left, --right) { // 双指针从两端向中间逼近
@@ -41,6 +41,6 @@ bool ApplyRgba180Rotation(std::vector<uint8_t> &rgba, // 待原地翻转的 RGBA
         } // 四个通道交换完毕
     } // 双指针相遇，整图翻转完成
     return true; // 180° 旋转完成
-} // ApplyRgba180Rotation 函数体结束
+}
 
-}// namespace RoboGo::video // 结束视频模块命名空间
+}  // namespace RoboGo::video

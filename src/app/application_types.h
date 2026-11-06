@@ -11,20 +11,20 @@ struct VideoFrame {  // 视频帧结构：后台线程写入，经无锁队列�
     std::vector<uint8_t> buffer; // 连续的 RGBA 像素数据(宽*高*4 字节)
     int width = 0; // 帧宽度(像素)
     int height = 0; // 帧高度(像素)
-};  // VideoFrame 定义结束
+};
 
 // UI 日志消息：由后台线程产生、供界面日志面板显示、带类型标记的文本内容。
 struct UiLogMessage {  // 单条待显示的日志：从解码 worker 线程送到 UI 线程
     int type = 0; // 日志类型/级别(0 普通，1 警告，2 错误等，语义由调用方约定)
     std::string text; // 日志文本内容
-};  // UiLogMessage 定义结束
+};
 
 // 纹理槽位：标识不同用途的 GPU 纹理，供平台后端按槽上传与取用。
 enum class TextureSlot {  // 用 enum class 限定作用域，避免与其它枚举的枚举项重名
     UdpVideo,  // 来自 UDP 图传的视频纹理
-    CustomVideo,  // 来自自定义字节块解码的视频纹理
     MiniMap,  // 内嵌小地图背景纹理
-};  // TextureSlot 定义结束
+    MiniMapTerrain,  // 小地图地形分层叠加层（带 alpha，按 M 键开关）
+};
 
 // 纹理视图：封装某纹理槽对应的纹理句柄与尺寸，供渲染时引用。
 struct TextureView {  // 每帧从平台后端取出一次的快照，供绘制代码读取
@@ -36,8 +36,8 @@ struct TextureView {  // 每帧从平台后端取出一次的快照，供绘制�
         return texture_ref.GetTexID() != ImTextureID_Invalid // 句柄必须不是"无效纹理"这个哨兵值
                && size.x > 0.0f // 宽度必须为正，否则无法采样
                && size.y > 0.0f; // 高度必须为正，三者同时成立才算就绪
-    }  // IsReady 结束
-};  // TextureView 定义结束
+    }
+};
 
 // 启动选项：汇总命令行解析出的运行参数与解析后的网络端点。
 struct LaunchOptions {  // 原始字符串参数与解析结果并存，便于日志打印时对照排查
@@ -48,6 +48,7 @@ struct LaunchOptions {  // 原始字符串参数与解析结果并存，便于�
     int parsed_video_port = 0; // 解析出的 UDP 视频端口(整数)
     bool invert_udp_video = false; // 是否将 UDP 视频做 180 度旋转
     std::string capture_mode = "mqtt"; // 网络抓包档位(off/mqtt/all)，默认只抓 MQTT
-};  // LaunchOptions 定义结束
+    bool video_test = false; // 是否启用合成视频源(--video-test)：没有图传时可用来验证渲染/上传链路
+};
 
-}// namespace RoboGo::app  // 应用层命名空间结束
+}  // namespace RoboGo::app

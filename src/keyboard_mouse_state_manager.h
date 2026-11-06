@@ -76,6 +76,12 @@ void exit_commander_console();
 //       停在那一页只会多一次点击，所以一旦连上就直铺开指挥台；退出指挥台后不会被立刻拽回去。
 void maybe_auto_enter_commander_console(RoboGo::io::MqttClient &mqtt_client);
 
-// 功能：离开指挥台并退出登录（指挥手唯一的出口）。
-// 说明：指挥手没有"赛前指令页"，退出后停在那页只会让人再点一次，所以直接断开连接回登录面板重新选身份。
-void leave_commander_console(RoboGo::io::MqttClient &mqtt_client);
+// 功能：小地图/指挥台地图的「地形分层叠加」开关（M 键切换，默认开启）。
+// 说明：叠加层来自 2027 官方场地高度掩膜——橙=高于 0.22 m，蓝=0.15~0.22 m，地面透明。
+//       放在这里是因为 HUD 小地图和指挥台战术地图都要读同一个状态。
+bool is_terrain_overlay_enabled();
+void toggle_terrain_overlay();
+
+// 说明：原来的 leave_commander_console（退出指挥台并断开登录）已删除。
+//       指挥台的出口改成"返回"：只关界面、保留连接，回上一层继续点"进入比赛"；
+//       退出登录统一由开局面板「登录控制」里的按钮负责，避免两处语义不同的"退出"混在一起。

@@ -13,8 +13,10 @@ namespace RoboGo::video { // 进入视频模块命名空间
         AVCodecParserContext *av_parser_context = nullptr; // 码流解析器上下文，用于从原始流中切分出完整包
         AVPacket *packet = nullptr;                        // 复用的数据包缓存，避免每次解码都重新分配
         AVFrame *decoded_frame = nullptr;                  // 复用的解码帧缓存，接收解码器输出
+        AVFrame *transfer_frame = nullptr;                 // 硬解帧拷回系统内存用的中转帧（仅 D3D11VA 路径）
+        AVBufferRef *hw_device_context = nullptr;          // 硬件解码设备上下文（D3D11VA；nullptr 表示未启用）
         std::function<void(const AVFrame *frame)> frame_callback; // 每解出一帧 AVFrame 时回调通知上层
-        bool is_hardware_decoder_ = false; // 当前是否使用 Nvidia 硬解；发送失败时可回退软解
+        bool is_hardware_decoder_ = false; // 当前是否使用硬解（d3d11va/cuvid）；发送失败时可回退软解
         bool is_available_ = false; // 解码链路是否初始化成功；false 表示"图传不可用"但不影响其它界面
 
     public: // ---------- 公开接口 ----------
@@ -38,6 +40,6 @@ namespace RoboGo::video { // 进入视频模块命名空间
         void decode_frame(const std::vector<uint8_t> &frame); // 非 const：硬解失败时可能切换为软解
         // 功能：硬解发送失败时回退到软件 HEVC 解码器（内部使用）。
         bool ReinitializeWithSoftwareDecoder(); // 返回是否成功切换到软解
-    }; // 解码器类定义结束
+    };
 
-}// namespace RoboGo::video // 结束视频模块命名空间
+}  // namespace RoboGo::video

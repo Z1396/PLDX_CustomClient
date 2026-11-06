@@ -31,6 +31,6 @@ namespace RoboGo::video { // 进入视频模块命名空间
 
         // 功能：停止接收、置停止标志并等待解码线程退出，完成资源回收。
         void stop(); // 幂等停止：先停收包，再通知线程退出并 join
-    }; // 管理器类定义结束
+    };
 
-}// namespace RoboGo::video // 结束视频模块命名空间
+}  // namespace RoboGo::video

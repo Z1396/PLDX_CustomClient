@@ -51,7 +51,7 @@ public:  // 公开接口区：主程序仅通过这些虚函数与后端交互
 
     // 功能：从视频帧（VideoFrame）上传纹理到指定纹理槽。
     // 思路：纯虚函数，slot 指定用途（UDP 视频/自定义视频/小地图），frame 含像素缓冲与尺寸。
-    // 参数：slot —— 目标纹理槽（UdpVideo/CustomVideo/MiniMap）；frame —— 解码后的单帧像素数据（RGBA 缓冲+宽高）。
+    // 参数：slot —— 目标纹理槽（UdpVideo/MiniMap）；frame —— 解码后的单帧像素数据（RGBA 缓冲+宽高）。
     // 返回值：true 表示纹理上传成功并可被 GetTextureView 取用，false 表示失败（尺寸非法或后端资源不足）。
     [[nodiscard]] virtual bool UploadTexture(app::TextureSlot slot, const app::VideoFrame &frame) = 0;
 
@@ -63,7 +63,7 @@ public:  // 公开接口区：主程序仅通过这些虚函数与后端交互
 
     // 功能：获取指定纹理槽的纹理视图（供 ImGui 采样显示）。
     // 思路：纯虚函数，返回包含 GPU 句柄与尺寸的 TextureView。
-    // 参数：slot —— 目标纹理槽（UdpVideo/CustomVideo/MiniMap）。
+    // 参数：slot —— 目标纹理槽（UdpVideo/MiniMap）。
     // 返回值：TextureView（含纹理引用 ImTextureID 与像素尺寸）；若该槽尚无有效纹理则返回空视图。
     [[nodiscard]] virtual app::TextureView GetTextureView(app::TextureSlot slot) const = 0;
 };  // 结束 class PlatformBackend：纯接口，无数据成员，实现全部下放到具体平台后端
@@ -73,4 +73,4 @@ public:  // 公开接口区：主程序仅通过这些虚函数与后端交互
 // 返回值：指向具体后端实例的基类 unique_ptr；主程序仅依赖 PlatformBackend 接口，从而与平台解耦。
 std::unique_ptr<PlatformBackend> CreatePlatformBackend();
 
-}// namespace RoboGo::platform
+}  // namespace RoboGo::platform

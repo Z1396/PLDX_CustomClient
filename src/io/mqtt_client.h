@@ -34,7 +34,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             Connecting, // 连接中：已设置 client_id，协程正在建立 TCP/MQTT 连接
             Connected,  // 已连接：连接建立且已完成订阅，可正常收发消息
             Failed,     // 连接失败：连接或订阅出错，等待下一次重试（自动重连）
-        };  // ConnectionState 定义结束
+        };
 
     private:  // 以下成员只由本类方法(含 run 协程)访问，外部不可直接触碰
         mutable std::mutex endpoint_mutex;  // 保护 host_ip / port 读写的互斥锁
@@ -120,7 +120,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         // 参数 topic：目标话题（如 "CustomByteBlock"）；message：已序列化的 Protobuf 负载字节串。
         // 返回值：无。
         void publish(const std::string &topic, const std::string &message);  // 立即返回：真正发送在 IO 线程的协程里完成
-    };  // MqttClient 类定义结束
+    };
 
 
-}// namespace RoboGo::io  // 网络 IO 命名空间结束
+}  // namespace RoboGo::io

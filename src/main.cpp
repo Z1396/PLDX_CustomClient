@@ -36,8 +36,8 @@ LONG WINAPI RoboGoCrashHandler(EXCEPTION_POINTERS *exception_info) {   // 由 Se
     if (SymInitialize(process, nullptr, TRUE) == FALSE) {   // 初始化符号处理器（会自动找同名 PDB）
         std::fprintf(file, "SymInitialize failed=%lu\n", GetLastError());   // 初始化失败也要留下线索
         std::fclose(file);   // 关闭文件
-        return EXCEPTION_EXECUTE_HANDLER;   // 放行
-    }   // 结束初始化失败分支
+        return EXCEPTION_EXECUTE_HANDLER;   
+    }
     CONTEXT context = *exception_info->ContextRecord;   // 拷贝一份上下文（StackWalk64 会修改它）
     STACKFRAME64 frame{};   // 栈帧描述
     frame.AddrPC.Offset = context.Rip;   // 指令指针
@@ -51,11 +51,11 @@ LONG WINAPI RoboGoCrashHandler(EXCEPTION_POINTERS *exception_info) {   // 由 Se
     for (int index = 0; index < 40; ++index) {   // 遍历调用栈
         if (StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, GetCurrentThread(), &frame, &context,   // 走一帧
                         nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr) == FALSE) {   // 回溯失败即停止
-            break;   // 结束回溯
-        }   // 结束回溯失败判断
+            break;
+        }
         if (frame.AddrPC.Offset == 0) {   // 到达栈底
-            break;   // 结束回溯
-        }   // 结束栈底判断
+            break;
+        }
         char symbol_buffer[sizeof(SYMBOL_INFO) + 256]{};   // 符号信息缓冲（变长结构）
         auto *symbol = reinterpret_cast<SYMBOL_INFO *>(symbol_buffer);   // 按 SYMBOL_INFO 解释
         symbol->SizeOfStruct = sizeof(SYMBOL_INFO);   // 结构大小
@@ -74,20 +74,20 @@ LONG WINAPI RoboGoCrashHandler(EXCEPTION_POINTERS *exception_info) {   // 由 Se
         } else {   // 无行号信息
             std::fprintf(file, "#%02d %s +0x%llx\n", index, name,   // 只输出函数名
                          static_cast<unsigned long long>(displacement));   // 符号内偏移
-        }   // 结束行号分支
-    }   // 结束栈遍历
+        }
+    }
     SymCleanup(process);   // 释放符号资源
     std::fclose(file);   // 关闭文件
     return EXCEPTION_EXECUTE_HANDLER;   // 让进程按系统默认方式退出
-}   // 结束 RoboGoCrashHandler
+}
 
 // 功能：按环境变量决定是否安装崩溃栈记录器。
 void InstallCrashTraceIfRequested() {   // 在 WinMain 一开始调用
     const char *enabled = std::getenv("ROBOGO_CRASH_TRACE");   // 读取开关
     if (enabled != nullptr && *enabled != '\0') {   // 设置了才安装
         SetUnhandledExceptionFilter(RoboGoCrashHandler);   // 注册未处理异常过滤器
-    }   // 结束开关判断
-}   // 结束 InstallCrashTraceIfRequested
+    }
+}
 
 // 功能：在 Windows 平台下解析进程 Unicode 命令行，转换为 UTF-8 字符串列表。
 // 思路：GetCommandLineW 获取宽字符命令行，CommandLineToArgvW 切分参数，
@@ -99,7 +99,7 @@ std::vector<std::string> CollectCommandLineArgs() {  // Windows 版：不接收 
     // 解析失败（如系统内存不足）时直接返回空的参数列表。
     if (argv_w == nullptr) {  // 返回空指针说明系统未能分配参数数组
         return args;  // 返回空列表，后续应用以默认参数启动
-    }  // 结束 argv_w 空指针防护分支
+    }
 
     // 跳过 argv[0]（程序路径），从第 1 个实际参数开始遍历。
     for (int i = 1; i < argc; ++i) {  // 逐个参数转码为 UTF-8
@@ -108,10 +108,10 @@ std::vector<std::string> CollectCommandLineArgs() {  // Windows 版：不接收 
         WideCharToMultiByte(CP_UTF8, 0, argv_w[i], -1, arg.data(), size, nullptr, nullptr); // 第二次调用执行实际的宽字符到 UTF-8 转换，写入 arg 缓冲区
         arg.resize(static_cast<size_t>(size - 1)); // 去掉结尾的 null 字符，仅保留有效字符串内容
         args.push_back(std::move(arg)); // 将转码后的参数以 move 方式存入列表，避免拷贝
-    }  // 结束逐参数转码循环
+    }
     LocalFree(argv_w); // 释放系统分配的命令行参数数组，避免内存泄漏
     return args;  // 返回收集完成的参数列表
-}  // 结束 Windows 版 CollectCommandLineArgs
+}
 #else  // 非 Windows 平台走标准 C 入口
 // 功能：在非 Windows 平台下收集标准 main 参数(argc/argv)为字符串列表。
 // 思路：跳过 argv[0]（程序路径），将剩余 C 字符串直接构造为 std::string。
@@ -121,10 +121,10 @@ std::vector<std::string> CollectCommandLineArgs(const int argc, char *argv[]) { 
     // 跳过 argv[0]（程序路径），从第 1 个实际参数开始收集。
     for (int i = 1; i < argc; ++i) {  // 逐个参数构造 std::string
         args.emplace_back(argv[i]);  // 原地构造字符串元素，省去临时对象拷贝
-    }  // 结束逐参数收集循环
+    }
     return args;  // 返回收集完成的参数列表
-}  // 结束 POSIX 版 CollectCommandLineArgs
-#endif  // 结束平台条件编译
+}
+#endif
 
 // 功能：统一的主流程入口，封装与平台无关的程序初始化与运行逻辑。
 // 思路：创建平台后端 -> 解析启动参数 -> 初始化日志 -> 运行应用主循环 -> 关闭日志。
@@ -133,17 +133,18 @@ int RunMain(const std::vector<std::string> &args) {  // args 为已转码的命�
 
     const RoboGo::app::LaunchOptions options = RoboGo::app::ParseLaunchOptions(args); // 解析命令行参数为结构化的启动选项
 
-    RoboGo::logging::initialize(platform_backend->application_name(), options.invert_udp_video,
+    RoboGo::logging::initialize(platform_backend->application_name(), 
+                                options.invert_udp_video,
                                 RoboGo::logging::ParseCaptureMode(options.capture_mode)); // 初始化 spdlog 日志系统，并按档位决定是否抓包
-    
-    const int result = RoboGo::app::RunApplication(*platform_backend, options); // 进入应用主循环，返回进程退出码
-    
-    RoboGo::logging::shutdown(); // 应用退出后释放日志资源
-    
-    return result;  // 把应用主循环的退出码回传给操作系统
-}  // 结束 RunMain
 
-}// namespace  // 匿名命名空间结束
+    const int result = RoboGo::app::RunApplication(*platform_backend, options); // 进入应用主循环，返回进程退出码
+
+    RoboGo::logging::shutdown(); // 应用退出后释放日志资源
+
+    return result;  // 把应用主循环的退出码回传给操作系统
+}
+
+}  // namespace
 
 #ifdef _WIN32  // Windows 使用 GUI 子系统的 WinMain 作为入口(由链接器 /SUBSYSTEM:WINDOWS 指定)
 // 功能：Windows 平台 GUI 程序入口(WinMain)。
@@ -156,11 +157,11 @@ int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE previous_instance, PSTR comma
     (void) show_command;  // 主窗口初始显示方式，由框架自行控制
     InstallCrashTraceIfRequested(); // 可选诊断：设置 ROBOGO_CRASH_TRACE 时把崩溃调用栈写入 crash_trace.txt
     return RunMain(CollectCommandLineArgs()); // 收集 Windows 命令行参数后进入主流程
-}  // 结束 WinMain
+}
 #else  // 非 Windows 平台使用标准 main
 // 功能：非 Windows 平台的标准程序入口(main)。
 // 思路：直接接收 argc/argv，转发给 RunMain 启动主流程。
 int main(const int argc, char *argv[]) {  // argc 参数个数(含程序路径)；argv 参数数组
     return RunMain(CollectCommandLineArgs(argc, argv)); // 收集标准参数后进入主流程
-}  // 结束 main
-#endif  // 结束入口函数平台条件编译
+}
+#endif

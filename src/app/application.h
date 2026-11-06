@@ -18,4 +18,4 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args);
 // 返回：进程退出码(0 正常，非 0 异常)。
 int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOptions &options);
 
-}// namespace RoboGo::app
+}  // namespace RoboGo::app

@@ -2,6 +2,7 @@
 #include "imgui_setup.h"  // 本编译单元的主头文件(声明 InitializeCommonImGui / LoadEmbeddedImGuiFont)
 
 #include "embedded_zcool_font.h"  // 编译期嵌入的 ZCOOL 中文字体字节数组与其长度(避免运行时读外部字体文件)
+#include "ui/theme.h"             // 2027 统一视觉令牌与全局主题
 
 namespace RoboGo::app {  // 进入应用层命名空间
 
@@ -15,10 +16,10 @@ void InitializeCommonImGui(const float main_scale) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // 启用键盘导航
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // 启用手柄导航(适配操作手外设)
 
-    ImGui::StyleColorsDark(); // 应用暗色主题样式
-
+    ImGui::StyleColorsDark(); // 先取 ImGui 暗色基线，避免遗漏任何颜色枚举项
     ImGuiStyle &style = ImGui::GetStyle(); // 获取样式对象以便整体缩放
-    style.ScaleAllSizes(main_scale); // 按比例缩放所有界面元素的尺寸
+    RoboGo::ui::ApplyGlobalTheme(style); // 覆盖为 2027 统一主题：三级中性表面 / 低对比描边 / 8-12 圆角
+    style.ScaleAllSizes(main_scale); // 按比例缩放所有界面元素的尺寸（主题设置的尺寸也会一并缩放）
     style.FontScaleDpi = main_scale; // 设置字体 DPI 缩放系数
 } // 结束 InitializeCommonImGui：上下文已就绪，后续由 LoadEmbeddedImGuiFont 装载字体
 
@@ -43,4 +44,4 @@ void LoadEmbeddedImGuiFont() {
     io.LogFilename = nullptr; // 关闭 ImGui 调试日志文件
 } // 结束 LoadEmbeddedImGuiFont：字体已加入图集，交由后端在首帧前构建 GPU 纹理
 
-}// namespace RoboGo::app
+}  // namespace RoboGo::app

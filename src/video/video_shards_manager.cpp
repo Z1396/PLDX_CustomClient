@@ -7,13 +7,13 @@ namespace RoboGo::video {
     VideoShardsManager::~VideoShardsManager() {
         reset_stream_state(); // 复位帧序列与缓存状态
         drain_packet_queue(); // 排空残留队列并释放内存
-    } // 析构函数结束
+    }
 
     // 功能：保存完整帧回调，供重组完成后通知上层。
     void VideoShardsManager::set_frame_callback(const std::function<void(const std::vector<uint8_t> &frame)> &frame_callback) {
         this->frame_callback = frame_callback; // 保存完整帧就绪回调
         SPDLOG_INFO("已设置视频完整帧回调"); // 记录回调设置成功
-    } // set_frame_callback 结束
+    }
 
     // 功能：把收到的一帧分片数据拷贝后入队，与解码线程解耦。
     // 思路：队列只持有裸指针+长度，需先 new 拷贝数据避免在 UDP 回调栈上悬空。
@@ -21,7 +21,7 @@ namespace RoboGo::video {
         auto *packet = new uint8_t[size]; // 在堆上拷贝分片数据，避免 UDP 回调栈悬空
         memcpy(packet, data, size); // 拷贝原始分片字节
         packet_queue.emplace(packet, size); // 无锁入队，交给解码线程处理
-    } // on_receive_shard 结束
+    }
 
     // 功能：处理一个分片包：背压控制、解析包头、维护帧 ID 序列、入窗重组并输出完整帧。
     // 思路：先按队列水位丢弃陈旧分片；再解析「帧ID/分片ID/整帧长度」头；用归一化帧 ID 计算相对窗口偏移，
@@ -36,11 +36,11 @@ namespace RoboGo::video {
             while (packet_queue.size_approx() > 256 && packet_queue.try_dequeue(stale_packet)) { // 持续丢弃直到仅剩 256
                 delete[] stale_packet.first; // 释放旧包数据内存
                 ++trimmed_count; // 累加丢弃计数
-            } // 背压丢弃循环结束
+            }
             if (trimmed_count > 0) { // 确有丢弃才告警
                 SPDLOG_WARN("UDP 视频分片队列堆积，已丢弃旧 {} 个分片", trimmed_count); // 记录本批丢弃的分片数量
-            } // 确有丢弃的告警分支结束
-        } // 背压控制分支结束
+            }
+        }
         // 获取一个数据包。
         // 这里改成真正的阻塞等待（原来是 1µs 超时的轮询）：无数据时线程被内核挂起，不再空转，
         // 实测可省下一个物理核（原来解码线程恒定 100% 占用，笔记本风扇会全程满转、后段降频）。
@@ -48,15 +48,15 @@ namespace RoboGo::video {
         std::pair<uint8_t *, size_t> packet; // 出队暂存一个包
         packet_queue.wait_dequeue(packet); // 阻塞直到有分片或收到唤醒哨兵
         if (packet.first == nullptr) { // 哨兵：调用方要求退出
-            return false; // 通知循环结束
-        } // 结束哨兵判断
+            return false;
+        }
         auto [data, size] = packet; // 解包出指针与长度
         // 解析包头：每片前 8 字节依次为 帧ID(2)/分片ID(2)/整帧字节数(4)，不足 8 字节视为无效
         if (size <= 8) [[unlikely]] { // 不足包头长度则无效
             SPDLOG_WARN("收到无效视频分片 bytes={}", size); // 记录无效分片（包头不足 8 字节）
             delete[] data; // 释放无效包内存
             return true; // 丢弃无效包，继续处理下一个
-        } // 无效包分支结束
+        }
         uint16_t frame_id = ntohs(*reinterpret_cast<const uint16_t *>(data));       // 网络字节序转主机，帧 ID
         uint16_t shard_id = ntohs(*reinterpret_cast<const uint16_t *>(data + 2));   // 分片序号
         uint32_t frame_bytes = ntohl(*reinterpret_cast<const uint32_t *>(data + 4)); // 整帧期望总字节数
@@ -66,7 +66,7 @@ namespace RoboGo::video {
             is_current_frame_id_valid = true; // 标记基准已初始化
             current_frame_id = frame_id; // 以首个帧 ID 作基准
             SPDLOG_INFO("初始化视频帧序列 current_frame_id={}", current_frame_id); // 记录初始基准帧 ID
-        } // 首次建立基准分支结束
+        }
         // 把 16 位帧 ID 归一到 32 位连续空间，便于计算相对偏移
         uint32_t fixed_frame_id = fixed_frame_id_start + frame_id; // 归一到 32 位连续空间
         int64_t delta_frame_id = static_cast<int64_t>(fixed_frame_id) - current_frame_id; // 相对基准的偏移
@@ -76,7 +76,7 @@ namespace RoboGo::video {
             fixed_frame_id_start = fixed_frame_id - frame_id; // 重建归一直偏移
             delta_frame_id = 1; // 归正为前进 1
             SPDLOG_INFO("视频帧ID发生回绕 frame_id={} fixed_frame_id={}", frame_id, fixed_frame_id); // 记录回绕修正后的归一幅值
-        } // 帧 ID 回绕处理分支结束
+        }
         max_frame_id = std::max(max_frame_id, fixed_frame_id); // 更新最大帧 ID
 
         // 如果接收到过去的数据包，就丢掉
@@ -97,8 +97,8 @@ namespace RoboGo::video {
                             fixed_frame_id, shard_id, current_frame_id); // 日志参数：当前基准帧 ID
                 delete[] data; // 释放过期分片
                 return true; // 丢弃过期分片，继续处理下一个
-            } // 过期分片丢弃分支结束
-        } // 收到旧帧时的处理分支结束
+            }
+        }
 
         // 处理丢帧：当前帧远超窗口，说明中间大量帧丢失，向前滑动窗口丢弃旧帧
         if (delta_frame_id >= cache_frame_size) [[unlikely]] { // 远超窗口，中间大量丢帧
@@ -111,12 +111,12 @@ namespace RoboGo::video {
                 } else { // 目标槽位已滑出窗口范围
                     // 目标已超出窗口范围，直接清空该旧帧槽位
                     reset_frame_shards(cache_frames[i]); // 超出窗口则清空该槽位
-                } // 窗口外槽位清空分支结束
-            } // 窗口滑动循环结束
+                }
+            }
             // 更新基准帧 ID 与相对偏移，使最新帧落在窗口末尾
             current_frame_id = fixed_frame_id - cache_frame_size + 1; // 更新基准为窗口头
             delta_frame_id = cache_frame_size - 1; // 最新帧落在窗口末
-        } // 大量丢帧冲刷分支结束
+        }
 
         // 把数据包添加到缓存中：按相对偏移定位窗口中的帧槽位
         auto &current_frame_shards = cache_frames[delta_frame_id]; // 定位当前帧对应的窗口槽位
@@ -132,7 +132,7 @@ namespace RoboGo::video {
                         current_frame_shards.frame_bytes, // 日志参数：旧的期望整帧字节数
                         frame_bytes); // 日志参数：新的期望整帧字节数
             current_frame_shards.frame_bytes = frame_bytes; // 更新期望字节数
-        } // 整帧长度变化处理分支结束
+        }
         // 若该分片已存在（重传），先释放旧数据并扣回已计字节数
         if (const auto iter = current_frame_shards.shards.find(shard_id); iter != current_frame_shards.shards.end()) [[unlikely]] { // 该分片已存在（重传）
             SPDLOG_WARN("收到重复视频分片 frame_id={} shard_id={} old_size={} new_size={}", // 记录重复分片（重传）事件
@@ -142,7 +142,7 @@ namespace RoboGo::video {
                         size); // 日志参数：新分片总长
             delete[] iter->second.first; // 释放旧分片数据
             current_frame_shards.collected_frame_bytes -= static_cast<uint32_t>(iter->second.second - 8); // 扣回旧分片已计字节
-        } // 重复分片处理分支结束
+        }
         // 累加本分片净负载（总长减去 8 字节头），并存入窗口
         current_frame_shards.collected_frame_bytes += size - 8; // 累加本分片净负载
         current_frame_shards.shards[shard_id] = {data, size}; // 存入分片到窗口
@@ -153,7 +153,7 @@ namespace RoboGo::video {
             // 检测跳帧：与上一次完整帧 ID 不连续即说明中间有丢帧
             if (last_complete_frame_id.has_value() && last_complete_frame_id.value() + 1 != first_frame_shards.frame_id) [[unlikely]] { // 检测是否跳帧
                 SPDLOG_ERROR("skip frame：{} -> {}", last_complete_frame_id.value(), first_frame_shards.frame_id); // 记录跳帧
-            } // 跳帧检测分支结束
+            }
             last_complete_frame_id = first_frame_shards.frame_id; // 更新上一完整帧 ID
             // 拼接：按分片 ID 顺序把各片净负载拷贝到 full_frame
             full_frame.clear(); // 清空待拼接缓冲
@@ -166,66 +166,66 @@ namespace RoboGo::video {
                     is_success = false; // 标记拼接失败
                     SPDLOG_ERROR("分片ID错误"); // 记录分片缺失
                     break; // 中止拼接
-                } // 分片缺失导致中止的分支结束
+                }
                 auto &[shard_buffer, shard_size] = iter->second; // 解包分片缓冲与长度
                 // 跳过每片前 8 字节头，仅拷贝净负载
                 full_frame.insert(full_frame.end(), shard_buffer + 8, shard_buffer + shard_size); // 跳过 8 字节头拷贝净负载
-            } // 分片拼接循环结束
+            }
             if (is_success) [[likely]] { // 拼接成功才回调
                 if (frame_callback) { // 存在回调
                     frame_callback(full_frame); // 回调完整帧给上层（解码器）
                 } else { // 无回调
                     SPDLOG_WARN("视频完整帧已生成但未设置回调 frame_id={}", first_frame_shards.frame_id); // 记录完整帧无处投递（未设置回调）
-                } // 无回调分支结束
-            } // 拼接成功回调分支结束
+                }
+            }
             // 在缓存中清理当前帧：整体前移窗口并清空末尾槽位
             for (size_t j = 0; j < cache_frame_size - 1; ++j) { // 窗口整体前移
                 std::swap(cache_frames[j], cache_frames[j + 1]); // 相邻帧槽前移
-            } // 窗口前移循环结束
+            }
             reset_frame_shards(cache_frames[cache_frame_size - 1]); // 清空末尾旧槽位
             current_frame_id += 1; // 窗口前进一帧
-        } // 完整帧处理分支结束
+        }
         return true; // 正常处理完一个分片
-    } // handle_once 结束
+    }
 
     // 功能：投递一个唤醒哨兵，让阻塞在 wait_dequeue 上的处理线程立即返回。
     // 说明：moodycamel 的阻塞队列没有 abort 接口，用"空指针包"当哨兵是最简单可靠的做法。
     void VideoShardsManager::wake() {
         packet_queue.emplace(nullptr, 0); // 哨兵：handle_once 见到 first==nullptr 即返回 false
-    } // wake 结束
+    }
 
     // 功能：复位整个流的帧序列与缓存，用于初次启动或检测到流重置时。
     void VideoShardsManager::reset_stream_state() {
         for (auto &frame_shards: cache_frames) { // 逐个槽位释放分片内存并清零
             reset_frame_shards(frame_shards); // 逐槽释放分片内存并清零
-        } // 帧槽位遍历结束
+        }
         fixed_frame_id_start = 0; // 复位归一直偏移基准
         max_frame_id = 0; // 复位最大帧 ID
         is_current_frame_id_valid = false; // 清除基准有效标志
         current_frame_id = 0; // 复位当前基准帧 ID
         last_complete_frame_id.reset(); // 清除上一完整帧记录
         full_frame.clear(); // 清空完整帧缓冲
-    } // reset_stream_state 结束
+    }
 
     // 功能：排空数据包队列，释放所有尚未处理的原始分片内存。
     void VideoShardsManager::drain_packet_queue() {
         std::pair<uint8_t *, size_t> packet; // 出队暂存
         while (packet_queue.try_dequeue(packet)) { // 持续出队直到空
             delete[] packet.first; // 释放分片内存
-        } // 队列排空循环结束
-    } // drain_packet_queue 结束
+        }
+    }
 
     // 功能：释放单帧槽位内全部分片内存并清零，使该槽位可复用。
     void VideoShardsManager::reset_frame_shards(FrameShards &frame_shards) {
         // 遍历有序分片映射，逐个释放裸指针
         for (const auto &item: frame_shards.shards | std::views::values) { // 遍历有序分片映射（取 value）
             delete[] item.first; // 释放分片裸指针
-        } // 分片映射遍历结束
+        }
         frame_shards.is_valid = false; // 标记槽位失效
         frame_shards.frame_id = 0; // 清零帧 ID
         frame_shards.frame_bytes = 0; // 清零期望字节数
         frame_shards.collected_frame_bytes = 0; // 清零已收集字节数
         frame_shards.shards.clear(); // 清空分片映射
-    } // reset_frame_shards 结束
+    }
 
-}// namespace RoboGo::video
+}  // namespace RoboGo::video

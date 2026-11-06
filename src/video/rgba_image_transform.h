@@ -14,4 +14,4 @@ bool ApplyRgba180Rotation(std::vector<uint8_t> &rgba, // 待原地翻转的 RGBA
                           int height,                  // 图像高度（像素），为负时视为非法
                           bool enabled);               // 是否真正执行旋转，false 时仅做校验后直接返回
 
-}// namespace RoboGo::video // 结束视频模块命名空间
+}  // namespace RoboGo::video

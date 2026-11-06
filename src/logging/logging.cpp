@@ -16,7 +16,7 @@ struct NetworkCaptureRecord {  // 采集线程填充、写盘线程消费的 POD
     std::string channel;             // 通道名（如 MQTT topic / "video-stream"）
     std::string peer;                // 对端地址（"host:port"）
     std::vector<std::uint8_t> payload;  // 原始报文负载
-};  // NetworkCaptureRecord 结构体定义结束
+};
 
 std::once_flag g_initialize_once;  // call_once 保护，保证 initialize 只执行一次
 std::filesystem::path g_log_root_directory;  // 日志根目录
@@ -56,9 +56,9 @@ std::tm local_time(std::time_t time_point) {  // 入参为秒级时间戳
     localtime_s(&result, &time_point);  // Windows 平台：线程安全的本地时间转换
 #else  // 类 Unix 平台
     localtime_r(&time_point, &result);  // POSIX 平台：线程安全的本地时间转换
-#endif  // 结束平台条件编译
+#endif
     return result;  // 返回填充好的本地时间分解结构
-}  // local_time 结束
+}
 
 // 功能：生成会话 ID（"年月日_时分秒_毫秒"），保证每次启动目录唯一。
 // 思路：取系统时钟，拆分为本地日历时间与毫秒尾数，格式化拼接。
@@ -82,13 +82,13 @@ std::string make_session_id() {  // 返回形如 2026-11-01_16-45-03.042 的字�
     // 注意：Windows 目录名不允许冒号(':')与空格，故用下划线/减号替代，避免日志目录创建失败导致启动崩溃
         stream << std::put_time(&local_tm, "%Y-%m-%d_%H-%M-%S")  // put_time 按 strftime 风格格式化 tm
             << "."  // 秒与毫秒之间的分隔点
-            << std::setw(3) // 确保毫秒部分有3位，不足补0       
+            << std::setw(3) // 确保毫秒部分有3位，不足补0
             << std::setfill('0')    // 不够3位前面补0
-            << milliseconds.count();// 毫秒，比如42 → 变成 042
+            << milliseconds.count();  // 毫秒，比如42 → 变成 042
 
     // 把流里面拼接好的文本转成std::string返回
     return stream.str();  // str() 取出流内部累积的字符串
-}  // make_session_id 结束
+}
 
 
 // 功能：解析日志根目录。
@@ -98,32 +98,32 @@ std::filesystem::path resolve_log_root_directory() {  // 允许部署时用环�
     if (const char *env_value = std::getenv("ROBOGO_LOG_ROOT"); env_value != nullptr && env_value[0] != '\0') {  // C++17 if 初始化语句同时完成取值与判空
         // 返回环境变量值
         return std::filesystem::path(env_value);  // 使用环境变量指定的日志根目录
-    }  // 结束环境变量分支
+    }
     // 回退默认 "logs"
     return std::filesystem::path(kDefaultLogRootDirectory);  // 回退到默认 "logs" 目录
-}  // resolve_log_root_directory 结束
+}
 
 // 功能：把传输类型字符串编码为单字节枚举值。
 std::uint8_t encode_transport(std::string_view transport) {  // 字符串→编码，便于紧凑落盘
     if (transport == "mqtt") {  // MQTT 传输类型
         return kTransportMqtt;  // 编码 1
-    }  // 结束 mqtt 分支
+    }
     if (transport == "udp-video") {  // UDP 视频传输类型
         return kTransportUdpVideo;  // 编码 2
-    }  // 结束 udp-video 分支
+    }
     return kTransportUnknown;  // 未知传输类型
-}  // encode_transport 结束
+}
 
 // 功能：把方向字符串编码为单字节枚举值。
 std::uint8_t encode_direction(std::string_view direction) {  // 字符串→编码
     if (direction == "rx") {  // 接收方向
         return kDirectionRx;  // 编码 1
-    }  // 结束 rx 分支
+    }
     if (direction == "tx") {  // 发送方向
         return kDirectionTx;  // 编码 2
-    }  // 结束 tx 分支
+    }
     return kDirectionUnknown;  // 未知方向
-}  // encode_direction 结束
+}
 
 // 功能：以“小端”字节序把整数追加到字节缓冲。
 // 思路：逐字节取低 8 位并右移，依次 push，实现与平台无关的小端序列化。
@@ -135,8 +135,8 @@ void append_little_endian(std::vector<std::uint8_t> &buffer, Integer value) {  /
     UnsignedInteger unsigned_value = static_cast<UnsignedInteger>(value);  // 保留原始位模式
     for (std::size_t index = 0; index < sizeof(Integer); ++index) {  // 逐字节输出，低位先出
         buffer.push_back(static_cast<std::uint8_t>((unsigned_value >> (index * 8)) & 0xFF));  // 取第 index 个字节
-    }  // 结束逐字节循环
-}  // append_little_endian 结束
+    }
+}
 
 // 功能：以“小端”把整数直接写入文件流。
 // 思路：先序列化到临时缓冲，再整体 write，减少多次 IO 调用。
@@ -146,7 +146,7 @@ void write_little_endian(std::ofstream &stream, Integer value) {  // 直接落�
     buffer.reserve(sizeof(Integer));  // 预留固定字节数，避免扩容
     append_little_endian(buffer, value);  // 复用上面的序列化逻辑
     stream.write(reinterpret_cast<const char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));  // ofstream::write 只接受 char*，故重新解释
-}  // write_little_endian 结束
+}
 
 // 功能：计算数据的 CRC32（IEEE 802.3 多项式，查表法）。
 // 思路：首次调用惰性构建 256 项反射表；随后逐字节查表异或，结果取反。
@@ -161,19 +161,19 @@ std::uint32_t crc32(std::span<const std::uint8_t> data) {  // 入参为待校验
                     value = 0xEDB88320U ^ (value >> 1U);  // 反射多项式 0xEDB88320 即标准 0x04C11DB7 的位反转
                 } else {  // 最低位为 0
                     value >>= 1U;  // 仅右移一位
-                }  // 结束单位处理
-            }  // 结束 8 位循环
+                }
+            }
             generated[index] = value;  // 保存该字节对应的表项
-        }  // 结束建表循环
+        }
         return generated;  // 返回构建完成的表
     }();  // 末尾 () 立即调用 lambda
 
     std::uint32_t value = 0xFFFFFFFFU;  // CRC 初值全 1
     for (const std::uint8_t byte : data) {  // 逐字节流式计算
         value = table[(value ^ byte) & 0xFFU] ^ (value >> 8U);  // 查表 + 右移 8 位
-    }  // 结束逐字节循环
+    }
     return value ^ 0xFFFFFFFFU;  // 末尾取反，得到标准 CRC32
-}  // crc32 结束
+}
 
 // 功能：将 NetworkCaptureRecord 抓包记录，序列化为二进制的 body 载荷（不含CRC，CRC由上层 write_record 后续追加）
 // 协议排布规则（全部小端序）：
@@ -220,7 +220,7 @@ std::vector<std::uint8_t> build_record_body(const NetworkCaptureRecord &record) 
     body.insert(body.end(), record.payload.begin(), record.payload.begin() + static_cast<std::ptrdiff_t>(payload_length));  // 同样截断
 
     return body;  // 返回组装好的 body
-}  // build_record_body 结束
+}
 
 // 功能：把一条抓包记录，按照自定义二进制文件格式写入输出流
 // 文件单条记录整体格式（顺序全部小端）：
@@ -243,7 +243,7 @@ void write_record(std::ofstream &stream, const NetworkCaptureRecord &record) {  
     write_little_endian<std::uint32_t>(stream, body_crc);  // 校验字段
     // 写入body原始二进制；ofstream::write入参是const char*，所以用reinterpret_cast做二进制重解释转换
     stream.write(reinterpret_cast<const char *>(body.data()), static_cast<std::streamsize>(body.size()));  // 输出 body 本体
-}  // write_record 结束
+}
 
 // 功能：按需把缓冲区数据刷入磁盘，落盘抓包文件
 // 思路：磁盘IO很慢，不写一条刷一次；策略：强制刷新标志 或者 累计写满32条记录再flush
@@ -252,13 +252,13 @@ void flush_capture_stream(bool force_flush) {  // force_flush 为 true 时无条
     // 文件没有打开，直接返回
     if (!g_network_capture_stream.is_open()) {  // is_open 判断流是否关联了有效文件
         return;  // 未打开则无需刷新
-    }  // 结束打开状态判断
+    }
     // 满足条件：主动强制刷新 或者 已经累计写了32条记录
     if (force_flush || g_records_since_flush >= 32) {  // 阈值 32 条为经验值
         g_network_capture_stream.flush();  // 把C++流缓冲区的数据提交给操作系统页缓存
         g_records_since_flush = 0;         // 清空计数，重新开始累计
-    }  // 结束刷新条件判断
-}  // flush_capture_stream 结束
+    }
+}
 
 // 功能：网络抓包后台写盘线程主循环
 // 思路：阻塞式从无锁队列取抓包记录；收到停止信号并且队列已经空了，线程才退出。
@@ -274,9 +274,9 @@ void network_capture_loop() {  // 该函数运行在独立线程中
             // 超时的时候，检查停止标记（acquire内存序，保证能看到其他线程设置的停止信号）
             if (g_network_stop_requested.load(std::memory_order_acquire)) {  // acquire 保证读到最新写入
                 break; // 收到停止请求，跳出循环准备退出
-            }  // 结束停止标志判断
+            }
             continue; // 单纯超时、没数据，回到循环继续等待
-        }  // 结束出队失败分支
+        }
 
         // 成功取出一条记录，写入文件，计数+1
         write_record(g_network_capture_stream, record);  // 序列化并写入流缓冲
@@ -287,7 +287,7 @@ void network_capture_loop() {  // 该函数运行在独立线程中
         while (g_network_capture_queue.try_dequeue(record)) {  // try_dequeue 非阻塞，队列空立即返回 false
             write_record(g_network_capture_stream, record);  // 批量写盘
             g_records_since_flush += 1;  // 继续累计
-        }  // 结束批量出队循环
+        }
         // 批量写完一批，尝试flush（非强制，满足32条阈值才真正刷盘）
         flush_capture_stream(false);  // 传 false 表示按阈值决定
     }  // 结束主循环
@@ -296,11 +296,11 @@ void network_capture_loop() {  // 该函数运行在独立线程中
     flush_capture_stream(true);  // 退出前必须强制刷盘，防止丢数据
     if (g_network_capture_stream.is_open()) {  // 再次确认流有效
         g_network_capture_stream.close();  // 关闭文件，析构前显式关闭更清晰
-    }  // 结束关闭判断
+    }
     SPDLOG_INFO("网络抓包线程已退出");  // 记录线程正常退出
-}  // network_capture_loop 结束
+}
 
-}// namespace  // 匿名命名空间结束
+}  // namespace
 
 // 功能：初始化日志与抓包子系统（仅执行一次）。
 // 思路：解析根目录与生成会话 ID，建立会话目录；保存当前 proto 定义便于旧日志解析；配置 spdlog 异步双 sink；
@@ -349,7 +349,7 @@ void initialize(std::string_view application_name, const bool invert_udp_video, 
                             proto_path.string(), embedded_messages_proto_data_len);  // string() 把 path 转为本地编码字符串
             } else {  // 打开失败(权限/磁盘)
                 SPDLOG_WARN("无法写入 proto 文件到日志目录 path={}", proto_path.string());  // 仅告警，不影响后续日志
-            }  // 结束打开成功判断
+            }
         }  // 结束 proto 保存作用域(离开时 proto_stream 析构)
 
         // 应用日志文件 sink：纯文件、带级别着色模式
@@ -401,8 +401,8 @@ void initialize(std::string_view application_name, const bool invert_udp_video, 
                 g_records_since_flush = 0;  // 重置抓包记录数
                 g_network_capture_thread = std::thread(network_capture_loop);  // 启动抓包线程
                 g_capture_enabled.store(true, std::memory_order_release);  // 标记本次运行真的在抓包
-            }  // 结束打开成功分支
-        }  // 结束档位分支
+            }
+        }
 
         g_is_initialized = true;            /// 标志已初始化
 
@@ -418,9 +418,9 @@ void initialize(std::string_view application_name, const bool invert_udp_video, 
                         capture_mode == CaptureMode::All ? "all" : "mqtt",  // 档位：全量 / 仅 MQTT
                         BuildNetworkCaptureFlags(invert_udp_video),  // 标志字数值
                         invert_udp_video);  // 视频翻转开关
-        }  // 结束抓包启用日志
-    });  // call_once 的 lambda 结束
-}  // initialize 结束
+        }
+    });
+}
 
 // 功能：把字符串解析成抓包档位（大小写不敏感）。
 CaptureMode ParseCaptureMode(std::string_view text) {  // 供命令行与环境变量解析使用
@@ -431,68 +431,68 @@ CaptureMode ParseCaptureMode(std::string_view text) {  // 供命令行与环境�
                    });
     if (normalized == "off" || normalized == "none" || normalized == "0") {  // 关闭
         return CaptureMode::Off;  // 完全不抓
-    }  // 结束关闭档位
+    }
     if (normalized == "all" || normalized == "full") {  // 全量（含视频）
         return CaptureMode::All;  // 全量抓包
-    }  // 结束全量档位
+    }
     return CaptureMode::MqttOnly;  // 其余一律按默认档位处理
-}  // ParseCaptureMode 结束
+}
 
 // 功能：查询当前生效的抓包档位。
 CaptureMode current_capture_mode() {
     return g_capture_mode.load(std::memory_order_acquire);  // 原子读，任意线程可调用
-}  // current_capture_mode 结束
+}
 
 // 功能：关闭日志系统。
 // 思路：未初始化直接返回；置停止标志并 join 抓包线程（其会落盘关文件），随后关闭 spdlog 并复位标志。
 void shutdown() {  // 进程退出前调用
     if (!g_is_initialized) {  // 未初始化时无需关闭
         return;  // 直接返回
-    }  // 结束初始化判断
+    }
     SPDLOG_INFO("日志系统准备关闭 session={}", g_session_id);  // 记录关闭开始
     g_network_stop_requested.store(true, std::memory_order_release);  // release 保证之前的写入对抓包线程可见
     if (g_network_capture_thread.joinable()) {  // joinable 判断线程是否还在运行
         g_network_capture_thread.join();  // 阻塞等待写线程把剩余记录落盘并退出
-    }  // 结束 join 判断
+    }
     spdlog::shutdown();  // 关闭 spdlog 线程池与所有 logger，释放全局资源
     g_is_initialized = false;  // 复位标志，允许后续重新初始化
-}  // shutdown 结束
+}
 
 // 功能：返回是否已初始化。
 bool is_initialized() {  // 供其他模块判断能否写日志
     return g_is_initialized;  // 读取初始化标志
-}  // is_initialized 结束
+}
 
 // 以下为全局路径/标识的访问器
 const std::filesystem::path &log_root_directory() {  // 返回根目录引用，避免拷贝
     return g_log_root_directory;  // 直接返回内部静态变量
-}  // log_root_directory 结束
+}
 
 // 功能：返回本次运行的日志目录（logs/ 下的会话子目录），供外部写附加文件。
 const std::filesystem::path &log_directory() {  // 返回引用，调用方只读
     return g_log_directory;  // 会话目录
-}  // log_directory 结束
+}
 
 // 功能：返回网络抓包文件路径（network_capture.bin 等），由网络模块在记录报文时使用。
 const std::filesystem::path &network_capture_path() {  // 返回引用
     return g_network_capture_path;  // 抓包文件路径
-}  // network_capture_path 结束
+}
 
 // 功能：返回本次运行的唯一会话 ID（用于日志目录命名与抓包文件关联）。
 const std::string &session_id() {  // 返回引用
     return g_session_id;  // 会话 ID 字符串
-}  // session_id 结束
+}
 
 // 功能：把文本截断到 max_length，超出追加 "...(truncated)"。
 // 思路：长度不足直接返回副本；否则取前缀并加标记。
 std::string truncate_text(std::string_view text, std::size_t max_length) {  // 默认上限 512，见头文件
     if (text.size() <= max_length) {  // 长度未超限
         return std::string(text);  // 由 string_view 构造独立副本
-    }  // 结束未超限分支
+    }
     std::string truncated(text.substr(0, max_length));  // substr 取前缀，避免整串拷贝
     truncated += "...(truncated)";  // 追加截断标记，提示阅读者
     return truncated;  // 返回截断结果
-}  // truncate_text 结束
+}
 
 // 功能：把一笔网络报文入队（供抓包线程写盘）。
 // 思路：未初始化或已请求停止则跳过；填充记录各字段，尝试入队，队列满则告警丢弃（不阻塞采集方）。
@@ -503,16 +503,16 @@ void log_network_payload(std::string_view transport,  // 传输类型字符串
                          std::string_view peer) {  // 对端地址
     if (!g_is_initialized || !g_capture_enabled.load(std::memory_order_acquire) || g_network_stop_requested.load(std::memory_order_acquire)) {  // 未就绪/未启用/正在关闭则跳过
         return;  // 直接返回，避免向已关闭的文件写入
-    }  // 结束可用性判断
+    }
 
     // 档位过滤：默认只抓 MQTT，图传 UDP 分片不落盘（每场可省下约 1GB 写入）。
     const CaptureMode mode = g_capture_mode.load(std::memory_order_acquire);  // 读一次档位，避免重复原子读
     if (mode == CaptureMode::Off) {  // 抓包已关闭（含"打开文件失败后自动降级"）
         return;  // 直接丢弃
-    }  // 结束关闭档位
+    }
     if (mode == CaptureMode::MqttOnly && transport == "udp-video") {  // 只抓 MQTT 时跳过图传分片
         return;  // 直接丢弃
-    }  // 结束档位过滤
+    }
 
     NetworkCaptureRecord record;  // 构造一条待入队记录
     const auto timestamp = std::chrono::system_clock::now();  // 取当前壁钟时刻
@@ -531,7 +531,7 @@ void log_network_payload(std::string_view transport,  // 传输类型字符串
                     channel,  // 丢弃记录的通道
                     peer,  // 丢弃记录的对端
                     payload.size());  // 丢弃的字节数
-    }  // 结束入队判断
-}  // log_network_payload 结束
+    }
+}
 
-}// namespace RoboGo::logging  // 命名空间结束
+}  // namespace RoboGo::logging

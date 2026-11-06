@@ -61,4 +61,4 @@ namespace RoboGo::video {
         static void reset_frame_shards(FrameShards &frame_shards);
     }; // 结束 class VideoShardsManager：对外只暴露收包与单次处理，重组细节全部内部封装
 
-}// namespace RoboGo::video
+}  // namespace RoboGo::video

@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "platform/platform_backend.h"  // 包含平台后端抽象接口声明（PlatformBackend 基类、TextureView、TextureSlot 等）
+#include "app/perf_stats.h"  // 记录图传分辨率（性能面板显示）
 
 #include "app/imgui_setup.h"  // 包含 ImGui 通用初始化与字体加载函数声明
 #include "logging/logging.h"  // 包含 spdlog 日志宏，用于输出运行期诊断信息
@@ -11,12 +12,12 @@
 // 在调试版本中开启 DX12 调试层，便于发现资源泄漏与 API 误用。
 #ifdef _DEBUG
 #define DX12_ENABLE_DEBUG_LAYER  // 调试构建下定义该宏，表示开启 D3D12 调试层
-#endif  // 结束 _DEBUG 条件编译块
+#endif
 
 // 启用调试层时需要链接 dxguid.lib（用于 D3D 调试接口 GUID）。
 #ifdef DX12_ENABLE_DEBUG_LAYER
 #pragma comment(lib, "dxguid.lib")  // 告知链接器链接 dxguid.lib（D3D12 调试接口的 GUID 符号在其中）
-#endif  // 结束 DX12_ENABLE_DEBUG_LAYER 条件编译块
+#endif
 
 // 声明 ImGui 自带的 Win32 窗口过程处理函数，供本后端在 WndProc 中转发 ImGui 相关消息。
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -36,7 +37,7 @@ constexpr int kSrvHeapSize = 64;
 struct WindowsFrameContext {
     ID3D12CommandAllocator *command_allocator = nullptr;  // 命令分配器，为该帧的命令列表提供内存
     UINT64 fence_value = 0;  // 该帧围栏的目标值，用于等待 GPU 完成本帧
-};  // WindowsFrameContext 结构体定义结束
+};
 
 // DescriptorHeapAllocator —— 对一段 D3D12 描述符堆做“子分配”的小型分配器：以空闲索引栈管理 CPU/GPU 描述符句柄。
 struct DescriptorHeapAllocator {
@@ -60,14 +61,14 @@ struct DescriptorHeapAllocator {
         free_indices.reserve(static_cast<int>(desc.NumDescriptors));  // 预分配空闲栈容量，避免逐个入栈时反复扩容
         for (int n = static_cast<int>(desc.NumDescriptors); n > 0; --n) {  // 从最大索引倒序入栈，使得 0 号描述符最先被分配
             free_indices.push_back(n - 1);  // 把索引 n-1 压入空闲栈
-        }  // 结束倒序填充循环
-    }  // 结束 Create 函数
+        }
+    }
 
     // 功能：清理分配器状态（仅清空指针与空闲列表，不释放堆本身）。
     void Destroy() {
         heap = nullptr;  // 清空堆指针，表示分配器不再管理任何堆
         free_indices.clear();  // 清空空闲索引栈，释放其内部内存
-    }  // 结束 Destroy 函数
+    }
 
     // 功能：从空闲栈弹出一个描述符下标，计算出对应的 CPU/GPU 句柄返回。
     // 思路：下标乘以句柄步长再加上堆基址，得到连续排列的描述符地址。
@@ -77,7 +78,7 @@ struct DescriptorHeapAllocator {
         free_indices.pop_back();  // 弹出栈顶，标记该索引已被占用
         out_cpu_desc_handle->ptr = heap_start_cpu.ptr + (static_cast<SIZE_T>(index) * heap_handle_increment);  // CPU 句柄 = 堆起始地址 + 索引 × 步长（按字节推进）
         out_gpu_desc_handle->ptr = heap_start_gpu.ptr + (static_cast<UINT64>(index) * heap_handle_increment);  // GPU 句柄同样按索引推进，供命令列表绑定使用
-    }  // 结束 Alloc 函数
+    }
 
     // 功能：释放一个描述符，将其下标归还空闲栈。
     // 思路：用句柄地址反推下标（CPU/GPU 下标应一致），压回空闲列表供后续复用。
@@ -86,7 +87,7 @@ struct DescriptorHeapAllocator {
         const int gpu_index = static_cast<int>((gpu_desc_handle.ptr - heap_start_gpu.ptr) / heap_handle_increment);  // 用 GPU 句柄地址反推下标，正常情况下两者应相等
         IM_ASSERT(cpu_index == gpu_index);  // 断言两端下标一致，防止传入不匹配的句柄
         free_indices.push_back(cpu_index);  // 把下标归还空闲栈，供后续 Alloc 复用
-    }  // 结束 Free 函数
+    }
 };  // DescriptorHeapAllocator 结构体定义结束
 
 // WindowsVideoTexture —— 单张视频纹理：D3D12 资源、SRV 的 CPU/GPU 描述符句柄、尺寸与状态标志。
@@ -98,7 +99,7 @@ struct WindowsVideoTexture {
     int height = 0;  // 纹理像素高度，未上传时为 0
     bool uploaded_once = false;         // 是否已经至少上传过一帧：决定复用前是否需要 PSR -> COPY_DEST 屏障
     bool descriptor_allocated = false;  // 对应的 SRV 描述符是否已从该后端堆中分配。
-};  // WindowsVideoTexture 结构体定义结束
+};
 
 // WindowsDynamicTextureSet —— 双缓冲视频纹理集合：轮换使用两张纹理避免上传与渲染相互阻塞。
 struct WindowsDynamicTextureSet {
@@ -107,20 +108,31 @@ struct WindowsDynamicTextureSet {
     int next_index = 1;     // 下一次上传写入的一张（写完成后再切换 current）。
 };  // WindowsDynamicTextureSet 结构体定义结束
 
-// TextureUploadContext —— 视频帧上传用的常驻资源集合。
-// 为什么要常驻：原实现每帧都新建命令队列/分配器/命令列表/fence/event + 8MB 上传缓冲，
-// 1080p60 下每秒要创建销毁上百个 D3D12 对象、约 475MiB 的资源分配，既卡顿又容易触发驱动抖动。
-// 这里把它们做成一次性创建、按需扩容、循环复用，每帧只做 Map/拷贝/提交/等待。
-struct TextureUploadContext {
-    ID3D12CommandQueue *queue = nullptr;      // 专用拷贝队列（与渲染队列解耦，避免打乱主渲染节奏）
+// 上传桶数量：3 个。为什么是 3：CPU 写完第 N 桶时，第 N-1 桶可能还在 GPU 上跑，第 N+1 桶已经在准备；
+// 只有绕回同一个桶才可能需要等，而那时 GPU 通常早已拷完（正常情况下等待次数为 0）。
+constexpr int kTextureUploadBucketCount = 3;
+
+// TextureUploadBucket —— 一次上传所需的全部资源。
+// 每个桶独立成套，才能让"上一帧还在 GPU 上跑"和"这一帧正在写内存"互不干扰。
+struct TextureUploadBucket {
     ID3D12CommandAllocator *allocator = nullptr;  // 命令分配器
     ID3D12GraphicsCommandList *list = nullptr;    // 命令列表
-    ID3D12Fence *fence = nullptr;             // 上传完成围栏
-    HANDLE event = nullptr;                   // 围栏完成事件
-    ID3D12Resource *upload_buffer = nullptr;  // 常驻上传缓冲（按最大帧尺寸扩容）
-    UINT64 upload_capacity = 0;               // 上传缓冲当前容量（字节）
-    UINT64 fence_value = 0;                   // 围栏单调递增值
-};  // TextureUploadContext 结构体定义结束
+    ID3D12Resource *upload_buffer = nullptr;      // 上传缓冲（UPLOAD 堆，CPU 可写）
+    void *mapped = nullptr;                       // 常驻映射地址：创建时 Map 一次，之后每帧直接 memcpy
+    UINT64 capacity = 0;                          // 该缓冲容量（字节）
+    UINT64 fence_value = 0;                       // 该桶最后一次提交对应的围栏值；0 表示从未使用
+};
+
+// TextureUploadContext —— 视频帧上传用的常驻资源集合。
+// 命令缓冲/分配器/围栏只创建一次，按桶轮转复用；命令提交到渲染队列（不再另建队列），
+// 靠"同队列顺序执行"保证拷贝一定发生在同帧绘制之前，CPU 侧无需阻塞等待。
+struct TextureUploadContext {
+    std::array<TextureUploadBucket, kTextureUploadBucketCount> buckets;  // 轮转使用的三个桶
+    int next_bucket = 0;              // 下一次写入哪个桶
+    UINT64 fence_value = 0;           // 全局单调递增的围栏值
+    ID3D12Fence *fence = nullptr;     // 上传完成围栏
+    HANDLE event = nullptr;           // 围栏完成事件（只在真的需要等时才用）
+};
 
 // WindowsPlatformBackend —— PlatformBackend 的 Windows 实现：Win32 窗口 + DirectX12，承载所有 DX12 资源管理。
 class WindowsPlatformBackend final : public RoboGo::platform::PlatformBackend {
@@ -130,7 +142,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     // 返回值：C 字符串形式的应用名（静态存储，生命周期安全）。
     [[nodiscard]] const char *application_name() const override {
         return "RoboGo-windows";  // 返回 Windows 平台标识字符串，供日志与调试区分运行平台
-    }  // 结束 application_name 函数
+    }
 
     // 功能：初始化整个 Windows 后端（DPI、窗口、DX12 设备、ImGui 上下文、视频纹理描述符）。
     // 思路：依次开启 DPI 感知、注册窗口类、创建窗口、创建设备，再初始化 ImGui 的 Win32/DX12 后端。
@@ -143,23 +155,23 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         // 构造并注册 Win32 窗口类：使用 CS_CLASSDC 共享设备上下文，窗口过程指向静态转发函数 StaticWndProc。
         window_class_ = {sizeof(window_class_),
                          CS_CLASSDC,         // 共享设备上下文，避免每个窗口都创建独立的上下文
-                         StaticWndProc,      // 窗口过程指向静态转发函数 StaticWndProc  
+                         StaticWndProc,      // 窗口过程指向静态转发函数 StaticWndProc
                          0L,                 // 额外的窗口类数据字节数，0 表示无
                          0L,                 // 额外的窗口实例数据字节数，0 表示无
-                         GetModuleHandleW(nullptr),// 应用实例句柄，用于加载图标等资源
-                         LoadIcon(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDI_APP_ICON)),// 加载应用图标
+                         GetModuleHandleW(nullptr),  // 应用实例句柄，用于加载图标等资源
+                         LoadIcon(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDI_APP_ICON)),  // 加载应用图标
                          nullptr, // 菜单资源句柄，0 表示无
                          nullptr, // 背景画刷句柄，0 表示使用默认
                          nullptr, // 鼠标指针资源句柄，0 表示使用默认
                          L"RoboGo", // 窗口类名，用于创建窗口时指定类名
                          nullptr   // 窗口图标资源句柄，0 表示使用默认
-                        };  // 窗口类描述结构体初始化结束
+                        };
         // 注册窗口类
         // 注册窗口类失败时，会返回 0，需要检查返回值是否为 0。
         if (::RegisterClassExW(&window_class_) == 0) {
             SPDLOG_CRITICAL("注册Windows窗口类失败");  // 记录窗口类注册失败
             return false;  // 注册失败，终止初始化
-        }  // 结束注册窗口类的失败分支
+        }
         window_class_registered_ = true;  // 标记窗口类已注册（退出时据此注销）
 
         // 以重叠窗口样式在 (100,100) 处创建 1280x800 的 RoboGo 窗口，并将 this 作为创建参数传入以便回取后端指针。
@@ -178,7 +190,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             SPDLOG_CRITICAL("创建Windows窗口失败");  // 记录窗口创建失败
             CleanupWindow();  // 清理已注册的窗口类
             return false;  // 窗口创建失败，终止初始化
-        }  // 结束窗口创建失败分支
+        }
 
         // 创建 DirectX12 设备、交换链等核心图形资源。
         if (!CreateDeviceD3D()) {
@@ -186,7 +198,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             CleanupDeviceD3D();  // 释放已创建的 D3D 资源
             CleanupWindow();  // 清理回退窗口
             return false;  // 设备初始化失败，终止
-        }  // 结束 D3D 设备初始化失败分支
+        }
         SPDLOG_INFO("Direct3D初始化成功");  // 记录 D3D 初始化成功
 
         ::ShowWindow(hwnd_, SW_SHOWDEFAULT); // 显示窗口
@@ -200,7 +212,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
 
         // 组装 DX12 后端初始化信息：填入设备、命令队列、飞行帧数、RTV/SRV 格式以及 SRV 描述符分配回调。
         ImGui_ImplDX12_InitInfo init_info = {};  // 组装 DX12 后端初始化信息结构体
-        init_info.Device = device_; // DX12 设备             
+        init_info.Device = device_; // DX12 设备
         init_info.CommandQueue = command_queue_; // 命令队列
         init_info.NumFramesInFlight = kFramesInFlight; // 飞行帧数
         init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // RTV 格式
@@ -213,7 +225,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
                                             D3D12_GPU_DESCRIPTOR_HANDLE *out_gpu_handle) {  // 分配回调 lambda 的参数表结束，进入函数体
             auto *backend = static_cast<WindowsPlatformBackend *>(info->UserData);  // 从 UserData 取回后端实例指针
             backend->srv_descriptor_heap_allocator_.Alloc(out_cpu_handle, out_gpu_handle);  // 把分配请求转发给后端的 SRV 堆子分配器
-        };  // 结束 SRV 分配回调 lambda
+        };
         // 提供 SRV 描述符的释放回调：让 ImGui 通过后端自己的堆分配器归还描述符。
         init_info.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo *info,
                                            const D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle,  // 初始化信息指针（此处未使用，仅为满足回调签名）
@@ -229,23 +241,23 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         AllocateVideoTextureDescriptors();  // 为所有视频纹理预先从 SRV 堆分配描述符
         initialized_ = true;  // 标记后端初始化完成
         return true;  // 初始化成功
-    }  // 结束 Initialize 函数
+    }
 
     // 功能：释放 Windows 后端所有资源（纹理、ImGui、DX12 设备、窗口）。
     // 思路：先解除输入捕获并等待 GPU 完成，再依次释放视频纹理、ImGui 上下文、DX12 设备与窗口。
     void Shutdown() override {
         if (!initialized_) {  // 未初始化则没有需要释放的资源，直接返回
             return;  // 提前返回，保证 Shutdown 可重复调用
-        }  // 结束未初始化判断
+        }
 
         // 退出游戏输入捕获模式（恢复鼠标），并等待所有在飞的 GPU 命令完成。
         SetGameInputCapture(false);
         WaitForPendingOperations();  // 阻塞等待 GPU 执行完所有已提交命令，避免释放仍在使用的资源
 
-        // 释放三类视频纹理集合，并归还它们的 SRV 描述符。
+        // 释放 UDP 视频与小地图纹理集合，并归还它们的 SRV 描述符。
         ReleaseDynamicTextureSet(udp_video_textures_, true);
-        ReleaseDynamicTextureSet(custom_video_textures_, true);  // 释放自定义视频的双缓冲纹理并归还描述符
         ReleaseTexture(mini_map_texture_, true);  // 释放小地图静态纹理并归还其描述符
+        ReleaseTexture(mini_map_terrain_texture_, true);  // 释放地形分层叠加纹理
         ReleaseTextureUploadContext();  // 释放常驻的上传队列/分配器/命令列表/fence/上传缓冲
 
         // 关闭 ImGui 的 DX12/Win32 后端并销毁 ImGui 上下文。
@@ -257,7 +269,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         CleanupDeviceD3D();  // 释放全部 D3D 资源
         CleanupWindow();  // 销毁窗口并注销窗口类
         initialized_ = false;  // 复位初始化标志，防止重复释放
-    }  // 结束 Shutdown 函数
+    }
 
     // 功能：非阻塞地取出并分发所有窗口消息。
     // 思路：用 PeekMessage 轮询消息队列，遇到 WM_QUIT 时标记应关闭；返回是否应继续运行主循环。
@@ -283,10 +295,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             // 若遇到 WM_QUIT（窗口关闭消息） 则标记应关闭，返回 false（结束主循环）。
             if (message.message == WM_QUIT) {
                 should_close_ = true;  // 收到退出消息，标记应关闭
-            }  // 结束 WM_QUIT 判断
+            }
         }  // 结束消息轮询循环
         return !should_close_;  // 已标记关闭则返回 false 结束主循环
-    }  // 结束 ProcessEvents 函数
+    }
 
     // 功能：开始新的一帧，处理交换链被遮挡/窗口最小化的暂停情形。
     // 思路：若交换链仍被遮挡或窗口最小化则短暂休眠并返回 false（跳过本帧）；否则依次启动 DX12/Win32/ImGui 帧。
@@ -295,14 +307,14 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         if ((swap_chain_occluded_ && swap_chain_->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) || ::IsIconic(hwnd_)) {
             ::Sleep(10);  // 暂停 10ms 避免空转
             return false;  // 本帧跳过渲染
-        }  // 结束“遮挡或最小化”时的暂停分支
+        }
         swap_chain_occluded_ = false;  // 取消遮挡标记，恢复正常出帧
 
         ImGui_ImplDX12_NewFrame();  // 启动 ImGui 的 DX12 后端帧（准备顶点/索引缓冲与描述符）
         ImGui_ImplWin32_NewFrame();  // 启动 ImGui 的 Win32 后端帧（采集鼠标键盘输入）
         ImGui::NewFrame();  // 开始新的 ImGui 逻辑帧（重置绘制列表）
         return true;  // 本帧可以正常渲染，返回 true
-    }  // 结束 BeginFrame 函数
+    }
 
     // 功能：将本帧 ImGui 绘制数据渲染到后台缓冲并提交呈现。
     // 思路：等待可用帧上下文，把后台缓冲从 PRESENT 态转为 RENDER_TARGET 态后清屏、绘制，再转回 PRESENT 态并呈现。
@@ -346,7 +358,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         const HRESULT present_result = swap_chain_->Present(1, 0);  // 呈现后台缓冲（1=垂直同步间隔）
         swap_chain_occluded_ = (present_result == DXGI_STATUS_OCCLUDED);  // 若被遮挡则记录，下帧暂停
         ++frame_index_;  // 帧序号自增，轮换飞行帧上下文
-    }  // 结束 RenderFrame 函数
+    }
 
     // 功能：切换游戏输入捕获模式（将鼠标光标限制在窗口客户区内并隐藏光标）。
     // 思路：enabled 为真时把鼠标裁剪到窗口屏幕坐标矩形并隐藏光标；为假时恢复。重复设置直接返回。
@@ -356,7 +368,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         game_input_captured_ 游戏输入捕获状态*/
         if (hwnd_ == nullptr || game_input_captured_ == enabled) {  // 窗口未创建或状态未发生变化时无需处理
             return;  // 窗口无效或状态已一致，无需处理
-        }  // 结束提前返回分支
+        }
 
         if (enabled) {  // 进入“开启捕获”分支
             // 取窗口客户区，并将其左上/右下角换算为屏幕坐标，得到鼠标裁剪矩形。
@@ -382,10 +394,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             ClipCursor(nullptr);
             ShowCursor(TRUE);  // 恢复显示系统鼠标光标
             SPDLOG_DEBUG("已解除Windows鼠标光标锁定");  // 调试日志：提示已解除鼠标锁定
-        }  // 结束“关闭捕获”分支
+        }
         // 更新游戏输入捕获状态
         game_input_captured_ = enabled;
-    }  // 结束 SetGameInputCapture 函数
+    }
 
     // 功能：从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
     // 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
@@ -395,11 +407,9 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         switch (slot) {  // 按纹理槽类型分流到不同的上传实现
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 图传视频槽
                 return UploadDynamicTexture(udp_video_textures_, frame);  // UDP 视频走双缓冲动态纹理上传
-            case RoboGo::app::TextureSlot::CustomVideo:  // 自定义客户端视频槽
-                return UploadDynamicTexture(custom_video_textures_, frame);  // 自定义视频同样走双缓冲动态纹理上传
             case RoboGo::app::TextureSlot::MiniMap:  // 小地图槽
                 return UploadStaticTexture(mini_map_texture_, frame.buffer.data(), frame.width, frame.height);  // 小地图内容变化不频繁，走静态纹理上传
-        }  // 结束 switch 分支
+        }
         return false;  // 未知槽位或不支持，返回失败
     }  // 结束 UploadTexture（视频帧重载）
 
@@ -408,10 +418,14 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     // 参数：slot —— 目标纹理槽（仅 MiniMap）；image —— 已解码图像像素数据。
     // 返回值：true 上传成功，false 槽位不支持或上传失败。
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) override {
-        if (slot != RoboGo::app::TextureSlot::MiniMap) {  // 只有小地图槽接受已解码的静态图像
-            return false;  // 其它槽位不支持，直接返回失败
-        }  // 结束槽位判断
-        return UploadStaticTexture(mini_map_texture_, image.pixels.data(), image.width, image.height);  // 把解码出的像素上传为小地图静态纹理
+        // 两张静态图：小地图底图、地形分层叠加层。都只在启动时上传一次。
+        if (slot == RoboGo::app::TextureSlot::MiniMap) {  // 小地图底图
+            return UploadStaticTexture(mini_map_texture_, image.pixels.data(), image.width, image.height);  // 上传为小地图静态纹理
+        }
+        if (slot == RoboGo::app::TextureSlot::MiniMapTerrain) {  // 地形分层叠加层
+            return UploadStaticTexture(mini_map_terrain_texture_, image.pixels.data(), image.width, image.height);  // 上传为叠加层纹理
+        }
+        return false;  // 视频槽不接受已解码图像
     }  // 结束 UploadTexture（解码图像重载）
 
     // 功能：获取指定纹理槽当前应显示的纹理视图。
@@ -422,13 +436,13 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         switch (slot) {  // 按槽位返回对应的纹理视图
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 视频槽
                 return BuildTextureView(udp_video_textures_.textures[udp_video_textures_.current_index]);  // 取当前正在显示的那一张 UDP 纹理
-            case RoboGo::app::TextureSlot::CustomVideo:  // 自定义视频槽
-                return BuildTextureView(custom_video_textures_.textures[custom_video_textures_.current_index]);  // 取当前正在显示的那一张自定义视频纹理
             case RoboGo::app::TextureSlot::MiniMap:  // 小地图槽
                 return BuildTextureView(mini_map_texture_);  // 小地图是静态纹理，直接取它
-        }  // 结束 switch 分支
+            case RoboGo::app::TextureSlot::MiniMapTerrain:  // 地形分层叠加槽
+                return BuildTextureView(mini_map_terrain_texture_);  // 叠加层同样是静态纹理
+        }
         return {};  // 未命中任何槽位，返回空视图
-    }  // 结束 GetTextureView 函数
+    }
 
 private:  // 以下为内部实现细节，不对外暴露
     // 功能：创建并初始化 DirectX12 核心对象（设备、交换链、描述符堆、命令队列/分配器/列表、fence）。
@@ -449,13 +463,13 @@ private:  // 以下为内部实现细节，不对外暴露
         ID3D12Debug *dx12_debug = nullptr;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dx12_debug)))) {  // 尝试取得调试接口，系统未安装调试层时这里会失败，直接跳过
             dx12_debug->EnableDebugLayer();  // 开启调试层，之后所有 D3D12 调用都会被运行时校验
-        }  // 结束调试接口获取判断
-#endif  // 结束调试层获取条件编译块
+        }
+#endif
 
         // 创建 D3D12 设备（使用默认适配器，特性级别 11.0）。
         if (D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)) != S_OK) {
             return false;  // 设备创建失败，初始化失败
-        }  // 结束 D3D12 设备创建失败分支
+        }
 
 #ifdef DX12_ENABLE_DEBUG_LAYER  // 调试层专用：配置信息队列的断点与过滤规则
         if (dx12_debug != nullptr) {  // 只有成功开启调试层时才需要配置信息队列
@@ -475,8 +489,8 @@ private:  // 以下为内部实现细节，不对外暴露
 
             info_queue->Release();  // 释放信息队列接口引用
             dx12_debug->Release();  // 释放调试接口引用（设备内部仍持有自己的引用，不影响调试层生效）
-        }  // 结束调试层配置块
-#endif  // 结束调试层配置条件编译块
+        }
+#endif
 
         // 创建 RTV（渲染目标视图）描述符堆，数量等于后台缓冲数。
         D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc = {};
@@ -484,7 +498,7 @@ private:  // 以下为内部实现细节，不对外暴露
         rtv_heap_desc.NumDescriptors = kBackBuffers;  // 描述符数量等于后台缓冲数量，每个缓冲一个 RTV
         if (device_->CreateDescriptorHeap(&rtv_heap_desc, IID_PPV_ARGS(&rtv_descriptor_heap_)) != S_OK) {  // 创建 RTV 描述符堆，失败则初始化失败
             return false;  // RTV 堆创建失败
-        }  // 结束 RTV 堆创建失败分支
+        }
 
         // 连续分配 kBackBuffers 个 RTV 句柄，记录到数组供每帧使用。
         const SIZE_T rtv_descriptor_size = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -492,7 +506,7 @@ private:  // 以下为内部实现细节，不对外暴露
         for (UINT i = 0; i < kBackBuffers; ++i) {  // 为每个后台缓冲依次分配一个 RTV 句柄
             main_render_target_descriptor_[i] = rtv_handle;  // 记录第 i 个后台缓冲对应的 RTV 句柄
             rtv_handle.ptr += rtv_descriptor_size;  // 句柄按步长前进，指向下一个描述符位置
-        }  // 结束 RTV 句柄分配循环
+        }
 
         // 创建 SRV（着色器资源视图）描述符堆，供 ImGui 与视频纹理共用，并绑定到本后端的小型分配器。
         D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
@@ -501,7 +515,7 @@ private:  // 以下为内部实现细节，不对外暴露
         srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;  // 标记为着色器可见堆，否则无法被 SetDescriptorHeaps 绑定
         if (device_->CreateDescriptorHeap(&srv_heap_desc, IID_PPV_ARGS(&srv_descriptor_heap_)) != S_OK) {  // 创建 SRV 堆，失败则初始化失败
             return false;  // SRV 堆创建失败
-        }  // 结束 SRV 堆创建失败分支
+        }
         srv_descriptor_heap_allocator_.Create(device_, srv_descriptor_heap_);  // 把该堆交给子分配器管理，后续按需分配描述符
 
         // 创建直接命令队列。
@@ -509,14 +523,14 @@ private:  // 以下为内部实现细节，不对外暴露
         command_queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;  // 命令队列类型为直接队列（可执行图形/计算/拷贝全部命令）
         if (device_->CreateCommandQueue(&command_queue_desc, IID_PPV_ARGS(&command_queue_)) != S_OK) {  // 创建命令队列，失败则初始化失败
             return false;  // 命令队列创建失败
-        }  // 结束命令队列创建失败分支
+        }
 
         // 为每一“飞行中”帧创建独立的命令分配器。
         for (UINT i = 0; i < kFramesInFlight; ++i) {
             if (device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&frame_context_[i].command_allocator)) != S_OK) {  // 为第 i 个“在飞行中”帧创建独立的命令分配器
                 return false;  // 某帧命令分配器创建失败
-            }  // 结束单个分配器创建失败分支
-        }  // 结束飞行帧分配器创建循环
+            }
+        }
 
         // 创建并立即关闭一个命令列表（后续每帧 Reset 复用）。
         if (device_->CreateCommandList(0,
@@ -526,46 +540,46 @@ private:  // 以下为内部实现细节，不对外暴露
                                         IID_PPV_ARGS(&command_list_)) != S_OK  // 初始管线状态，nullptr 表示无（由 ImGui 自行设置）
             || command_list_->Close() != S_OK) {  // 输出图形命令列表接口指针
             return false;  // 命令列表创建或关闭失败
-        }  // 结束命令列表创建或关闭失败分支
+        }
 
         // 创建 fence 与配套的等待事件，用于 CPU/GPU 帧同步。
         if (device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)) != S_OK) {
             return false;  // fence 创建失败
-        }  // 结束 fence 创建失败分支
+        }
 
         fence_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);  // 创建手动重置的等待事件（初始未触发）
         if (fence_event_ == nullptr) {  // 等待事件创建失败则无法做 GPU 同步，直接返回失败
             return false;  // 事件创建失败
-        }  // 结束事件创建失败分支
+        }
 
         // 创建 DXGI 工厂，检查是否支持“允许撕裂”呈现，若支持则给交换链加上对应标志。
         IDXGIFactory5 *dxgi_factory = nullptr;
         IDXGISwapChain1 *swap_chain_1 = nullptr;  // 临时保存基础版本交换链，稍后升级为 IDXGISwapChain3
         if (CreateDXGIFactory1(IID_PPV_ARGS(&dxgi_factory)) != S_OK) {  // 创建 DXGI 工厂，用于查询特性并创建交换链
             return false;  // DXGI 工厂创建失败
-        }  // 结束工厂创建失败分支
+        }
 
         BOOL allow_tearing = FALSE;  // 输出变量：是否允许撕裂呈现（不走垂直同步的低延迟模式）
         dxgi_factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing, sizeof(allow_tearing));  // 查询运行时是否支持 DXGI_FEATURE_PRESENT_ALLOW_TEARING
         swap_chain_tearing_support_ = (allow_tearing == TRUE);  // 缓存撕裂支持结果，供 Present 时决定使用哪种标志
         if (swap_chain_tearing_support_) {  // 支持撕裂时为交换链描述追加对应标志
             swap_chain_desc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;  // 打开“允许撕裂”标志
-        }  // 结束撕裂标志追加
+        }
 
         // 为 HWND 创建交换链，并查询为 IDXGISwapChain3 以获取可等待对象与索引。
         if (dxgi_factory->CreateSwapChainForHwnd(command_queue_, hwnd_, &swap_chain_desc, nullptr, nullptr, &swap_chain_1) != S_OK) {
             dxgi_factory->Release();  // 释放工厂
             return false;  // 交换链创建失败
-        }  // 结束交换链创建失败分支
+        }
         if (swap_chain_1->QueryInterface(IID_PPV_ARGS(&swap_chain_)) != S_OK) {  // 升级到 IDXGISwapChain3（需要它的 GetCurrentBackBufferIndex 等接口）
             swap_chain_1->Release();  // 释放版本1交换链
             dxgi_factory->Release();  // 释放工厂
             return false;  // 升级到 IDXGISwapChain3 失败
-        }  // 结束接口升级失败分支
+        }
         if (swap_chain_tearing_support_) {  // 支持撕裂时，禁用 Alt+Enter 以避免驱动接管全屏
             // 禁用 Alt+Enter 全屏切换，避免打断自定义全屏逻辑。
             dxgi_factory->MakeWindowAssociation(hwnd_, DXGI_MWA_NO_ALT_ENTER);
-        }  // 结束禁用 Alt+Enter 的分支
+        }
         swap_chain_1->Release();  // 释放临时的基础交换链引用（swap_chain_ 已另持一份）
         dxgi_factory->Release();  // 释放 DXGI 工厂（交换链创建完毕后不再需要）
 
@@ -574,7 +588,7 @@ private:  // 以下为内部实现细节，不对外暴露
         swap_chain_waitable_object_ = swap_chain_->GetFrameLatencyWaitableObject();  // 取帧延迟可等待对象句柄，用于等待后台缓冲可用
         CreateRenderTarget();  // 创建后台缓冲渲染目标视图
         return true;  // D3D 核心对象全部创建成功
-    }  // 结束 CreateDeviceD3D 函数
+    }
 
     // 功能：释放所有 DX12 相关资源（交换链、命令队列/列表、描述符堆、fence、设备）。
     // 思路：先清理渲染目标，再按创建逆序逐个 Release 并置空指针；调试层下额外报告存活对象以便排查泄漏。
@@ -588,13 +602,13 @@ private:  // 以下为内部实现细节，不对外暴露
         if (swap_chain_waitable_object_ != nullptr) {  // 关闭交换链可等待对象句柄
             CloseHandle(swap_chain_waitable_object_);  // 关闭内核句柄
             swap_chain_waitable_object_ = nullptr;  // 置空句柄
-        }  // 结束可等待对象关闭
+        }
         for (auto &context: frame_context_) {  // 遍历每个飞行帧上下文，释放其命令分配器
             if (context.command_allocator != nullptr) {  // 分配器存在才需要释放
                 context.command_allocator->Release();  // 释放命令分配器
                 context.command_allocator = nullptr;  // 置空，避免重复释放
             }  // 结束单个分配器释放
-        }  // 结束分配器遍历循环
+        }
         if (command_queue_ != nullptr) {  // 释放命令队列
             command_queue_->Release();  // 减少引用计数
             command_queue_ = nullptr;  // 置空指针
@@ -619,7 +633,7 @@ private:  // 以下为内部实现细节，不对外暴露
         if (fence_event_ != nullptr) {  // 关闭围栏等待事件句柄
             CloseHandle(fence_event_);  // 关闭内核句柄
             fence_event_ = nullptr;  // 置空句柄
-        }  // 结束事件句柄关闭
+        }
         if (device_ != nullptr) {  // 最后释放 D3D12 设备
             device_->Release();  // 减少引用计数（必须晚于所有由它创建的资源）
             device_ = nullptr;  // 置空指针
@@ -631,9 +645,9 @@ private:  // 以下为内部实现细节，不对外暴露
         if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&debug)))) {  // 取 DXGI 调试接口（0 表示使用默认调试通道）
             debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_SUMMARY);  // 输出存活对象摘要，存在泄漏时可在此看到
             debug->Release();  // 释放调试接口引用
-        }  // 结束调试接口使用
-#endif  // 结束调试层泄漏报告块
-    }  // 结束 CleanupDeviceD3D 函数
+        }
+#endif
+    }
 
     // 功能：销毁窗口并注销窗口类。
     // 思路：先销毁 HWND，再在已注册时注销窗口类并复位标志。
@@ -641,12 +655,12 @@ private:  // 以下为内部实现细节，不对外暴露
         if (hwnd_ != nullptr) {  // 窗口句柄存在才需要销毁
             ::DestroyWindow(hwnd_);  // 销毁窗口（会触发 WM_DESTROY 消息）
             hwnd_ = nullptr;  // 置空句柄
-        }  // 结束窗口销毁
+        }
         if (window_class_registered_) {  // 窗口类已注册才需要注销
             ::UnregisterClassW(window_class_.lpszClassName, window_class_.hInstance);  // 注销窗口类，释放系统侧的类注册
             window_class_registered_ = false;  // 复位注册标志，保证下次可重新注册
-        }  // 结束窗口类注销
-    }  // 结束 CleanupWindow 函数
+        }
+    }
 
     // 功能：为交换链的每个后台缓冲创建渲染目标视图(RTV)。
     // 思路：依次取交换链缓冲，用预分配的 RTV 句柄创建 RTV 并保存资源指针。
@@ -656,8 +670,8 @@ private:  // 以下为内部实现细节，不对外暴露
             swap_chain_->GetBuffer(i, IID_PPV_ARGS(&back_buffer));  // 取第 i 个后台缓冲（会 AddRef，一份引用由本后端持有）
             device_->CreateRenderTargetView(back_buffer, nullptr, main_render_target_descriptor_[i]);  // 以默认描述创建 RTV，写入预分配好的句柄位置
             main_render_target_resource_[i] = back_buffer;  // 保存资源指针，供每帧提交状态转换屏障时使用
-        }  // 结束 RTV 创建循环
-    }  // 结束 CreateRenderTarget 函数
+        }
+    }
 
     // 功能：释放后台缓冲渲染目标资源。
     // 思路：先等待 GPU 完成，再逐个 Release 后台缓冲资源。
@@ -668,8 +682,8 @@ private:  // 以下为内部实现细节，不对外暴露
                 resource->Release();  // 减少引用计数
                 resource = nullptr;  // 置空，避免悬垂
             }  // 结束单个资源释放
-        }  // 结束遍历
-    }  // 结束 CleanupRenderTarget 函数
+        }
+    }
 
     // 功能：阻塞等待所有已提交但尚未完成的 GPU 命令执行完毕。
     // 思路：向 fence 发信号、设置完成事件，再用 WaitForSingleObject 等待该事件。
@@ -677,15 +691,15 @@ private:  // 以下为内部实现细节，不对外暴露
     void WaitForPendingOperations() {
         // 防御性检查：命令队列/围栏/事件任一为空时无法可靠等待，直接返回，避免对空接口调用导致崩溃。
         if (command_queue_ == nullptr || fence_ == nullptr || fence_event_ == nullptr) {
-            return;  // 结束防御性判空返回
-        }  // 结束 WaitForPendingOperations 函数
+            return;
+        }
         // 向命令队列提交一个“信号”指令：把围栏值递增到 fence_last_signaled_value_，标记“当前已提交的命令到此为止”。
         command_queue_->Signal(fence_, ++fence_last_signaled_value_);
         // 注册完成事件：当 GPU 执行进度达到该值时，自动将 fence_event_ 置为触发态，供下方等待。
         fence_->SetEventOnCompletion(fence_last_signaled_value_, fence_event_);
         // 阻塞等待该事件被触发（INFINITE=无限期），即等到 GPU 真正执行完所有已提交命令后才返回，确保资源释放安全。
         ::WaitForSingleObject(fence_event_, INFINITE);
-    }  // 结束 WaitForNextFrameContext 函数
+    }
 
     // 功能：获取当前帧对应的帧上下文，并在必要时等待其上一轮 GPU 工作结束或交换链可呈现。
     // 思路：用帧索引对飞行帧数取模选取上下文；若 GPU 未完成该帧则同时等待 fence 与交换链可等待对象。
@@ -708,7 +722,7 @@ private:  // 以下为内部实现细节，不对外暴露
         } else {  // GPU 已完成上一轮工作，只需等待交换链给出可用缓冲
             // GPU 早已完成该上下文上一轮工作，无需等 fence；只需等交换链给出一块可呈现的后台缓冲即可开始本帧。
             ::WaitForSingleObject(swap_chain_waitable_object_, INFINITE);
-        }  // 结束 else 分支
+        }
         // 返回选中的帧上下文指针（其 command_allocator 将被本帧 Reset 后重新录制命令）；
         // 该指针指向本后端内部的 frame_context_ 数组成员，生命周期与后端一致，调用方无需释放。
         return frame_context;
@@ -727,28 +741,28 @@ private:  // 以下为内部实现细节，不对外暴露
                                              ID3D12Resource **out_texture_resource) const {  // 创建 SRV 的目标 CPU 描述符句柄
         // 目标纹理放在默认（显存）堆，初态为 COPY_DEST，等待接收上传数据。
         D3D12_HEAP_PROPERTIES props = {};
-        props.Type = D3D12_HEAP_TYPE_DEFAULT;// 默认堆，显存
+        props.Type = D3D12_HEAP_TYPE_DEFAULT;  // 默认堆，显存
 
-        D3D12_RESOURCE_DESC desc = {};// 目标纹理描述
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;// 2D 纹理
+        D3D12_RESOURCE_DESC desc = {};  // 目标纹理描述
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;  // 2D 纹理
         desc.Width = width;  // 纹理宽度
         desc.Height = height;  // 纹理高度
         desc.DepthOrArraySize = 1;  // 2D 纹理的深度/数组层数固定为 1
         desc.MipLevels = 1;  // 只生成 1 级 Mip（不需要降采样链）
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;// RGBA8 格式
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // RGBA8 格式
         desc.SampleDesc.Count = 1;  // 关闭多重采样，一个像素一个样本
-        desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;// 未知布局
+        desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;  // 未知布局
 
         ID3D12Resource *texture = nullptr;  // 用于接收创建出的目标纹理资源
-        HRESULT hr = device_->CreateCommittedResource(&props,// 创建堆
-                                                      D3D12_HEAP_FLAG_NONE,// 无标志
-                                                      &desc,// 目标纹理描述
-                                                      D3D12_RESOURCE_STATE_COPY_DEST,// 初始态 COPY_DEST
-                                                      nullptr,// 无初始数据
-                                                      IID_PPV_ARGS(&texture));// 创建纹理资源
+        HRESULT hr = device_->CreateCommittedResource(&props,  // 创建堆
+                                                      D3D12_HEAP_FLAG_NONE,  // 无标志
+                                                      &desc,  // 目标纹理描述
+                                                      D3D12_RESOURCE_STATE_COPY_DEST,  // 初始态 COPY_DEST
+                                                      nullptr,  // 无初始数据
+                                                      IID_PPV_ARGS(&texture));  // 创建纹理资源
         if (FAILED(hr)) {  // 纹理资源创建失败则直接返回
             return false;  // 上报失败，交由上层处理
-        }  // 结束创建失败分支
+        }
 
         // 计算按 D3D12 对齐要求的每行字节跨度(行距)与总上传大小。
         const UINT upload_pitch =
@@ -757,8 +771,8 @@ private:  // 以下为内部实现细节，不对外暴露
         const UINT upload_size = static_cast<UINT>(height) * upload_pitch;  // 上传缓冲总大小 = 高度 × 对齐后的行距
 
         // 描述上传缓冲（行主序的缓冲，放在可映射的 UPLOAD 堆，初态 GENERIC_READ）。
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;// 缓冲区
-        desc.Width = upload_size;// 上传缓冲区大小
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;  // 缓冲区
+        desc.Width = upload_size;  // 上传缓冲区大小
         desc.Height = 1;  // 缓冲资源的“高度”固定为 1（一维缓冲）
         desc.DepthOrArraySize = 1;  // 深度/数组层数为 1
         desc.MipLevels = 1;  // Mip 层数为 1
@@ -777,7 +791,7 @@ private:  // 以下为内部实现细节，不对外暴露
         if (FAILED(hr)) {  // 上传缓冲创建失败则回收目标纹理
             texture->Release();  // 释放刚创建的目标纹理
             return false;  // 上报失败
-        }  // 结束上传缓冲失败分支
+        }
 
         // 映射上传缓冲，按行拷贝像素（每行按对齐后的 upload_pitch 间隔，源数据按实际行宽）。
         void *mapped = nullptr;
@@ -787,14 +801,14 @@ private:  // 以下为内部实现细节，不对外暴露
             upload_buffer->Release();  // 释放上传缓冲
             texture->Release();  // 释放目标纹理
             return false;  // 上报失败
-        }  // 结束映射失败分支
+        }
         auto *mapped_bytes = static_cast<uint8_t *>(mapped);  // 以字节指针形式使用映射到的地址
         const size_t row_bytes = static_cast<size_t>(width) * 4u;  // 源数据每行实际字节数 = 宽 × 4（RGBA 每像素 4 字节）
         for (int y = 0; y < height; ++y) {  // 逐行把像素拷入上传缓冲
             memcpy(mapped_bytes + static_cast<size_t>(y) * upload_pitch,  // 目标地址按对齐行距前进（D3D12 要求每行起始 256 字节对齐）
                    data + static_cast<size_t>(y) * row_bytes,  // 源地址按实际行宽前进
                    row_bytes);  // 每行拷贝的字节数
-        }  // 结束逐行拷贝循环
+        }
         D3D12_RANGE written_range = {0, upload_size};  // 告知驱动 CPU 已写入的区间，便于缓存写回管理
         upload_buffer->Unmap(0, &written_range);  // 解除映射，确保写入内容对 GPU 可见
 
@@ -878,64 +892,70 @@ private:  // 以下为内部实现细节，不对外暴露
 
         *out_texture_resource = texture;  // 把纹理资源指针交给调用方持有
         return true;  // 创建并上传成功
-    }  // 结束 LoadTextureFromMemory 函数
+    }
 
-    // 功能：为所有视频纹理（UDP、自定义、小地图）预先从 SRV 堆分配描述符。
+    // 功能：为所有视频纹理（UDP、小地图）预先从 SRV 堆分配描述符。
     // 思路：在初始化时一次性分配好描述符并标记，避免运行时频繁分配。
     void AllocateVideoTextureDescriptors() {
         for (auto &texture: udp_video_textures_.textures) {  // 为 UDP 双缓冲的两张纹理各分配一个描述符
             srv_descriptor_heap_allocator_.Alloc(&texture.cpu_handle, &texture.gpu_handle);  // 分配 CPU/GPU 句柄并写回纹理结构
             texture.descriptor_allocated = true;  // 标记已分配，释放时需要归还
-        }  // 结束 UDP 描述符分配循环
-        for (auto &texture: custom_video_textures_.textures) {  // 为自定义视频双缓冲的两张纹理各分配描述符
-            srv_descriptor_heap_allocator_.Alloc(&texture.cpu_handle, &texture.gpu_handle);  // 分配并写回句柄
-            texture.descriptor_allocated = true;  // 标记已分配
-        }  // 结束自定义视频描述符分配循环
+        }
         srv_descriptor_heap_allocator_.Alloc(&mini_map_texture_.cpu_handle, &mini_map_texture_.gpu_handle);  // 为小地图纹理分配描述符
         mini_map_texture_.descriptor_allocated = true;  // 标记已分配
-    }  // 结束 AllocateVideoTextureDescriptors 函数
+        // 地形分层叠加层同样需要预留描述符：CreateShaderResourceView 会直接往这个句柄写，
+        // 漏掉这一句的话句柄为空、上传时进程会崩（已实测踩过一次）。
+        srv_descriptor_heap_allocator_.Alloc(&mini_map_terrain_texture_.cpu_handle, &mini_map_terrain_texture_.gpu_handle);  // 为地形叠加层分配描述符
+        mini_map_terrain_texture_.descriptor_allocated = true;  // 标记已分配
+    }
 
     // 功能：确保上传上下文（队列/分配器/命令列表/fence/事件/上传缓冲）已创建，且上传缓冲容量足够。
     // 参数：required_size 本帧需要写入的字节数（行距已对齐）。
     // 返回值：true 表示可以开始上传。
-    [[nodiscard]] bool EnsureTextureUploadContext(const UINT required_size) const {
-        TextureUploadContext &context = texture_upload_;  // 常驻上下文（mutable，const 方法里也能更新）
-        if (context.queue == nullptr) {  // 首次使用：把一次性对象都建好
-            D3D12_COMMAND_QUEUE_DESC queue_desc = {};  // 队列描述
-            queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;  // 直接队列（拷贝 + 屏障）
-            if (FAILED(device_->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&context.queue)))) {  // 创建专用拷贝队列
-                SPDLOG_ERROR("创建纹理上传队列失败");  // 记录失败
-                return false;  // 交给上层丢弃该帧
-            }  // 结束队列创建
-            if (FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context.allocator)))) {  // 创建分配器
-                SPDLOG_ERROR("创建纹理上传分配器失败");  // 记录失败
-                return false;  // 放弃
-            }  // 结束分配器创建
-            if (FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, context.allocator, nullptr,
-                                                  IID_PPV_ARGS(&context.list)))) {  // 创建命令列表
-                SPDLOG_ERROR("创建纹理上传命令列表失败");  // 记录失败
-                return false;  // 放弃
-            }  // 结束命令列表创建
-            context.list->Close();  // 新建的命令列表处于打开状态，必须先关闭才能 Reset
+    // 功能：确保上传围栏与指定桶的资源就绪（分配器/命令列表/足够大的上传缓冲）。
+    // 关键点：上传缓冲创建时 Map 一次并常驻映射，之后每帧只做 memcpy，不再每帧 Map/Unmap（省两次系统调用）。
+    [[nodiscard]] bool EnsureTextureUploadBucket(TextureUploadBucket &bucket, const UINT required_size) {
+        TextureUploadContext &context = texture_upload_;  // 常驻上下文
+        if (context.fence == nullptr) {  // 首次使用：建围栏与完成事件
             if (FAILED(device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&context.fence)))) {  // 创建围栏
                 SPDLOG_ERROR("创建纹理上传围栏失败");  // 记录失败
-                return false;  // 放弃
-            }  // 结束围栏创建
+                return false;  // 放弃本帧
+            }
             context.event = CreateEvent(nullptr, FALSE, FALSE, nullptr);  // 自动重置事件
             if (context.event == nullptr) {  // 事件创建失败
                 SPDLOG_ERROR("创建纹理上传事件失败");  // 记录失败
-                return false;  // 放弃
-            }  // 结束事件创建
-        }  // 结束首次初始化
+                return false;  // 放弃本帧
+            }
+        }
 
-        if (context.upload_capacity >= required_size) {  // 容量够用：直接复用
-            return true;  // 无需扩容
-        }  // 结束容量判断
+        if (bucket.allocator == nullptr) {  // 该桶还没有分配器
+            if (FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&bucket.allocator)))) {  // 创建分配器
+                SPDLOG_ERROR("创建纹理上传分配器失败");  // 记录失败
+                return false;  // 放弃本帧
+            }
+        }
 
-        if (context.upload_buffer != nullptr) {  // 容量不够：先释放旧缓冲
-            context.upload_buffer->Release();  // 释放旧上传缓冲
-            context.upload_buffer = nullptr;  // 置空
-            context.upload_capacity = 0;  // 清零容量
+        if (bucket.list == nullptr) {  // 该桶还没有命令列表
+            if (FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, bucket.allocator, nullptr,
+                                                  IID_PPV_ARGS(&bucket.list)))) {  // 创建命令列表
+                SPDLOG_ERROR("创建纹理上传命令列表失败");  // 记录失败
+                return false;  // 放弃本帧
+            }
+            bucket.list->Close();  // 新建的命令列表处于打开状态，必须先关闭才能 Reset
+        }
+
+        if (bucket.capacity >= required_size) {  // 容量够用
+            return true;  // 直接复用
+        }
+
+        if (bucket.upload_buffer != nullptr) {  // 容量不够：先释放旧缓冲
+            if (bucket.mapped != nullptr) {  // 解除常驻映射
+                bucket.upload_buffer->Unmap(0, nullptr);  // Unmap 后才能释放
+                bucket.mapped = nullptr;  // 置空
+            }
+            bucket.upload_buffer->Release();  // 释放旧缓冲
+            bucket.upload_buffer = nullptr;  // 置空
+            bucket.capacity = 0;  // 清零容量
         }  // 结束旧缓冲释放
 
         D3D12_HEAP_PROPERTIES properties = {};  // 堆属性
@@ -951,13 +971,21 @@ private:  // 以下为内部实现细节，不对外暴露
         description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;  // 行主序
         if (FAILED(device_->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &description,
                                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                    IID_PPV_ARGS(&context.upload_buffer)))) {  // 创建上传缓冲
+                                                    IID_PPV_ARGS(&bucket.upload_buffer)))) {  // 创建上传缓冲
             SPDLOG_ERROR("创建纹理上传缓冲失败 bytes={}", required_size);  // 记录失败与请求大小
-            return false;  // 放弃
-        }  // 结束上传缓冲创建
-        context.upload_capacity = required_size;  // 记录新容量
-        return true;  // 扩容成功
-    }  // EnsureTextureUploadContext 结束
+            return false;  // 放弃本帧
+        }
+
+        D3D12_RANGE read_range = {0, 0};  // 声明 CPU 不会读这段内存（走只写快路径）
+        void *mapped = nullptr;  // 映射后的 CPU 地址
+        if (FAILED(bucket.upload_buffer->Map(0, &read_range, &mapped))) {  // 常驻映射（只做这一次）
+            SPDLOG_ERROR("映射纹理上传缓冲失败");  // 记录失败
+            return false;  // 放弃本帧
+        }
+        bucket.mapped = mapped;  // 记住映射地址，之后每帧直接用
+        bucket.capacity = required_size;  // 记录容量
+        return true;  // 就绪
+    }
 
     // 功能：按帧尺寸创建（或重建）目标纹理，并创建对应的 SRV。
     // 说明：纹理只在尺寸变化时重建；尺寸不变时复用同一张，避免每帧 8MB 的显存分配。
@@ -984,7 +1012,7 @@ private:  // 以下为内部实现细节，不对外暴露
                                                     IID_PPV_ARGS(&created)))) {  // 初始态为拷贝目标
             SPDLOG_ERROR("创建视频纹理失败 width={} height={}", width, height);  // 记录尺寸便于排查显存
             return false;  // 放弃
-        }  // 结束纹理创建
+        }
 
         D3D12_SHADER_RESOURCE_VIEW_DESC srv_description = {};  // SRV 描述
         srv_description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // 与纹理格式一致
@@ -998,57 +1026,79 @@ private:  // 以下为内部实现细节，不对外暴露
         texture.height = height;  // 记录高度
         texture.uploaded_once = false;  // 新纹理当前处于 COPY_DEST 状态
         return true;  // 创建成功
-    }  // CreateDynamicTexture 结束
+    }
 
     // 功能：把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
     // 思路：尺寸校验 -> 必要时重建纹理 -> 确保上传上下文 -> 写映射内存 -> 录制「屏障 + 拷贝 + 屏障」-> 提交并等待完成。
-    [[nodiscard]] bool UploadFrameToTexture(WindowsVideoTexture &texture, const RoboGo::app::VideoFrame &frame) const {
+    // 功能：把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
+    // 思路：选桶 -> 等该桶上一轮完成 -> 准备资源 -> 纹理尺寸变化时重建 -> 写常驻映射
+    //       -> 录制「屏障 + 拷贝 + 屏障」-> 提交到渲染队列后立即返回（不等 GPU）。
+    // 为什么可以不等：上传与渲染走同一个队列，命令按提交顺序执行，本帧的绘制必然排在上传之后；
+    //       只有绕回同一个桶（3 帧后）时才可能需要等，而那时 GPU 早就拷完了。
+    [[nodiscard]] bool UploadFrameToTexture(WindowsVideoTexture &texture, const RoboGo::app::VideoFrame &frame) {
         if (frame.width <= 0 || frame.height <= 0) {  // 尺寸非法
             return false;  // 丢弃
-        }  // 结束尺寸校验
+        }
         const std::size_t row_bytes = static_cast<std::size_t>(frame.width) * 4u;  // 源数据每行字节数
         if (frame.buffer.size() < row_bytes * static_cast<std::size_t>(frame.height)) {  // 缓冲不够一整帧
             SPDLOG_ERROR("视频帧缓冲长度不足 expect={} actual={}", row_bytes * static_cast<std::size_t>(frame.height),
                          frame.buffer.size());  // 记录期望与实际
             return false;  // 丢弃，避免越界读
-        }  // 结束长度校验
+        }
 
-        if (texture.texture == nullptr || texture.width != frame.width || texture.height != frame.height) {  // 首次或尺寸变化
-            if (!CreateDynamicTexture(texture, frame.width, frame.height)) {  // 重建纹理（内部会释放旧的）
-                return false;  // 创建失败
-            }  // 结束纹理重建
-        }  // 结束重建判断
+        RoboGo::app::perf::RecordVideoSize(frame.width, frame.height);  // 记录当前图传分辨率（性能面板显示用）
 
         const UINT pitch = (static_cast<UINT>(frame.width) * 4u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u)
                            & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);  // 行距按 256 字节对齐
         const UINT upload_size = static_cast<UINT>(frame.height) * pitch;  // 本次需要写入的字节数
-        if (!EnsureTextureUploadContext(upload_size)) {  // 确保上下文与上传缓冲就绪
+
+        TextureUploadContext &context = texture_upload_;  // 常驻上下文
+        TextureUploadBucket &bucket = context.buckets[context.next_bucket];  // 本轮要用的桶
+
+        // 这个桶可能还挂在 GPU 上：必须先等它完成，才能覆盖它的上传缓冲、重置它的分配器。
+        // 正常情况下 fence 早就 signaled，这里只是一次原子读（GetCompletedValue），不会真的阻塞。
+        if (context.fence != nullptr && bucket.fence_value != 0
+            && context.fence->GetCompletedValue() < bucket.fence_value) {
+            context.fence->SetEventOnCompletion(bucket.fence_value, context.event);  // 绑定完成事件
+            WaitForSingleObject(context.event, INFINITE);  // 罕见路径：真的需要等
+        }
+
+        if (!EnsureTextureUploadBucket(bucket, upload_size)) {  // 准备该桶的资源
             return false;  // 失败则丢弃本帧
-        }  // 结束上下文准备
+        }
 
-        TextureUploadContext &context = texture_upload_;  // 取常驻上下文
-        D3D12_RANGE read_range = {0, 0};  // 声明 CPU 不会读这段内存（走只写快路径）
-        void *mapped = nullptr;  // 映射后的 CPU 地址
-        if (FAILED(context.upload_buffer->Map(0, &read_range, &mapped))) {  // 映射上传缓冲
-            SPDLOG_ERROR("映射纹理上传缓冲失败");  // 记录失败
-            return false;  // 丢弃
-        }  // 结束映射失败分支
-        auto *mapped_bytes = static_cast<uint8_t *>(mapped);  // 以字节指针使用
-        for (int y = 0; y < frame.height; ++y) {  // 逐行拷贝（目标按对齐行距前进，源按实际行宽前进）
-            memcpy(mapped_bytes + static_cast<std::size_t>(y) * pitch,
-                   frame.buffer.data() + static_cast<std::size_t>(y) * row_bytes,
-                   row_bytes);  // 拷贝一行像素
-        }  // 结束逐行拷贝
-        context.upload_buffer->Unmap(0, nullptr);  // 解除映射：nullptr 表示 CPU 可能写了整段
+        // 尺寸变化要重建纹理：重建会释放旧资源，必须先让已提交的命令全部执行完。
+        if (texture.texture == nullptr || texture.width != frame.width || texture.height != frame.height) {  // 首次或尺寸变化
+            WaitForPendingOperations();  // 排空队列（只在分辨率切换时走到，代价可以接受）
+            if (!CreateDynamicTexture(texture, frame.width, frame.height)) {  // 重建纹理（内部会释放旧的）
+                return false;  // 创建失败
+            }
+        }
 
-        if (FAILED(context.allocator->Reset())) {  // 复位分配器
+        // 写入常驻映射：不再每帧 Map/Unmap。
+        // 行距恰好等于行字节数时（1920 宽、每行 7680 字节，正好是 256 的整数倍）合并成一次整块拷贝，
+        // 省掉 1080 次函数调用。注意：实测这一步的耗时**几乎不变**（约 1.0ms），
+        // 因为瓶颈不在调用开销，而在写 write-combined 内存的带宽（8.29MB / 1.0ms ≈ 8.3GB/s）。
+        // 想再往下压只能减少字节数（上传 NV12 而非 RGBA），那是另一套 GPU 色彩转换方案。
+        auto *mapped_bytes = static_cast<uint8_t *>(bucket.mapped);  // 常驻映射地址
+        if (pitch == row_bytes) {  // 无行尾填充：可以整块拷
+            memcpy(mapped_bytes, frame.buffer.data(), row_bytes * static_cast<std::size_t>(frame.height));
+        } else {  // 有行尾填充：只能逐行
+            for (int y = 0; y < frame.height; ++y) {  // 逐行拷贝（目标按对齐行距前进，源按实际行宽前进）
+                memcpy(mapped_bytes + static_cast<std::size_t>(y) * pitch,
+                       frame.buffer.data() + static_cast<std::size_t>(y) * row_bytes,
+                       row_bytes);  // 拷贝一行像素
+            }
+        }
+
+        if (FAILED(bucket.allocator->Reset())) {  // 复位分配器
             SPDLOG_ERROR("复位纹理上传分配器失败");  // 记录失败
             return false;  // 丢弃
-        }  // 结束分配器复位
-        if (FAILED(context.list->Reset(context.allocator, nullptr))) {  // 复位命令列表
+        }
+        if (FAILED(bucket.list->Reset(bucket.allocator, nullptr))) {  // 复位命令列表
             SPDLOG_ERROR("复位纹理上传命令列表失败");  // 记录失败
             return false;  // 丢弃
-        }  // 结束命令列表复位
+        }
 
         if (texture.uploaded_once) {  // 复用中的纹理当前处于"着色器可采样"状态
             D3D12_RESOURCE_BARRIER to_copy_dest = {};  // 先转回拷贝目标
@@ -1057,11 +1107,11 @@ private:  // 以下为内部实现细节，不对外暴露
             to_copy_dest.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;  // 全部子资源
             to_copy_dest.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;  // 转换前：可采样
             to_copy_dest.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;  // 转换后：拷贝目标
-            context.list->ResourceBarrier(1, &to_copy_dest);  // 提交屏障
-        }  // 结束复用屏障
+            bucket.list->ResourceBarrier(1, &to_copy_dest);  // 提交屏障
+        }
 
         D3D12_TEXTURE_COPY_LOCATION source_location = {};  // 拷贝源（上传缓冲）
-        source_location.pResource = context.upload_buffer;  // 源资源
+        source_location.pResource = bucket.upload_buffer;  // 源资源
         source_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;  // 缓冲侧用放置足迹描述
         source_location.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // 足迹格式与纹理一致
         source_location.PlacedFootprint.Footprint.Width = static_cast<UINT>(frame.width);  // 足迹宽度
@@ -1074,7 +1124,7 @@ private:  // 以下为内部实现细节，不对外暴露
         destination_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;  // 纹理侧用子资源索引
         destination_location.SubresourceIndex = 0;  // 第 0 级 Mip
 
-        context.list->CopyTextureRegion(&destination_location, 0, 0, 0, &source_location, nullptr);  // 录制拷贝
+        bucket.list->CopyTextureRegion(&destination_location, 0, 0, 0, &source_location, nullptr);  // 录制拷贝
 
         D3D12_RESOURCE_BARRIER to_shader_resource = {};  // 拷贝完成后再转回可采样
         to_shader_resource.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;  // 状态转换屏障
@@ -1082,42 +1132,39 @@ private:  // 以下为内部实现细节，不对外暴露
         to_shader_resource.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;  // 全部子资源
         to_shader_resource.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;  // 转换前：拷贝目标
         to_shader_resource.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;  // 转换后：可采样
-        context.list->ResourceBarrier(1, &to_shader_resource);  // 提交屏障
+        bucket.list->ResourceBarrier(1, &to_shader_resource);  // 提交屏障
 
-        if (FAILED(context.list->Close())) {  // 关闭命令列表
+        if (FAILED(bucket.list->Close())) {  // 关闭命令列表
             SPDLOG_ERROR("关闭纹理上传命令列表失败");  // 记录失败
             return false;  // 丢弃
-        }  // 结束关闭失败分支
+        }
 
-        ID3D12CommandList *command_lists[] = {context.list};  // 提交时需要的接口数组
-        context.queue->ExecuteCommandLists(1, command_lists);  // 提交到专用拷贝队列
+        ID3D12CommandList *command_lists[] = {bucket.list};  // 提交时需要的接口数组
+        command_queue_->ExecuteCommandLists(1, command_lists);  // 提交到渲染队列：与绘制同队列，顺序天然正确
         const UINT64 signal_value = ++context.fence_value;  // 本轮围栏值（单调递增）
-        if (FAILED(context.queue->Signal(context.fence, signal_value))) {  // 提交围栏信号
+        if (FAILED(command_queue_->Signal(context.fence, signal_value))) {  // 提交围栏信号
             SPDLOG_ERROR("纹理上传围栏信号失败");  // 记录失败
             return false;  // 丢弃
-        }  // 结束信号提交
-        if (FAILED(context.fence->SetEventOnCompletion(signal_value, context.event))) {  // 绑定完成事件
-            SPDLOG_ERROR("纹理上传围栏事件绑定失败");  // 记录失败
-            return false;  // 丢弃
-        }  // 结束事件绑定
-        WaitForSingleObject(context.event, INFINITE);  // 等这一帧真正拷完（下一帧要复用同一块上传缓冲）
+        }
+        bucket.fence_value = signal_value;  // 记住本桶最后一次提交，下次复用它时用来判断是否还在跑
+        context.next_bucket = (context.next_bucket + 1) % kTextureUploadBucketCount;  // 轮转到下一个桶
         texture.uploaded_once = true;  // 标记纹理已进入"可采样"状态
-        return true;  // 上传成功
-    }  // UploadFrameToTexture 结束
+        return true;  // 上传成功（命令已提交，GPU 稍后执行）
+    }
 
     // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引。
     // 思路：复用目标槽的纹理与共用的上传缓冲（只在尺寸变化时重建），上传成功后把 current 指向它、next 轮转。
     // 参数：texture_set —— 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
     // 返回值：true 上传与轮换成功，false 纹理创建/上传失败。
-    [[nodiscard]] bool UploadDynamicTexture(WindowsDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) const {
+    [[nodiscard]] bool UploadDynamicTexture(WindowsDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) {
         WindowsVideoTexture &next_texture = texture_set.textures[texture_set.next_index];  // 取出下一张待写入的纹理槽
         if (!UploadFrameToTexture(next_texture, frame)) {  // 复用纹理上传本帧
             return false;  // 上传失败，保持显示上一帧
-        }  // 结束上传
+        }
         texture_set.current_index = texture_set.next_index;  // 把显示索引切到刚写好的这一张
         texture_set.next_index = (texture_set.next_index + 1) % 2;  // 下一张写入槽在 0/1 之间轮转
         return true;  // 动态纹理上传与轮换成功
-    }  // 结束 UploadDynamicTexture 函数
+    }
 
     // 功能：向静态纹理（小地图）上传一次像素数据。
     // 思路：先释放旧纹理再上传新数据，并记录尺寸；静态纹理内容不频繁变化。
@@ -1133,30 +1180,40 @@ private:  // 以下为内部实现细节，不对外暴露
         }  // 结束旧纹理释放
         if (!LoadTextureFromMemory(data, width, height, texture.cpu_handle, &texture.texture)) {  // 创建并上传新的静态纹理
             return false;  // 纹理创建/上传失败
-        }  // 结束上传失败分支
+        }
         texture.width = width;  // 记录纹理宽度
         texture.height = height;  // 记录纹理高度
         return true;  // 静态纹理上传成功
-    }  // 结束 UploadStaticTexture 函数
+    }
 
     // 功能：释放动态纹理集合中的两张纹理。
     // 思路：遍历集合，按指定是否归还描述符的标记逐个释放。
     // 功能：释放常驻的纹理上传上下文（退出时调用一次）。
     // 说明：必须在所有上传都停止之后调用，否则会释放仍在被 GPU 读取的上传缓冲。
+    // 功能：释放常驻的纹理上传上下文（退出时调用一次）。
+    // 说明：必须在所有上传都停止之后调用；三个桶逐个释放，围栏与事件最后释放。
     void ReleaseTextureUploadContext() {
         TextureUploadContext &context = texture_upload_;  // 常驻上下文
-        if (context.list != nullptr) {  // 命令列表
-            context.list->Release();  // 释放
-            context.list = nullptr;  // 置空
-        }  // 结束命令列表释放
-        if (context.allocator != nullptr) {  // 命令分配器
-            context.allocator->Release();  // 释放
-            context.allocator = nullptr;  // 置空
-        }  // 结束分配器释放
-        if (context.queue != nullptr) {  // 拷贝队列
-            context.queue->Release();  // 释放
-            context.queue = nullptr;  // 置空
-        }  // 结束队列释放
+        for (auto &bucket: context.buckets) {  // 逐个桶释放
+            if (bucket.list != nullptr) {  // 命令列表
+                bucket.list->Release();  // 释放
+                bucket.list = nullptr;  // 置空
+            }  // 结束命令列表释放
+            if (bucket.allocator != nullptr) {  // 命令分配器
+                bucket.allocator->Release();  // 释放
+                bucket.allocator = nullptr;  // 置空
+            }  // 结束分配器释放
+            if (bucket.upload_buffer != nullptr) {  // 上传缓冲
+                if (bucket.mapped != nullptr) {  // 还有常驻映射
+                    bucket.upload_buffer->Unmap(0, nullptr);  // 先解除映射
+                    bucket.mapped = nullptr;  // 置空
+                }
+                bucket.upload_buffer->Release();  // 释放缓冲
+                bucket.upload_buffer = nullptr;  // 置空
+            }  // 结束上传缓冲释放
+            bucket.capacity = 0;  // 清零容量
+            bucket.fence_value = 0;  // 清零围栏记录
+        }
         if (context.fence != nullptr) {  // 围栏
             context.fence->Release();  // 释放
             context.fence = nullptr;  // 置空
@@ -1164,20 +1221,16 @@ private:  // 以下为内部实现细节，不对外暴露
         if (context.event != nullptr) {  // 完成事件
             CloseHandle(context.event);  // 关闭句柄
             context.event = nullptr;  // 置空
-        }  // 结束事件关闭
-        if (context.upload_buffer != nullptr) {  // 上传缓冲
-            context.upload_buffer->Release();  // 释放
-            context.upload_buffer = nullptr;  // 置空
-        }  // 结束上传缓冲释放
-        context.upload_capacity = 0;  // 清零容量
-        context.fence_value = 0;  // 清零围栏值
-    }  // ReleaseTextureUploadContext 结束
+        }
+        context.fence_value = 0;  // 清零全局围栏值
+        context.next_bucket = 0;  // 复位轮转下标
+    }
 
     void ReleaseDynamicTextureSet(WindowsDynamicTextureSet &texture_set, const bool free_descriptor) {
         for (auto &texture: texture_set.textures) {  // 遍历双缓冲中的两张纹理
             ReleaseTexture(texture, free_descriptor);  // 逐张释放，是否归还描述符由参数决定
-        }  // 结束遍历
-    }  // 结束 ReleaseDynamicTextureSet 函数
+        }
+    }
 
     // 功能：释放单张视频纹理资源，必要时归还其 SRV 描述符。
     // 思路：释放 D3D 纹理、复位尺寸与就绪标志；free_descriptor 为真时把描述符退回分配器以便复用。
@@ -1189,11 +1242,11 @@ private:  // 以下为内部实现细节，不对外暴露
         if (free_descriptor && texture.descriptor_allocated) {  // 需要归还且确实分配过描述符时才归还
             srv_descriptor_heap_allocator_.Free(texture.cpu_handle, texture.gpu_handle);  // 把描述符下标退回空闲栈
             texture.descriptor_allocated = false;  // 标记已归还，避免重复归还
-        }  // 结束描述符归还
+        }
         texture.width = 0;  // 宽度归零，表示当前没有内容
         texture.height = 0;  // 高度归零
         texture.uploaded_once = false;  // 新纹理尚未上传过任何一帧
-    }  // 结束 ReleaseTexture 函数
+    }
 
     // 功能：由视频纹理构建供 ImGui 使用的 TextureView（GPU 句柄 + 像素尺寸）。
     // 思路：把 SRV 的 GPU 句柄转为 ImTextureID 填入纹理引用，并携带宽高。
@@ -1203,10 +1256,10 @@ private:  // 以下为内部实现细节，不对外暴露
         RoboGo::app::TextureView texture_view;  // 待填充的纹理视图（默认空）
         if (texture.texture != nullptr) {  // 只有资源有效时才提供可用的纹理引用
             texture_view.texture_ref = ImTextureRef(static_cast<ImTextureID>(texture.gpu_handle.ptr));  // 把 SRV 的 GPU 句柄转成 ImGui 纹理标识，ImGui 据此索引描述符采样
-        }  // 结束有效性判断
+        }
         texture_view.size = ImVec2(static_cast<float>(texture.width), static_cast<float>(texture.height));  // 携带像素尺寸
         return texture_view;  // 返回供 ImGui 使用的纹理视图
-    }  // 结束 BuildTextureView 函数
+    }
 
     // 功能：窗口类注册的静态窗口过程（C 风格回调），负责把窗口绑定到后端实例并转发到成员 WndProc。
     // 思路：在 WM_NCCREATE 时把创建参数中的 this 存入窗口用户数据并记录 hwnd_；之后取出后端调用其 WndProc。
@@ -1216,14 +1269,14 @@ private:  // 以下为内部实现细节，不对外暴露
             auto *backend = static_cast<WindowsPlatformBackend *>(create_struct->lpCreateParams);  // 取出 CreateWindowW 时传入的后端指针
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(backend));  // 把后端指针存进窗口用户数据，后续消息可据此回取
             backend->hwnd_ = hwnd;  // 把真实窗口句柄回填给后端
-        }  // 结束 WM_NCCREATE 处理
+        }
 
         auto *backend = reinterpret_cast<WindowsPlatformBackend *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));  // 取回后端实例指针
         if (backend != nullptr) {  // 能取到后端实例则交给它的成员函数处理
             return backend->WndProc(hwnd, message, w_param, l_param);  // 转发给实例窗口过程
-        }  // 结束转发分支
+        }
         return ::DefWindowProcW(hwnd, message, w_param, l_param);  // 无后端时走默认处理
-    }  // 结束 StaticWndProc 函数
+    }
 
     // 功能：后端实例的窗口过程，处理与渲染/窗口生命周期相关的消息。
     // 思路：先把消息交给 ImGui 的 Win32 处理器；再处理窗口尺寸变化(重建交换链)、系统命令(屏蔽 Alt 菜单)、销毁(退出)等。
@@ -1231,7 +1284,7 @@ private:  // 以下为内部实现细节，不对外暴露
         // 优先让 ImGui 处理输入/光标等消息（如已被处理则直接返回）。
         if (ImGui::GetCurrentContext() != nullptr && ImGui_ImplWin32_WndProcHandler(hwnd, message, w_param, l_param)) {
             return TRUE;  // 结束“ImGui 已处理”分支
-        }  // 结束 ImGui 前置处理
+        }
 
         switch (message) {  // 按消息类型分别处理窗口生命周期相关事件
             case WM_SIZE:  // 窗口尺寸变化消息
@@ -1247,13 +1300,13 @@ private:  // 以下为内部实现细节，不对外暴露
                                                                       desc.Flags);  // 沿用原标志（含撕裂支持等）
                     IM_ASSERT(SUCCEEDED(result) && "Failed to resize swapchain.");  // 断言交换链重建成功
                     CreateRenderTarget();  // 重建渲染目标
-                }  // 结束 WM_SIZE 处理
+                }
                 return 0;  // 已处理 WM_SIZE
             case WM_SYSCOMMAND:  // 系统命令消息（例如 Alt 键唤出系统菜单）
                 // 屏蔽通过 Alt 键触发的系统菜单，避免干扰游戏操作。
                 if ((w_param & 0xfff0) == SC_KEYMENU) {
                     return 0;  // 屏蔽 Alt 触发的系统菜单
-                }  // 结束“屏蔽系统菜单”分支
+                }
                 break;  // 其它系统命令交回默认处理
             case WM_DESTROY:  // 窗口销毁消息
                 // 窗口被销毁时投递退出消息，主循环据此结束。
@@ -1261,10 +1314,10 @@ private:  // 以下为内部实现细节，不对外暴露
                 return 0;  // 已处理 WM_DESTROY
         default:  // 其它未处理的消息
             break;  // 跳出 switch，交给 DefWindowProc
-        }  // 结束 switch
+        }
 
         return ::DefWindowProcW(hwnd, message, w_param, l_param);  // 未处理的消息交由系统默认处理
-    }  // 结束 WndProc 函数
+    }
 
     // 私有成员：DX12 设备与每帧上下文、窗口、纹理集合及各类状态标志。
     std::array<WindowsFrameContext, kFramesInFlight> frame_context_ = {};  // 每个飞行帧独立的上下文(命令分配器+围栏值)
@@ -1289,17 +1342,17 @@ private:  // 以下为内部实现细节，不对外暴露
     bool window_class_registered_ = false;  // 窗口类是否已注册，决定退出时是否需要注销
     float main_scale_ = 1.0f;  // 主显示器 DPI 缩放比例，用于按物理像素初始化界面
     WindowsDynamicTextureSet udp_video_textures_;  // UDP 视频流的双缓冲纹理集合
-    WindowsDynamicTextureSet custom_video_textures_;  // 自定义视频流的双缓冲纹理集合
     WindowsVideoTexture mini_map_texture_;  // 小地图静态纹理，内容变化不频繁
+    WindowsVideoTexture mini_map_terrain_texture_;  // 小地图地形分层叠加层（带 alpha，启动时上传一次）
     // 常驻的纹理上传上下文：命令队列/分配器/命令列表/fence/事件/上传缓冲只创建一次，之后逐帧复用。
     // mutable 是因为上传发生在 const 成员函数里（UploadDynamicTexture 声明为 const）。
-    mutable TextureUploadContext texture_upload_;
+    TextureUploadContext texture_upload_;  // 上传上下文（三个桶轮转，提交到渲染队列）
     bool initialized_ = false;  // 后端是否已完成初始化，防止重复初始化或重复释放
     bool should_close_ = false;  // 是否已收到退出请求，决定主循环是否结束
     bool game_input_captured_ = false;  // 是否处于游戏输入捕获态(锁定并隐藏鼠标光标)
-};  // WindowsPlatformBackend 类定义结束
+};
 
-}// namespace
+}  // namespace
 
 namespace RoboGo::platform {  // 进入平台命名空间，声明工厂函数
 
@@ -1307,8 +1360,8 @@ namespace RoboGo::platform {  // 进入平台命名空间，声明工厂函数
 // 思路：返回 WindowsPlatformBackend 实例（仅本文件内可见的具名类型经基类指针返回）。
 std::unique_ptr<PlatformBackend> CreatePlatformBackend() {
     return std::make_unique<WindowsPlatformBackend>();  // 构造 Windows 后端并以基类指针返回
-}  // 结束 CreatePlatformBackend 函数
+}
 
-}// namespace RoboGo::platform
+}  // namespace RoboGo::platform
 
-#endif  // 结束 _WIN32 条件编译块
+#endif

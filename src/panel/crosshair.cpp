@@ -1,73 +1,136 @@
-// crosshair.cpp：准星绘制面板的实现。
-#include "crosshair.h"  // 引入本面板对应的头文件（含函数声明与依赖）
+// crosshair.cpp：准星 + 枪管热量环。
+//
+// 2027-11-06 按 DJI 官方《RoboMaster 青少年对抗赛 选手端界面说明》重做热量环：
+//   · 辅助射击区 = 准星 + 热量环；空环 Q1=0、热量正常、1/2 Q0 黄色警示、3/4 Q0 红色警示、
+//     Q1>=Q0 超热量（整圈红 + Overheat）；
+//   · 环从 12 点方向逆时针增长（用户评审后改向），热量冷却时弧长随时间倒退（数据 10Hz，再叠一层平滑）；
+//   · 环下方补上「热量 当前 / 上限」数值，操作手不用去左下角本车卡找。
+// 旧实现只在热量 >1% 时画一段从 3 点方向起、绿→黄→红渐变的弧，且没有底环与数值。
+#include "crosshair.h"
 
-// 功能：在屏幕中心绘制十字准星，并以热量环实时反映枪管热量比例。
-// 思路：利用窗口 DrawList 画线（十字）与圆弧（热量环），颜色随热量由绿经黄转红。
-void ShowCrosshair(const State &state) {  // state：全局状态（含动态/静态机器人状态）
-    // 无导航/无装饰/不可移动/无背景/不保存设置的浮动窗口
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings;
-    if (!ImGui::Begin("CrosshairWindow", nullptr, window_flags)) {  // 窗口创建失败则结束
-        ImGui::End();  // 配对 End
-        return;  // 不绘制
-    }  // 结束 Begin 失败分支
+#include <algorithm>
+#include <cstdio>
 
-    ImDrawList *draw_list = ImGui::GetWindowDrawList();  // 获取当前窗口绘制列表（底层图元）
-    ImVec2 window_pos = ImGui::GetWindowPos();  // 窗口左上角的屏幕坐标
-    ImVec2 window_size = ImGui::GetWindowSize();  // 窗口尺寸
-    ImVec2 center = ImVec2(window_pos.x + window_size.x / 2, window_pos.y + window_size.y / 2);  // 窗口中心即准星中心
+#include "ui/hud_primitives.h"
+#include "ui/theme.h"
 
-    // 绘制十字准星
-    float crosshair_size = 10.0f;  // 十字半长（向两侧延伸长度）
-    float crosshair_thickness = 1.0f;  // 线宽
-    ImU32 crosshair_color = IM_COL32(255, 255, 255, 255);  // 白色（32 位 RGBA 打包）
+namespace {
 
-    // 水平线
-    draw_list->AddLine(
-            ImVec2(center.x - crosshair_size, center.y),  // 起点：中心左侧
-            ImVec2(center.x + crosshair_size, center.y),  // 终点：中心右侧
-            crosshair_color, crosshair_thickness);  // 颜色与线宽
+using RoboGo::ui::hud::AddTextCenteredIn;
 
-    // 垂直线
-    draw_list->AddLine(
-            ImVec2(center.x, center.y - crosshair_size),  // 起点：中心上侧
-            ImVec2(center.x, center.y + crosshair_size),  // 终点：中心下侧
-            crosshair_color, crosshair_thickness);  // 颜色与线宽
+constexpr float kRingRadius = 36.0f;
+constexpr float kBaseThickness = 2.5f;
+constexpr float kFillThickness = 3.5f;
+constexpr int kArcSegments = 72;
+constexpr float kPi = 3.14159265358979323846f;
 
-    // 绘制热量环
-    float ring_radius = 40.0f;  // 热量环半径
-    float ring_thickness = 4.0f;  // 环线宽
-    float heat_percentage;  // 热量比例（0~1）
-    if (state.robot_dynamic_status.has_value() && state.robot_static_status.has_value() && state.robot_static_status->max_heat() != 0) {  // 动态与静态状态均有效且最大热量非零才可计算比例（避免除零）
-        heat_percentage = state.robot_dynamic_status->current_heat() / static_cast<float>(state.robot_static_status->max_heat());  // 当前热量/最大热量
-    } else {  // 数据缺失或无热量上限
-        heat_percentage = 0.0f;  // 数据缺失或无热量上限时视为 0
-    }  // 结束热量比例计算的三元分支
+struct HeatReading {
+    float current = 0.0f;
+    uint32_t maximum = 0;
+    bool valid = false;
+};
 
-    if (heat_percentage > 0.01f) {  // 仅在热量可感知时绘制，避免空环
-        // 根据热量比例计算颜色（绿色 -> 黄色 -> 红色）
-        ImU32 heat_color;  // 热量环颜色（32 位 RGBA）
-        if (heat_percentage < 0.5f) {  // 低热量段：绿到黄
-            // 绿色到黄色
-            float ratio = heat_percentage * 2.0f;  // 0~0.5 映射到 0~1
-            int r = static_cast<int>(255 * ratio);  // 红色分量随热量上升
-            int g = 255;  // 绿色保持满
-            int b = 0;  // 蓝色为 0
-            heat_color = IM_COL32(r, g, b, 255);  // 打包颜色
-            // 低热量段结束，下面转入高热量段
-        } else {  // 高热量段：黄到红
-            // 黄色到红色
-            float ratio = (heat_percentage - 0.5f) * 2.0f;  // 0.5~1 映射到 0~1
-            int r = 255;  // 红色保持满
-            int g = static_cast<int>(255 * (1.0f - ratio));  // 绿色分量随热量上升而下降
-            int b = 0;  // 蓝色为 0
-            heat_color = IM_COL32(r, g, b, 255);  // 打包颜色
-        }  // 高热量段分支结束（与上方 if 配对完毕）
+HeatReading ReadHeat(const State &state) {
+    HeatReading reading;
+    if (!state.robot_dynamic_status.has_value() || !state.robot_static_status.has_value()) {
+        return reading;
+    }
+    reading.current = state.robot_dynamic_status->current_heat();
+    reading.maximum = state.robot_static_status->max_heat();
+    reading.valid = reading.maximum > 0;
+    return reading;
+}
 
-        // 绘制热量环
-        float end_angle = heat_percentage * 2.0f * 3.14159f;  // 按热量比例计算圆弧终止角（0~2π）
-        draw_list->PathArcTo(center, ring_radius, 0.0f, end_angle, 32);  // 构建圆弧路径（32 段近似）
-        draw_list->PathStroke(heat_color, ring_thickness, ImDrawFlags_None);  // 描边成环
-    }  // 结束“热量可感知”绘制分支
+// 固定步长逼近：数据 10Hz，硬切会让弧跳；冷却时也是逐帧平滑倒退。
+float MoveTowards(float current, float target, float max_delta) {
+    return current < target ? std::min(current + max_delta, target)
+                            : std::max(current - max_delta, target);
+}
 
-    ImGui::End();  // 结束窗口绘制
-}  // 结束 ShowCrosshair
+// 官方分档配色：正常淡青白 → 1/2 Q0 淡黄 → 3/4 Q0 红 → 超热量整圈红。
+ImU32 HeatArcColor(float ratio) {
+    if (ratio >= 1.0f) {
+        return IM_COL32(255, 96, 84, 255);
+    }
+    if (ratio >= 0.75f) {
+        return IM_COL32(245, 96, 84, 245);
+    }
+    if (ratio >= 0.5f) {
+        return IM_COL32(240, 226, 140, 245);
+    }
+    return IM_COL32(186, 222, 242, 235);
+}
+
+}  // namespace
+
+// 功能：在屏幕中心绘制十字准星 + 环形热量读条 + 热量数值。
+void ShowCrosshair(const State &state) {
+    const ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration
+                                          | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground
+                                          | ImGuiWindowFlags_NoSavedSettings;
+    if (!ImGui::Begin("CrosshairWindow", nullptr, window_flags)) {
+        ImGui::End();
+        return;
+    }
+
+    ImDrawList *draw_list = ImGui::GetWindowDrawList();
+    const ImVec2 window_pos = ImGui::GetWindowPos();
+    const ImVec2 window_size = ImGui::GetWindowSize();
+    const ImVec2 center(window_pos.x + window_size.x * 0.5f, window_pos.y + window_size.y * 0.5f);
+    const float s = ImGui::GetScale();
+    const float radius = kRingRadius * s;
+
+    // 四段式十字准星（中心留空，与官方辅助射击区一致）。
+    const float arm = 10.0f * s;
+    const float gap = 3.0f * s;
+    const ImU32 cross_color = IM_COL32(225, 235, 248, 235);
+    draw_list->AddLine(ImVec2(center.x - arm, center.y), ImVec2(center.x - gap, center.y), cross_color, 1.0f);
+    draw_list->AddLine(ImVec2(center.x + gap, center.y), ImVec2(center.x + arm, center.y), cross_color, 1.0f);
+    draw_list->AddLine(ImVec2(center.x, center.y - arm), ImVec2(center.x, center.y - gap), cross_color, 1.0f);
+    draw_list->AddLine(ImVec2(center.x, center.y + gap), ImVec2(center.x, center.y + arm), cross_color, 1.0f);
+
+    // 底环：空热量时也保持一个细灰圈，让操作手知道这个控件存在。
+    draw_list->AddCircle(center, radius, IM_COL32(255, 255, 255, 48), kArcSegments, kBaseThickness * s);
+
+    const HeatReading heat = ReadHeat(state);
+    const float target_ratio = heat.valid
+                                       ? std::clamp(heat.current / static_cast<float>(heat.maximum), 0.0f, 1.0f)
+                                       : 0.0f;
+    static float shown_ratio = 0.0f;
+    shown_ratio = MoveTowards(shown_ratio, target_ratio, ImGui::GetIO().DeltaTime * 3.0f);
+
+    // 从 12 点（-90°）逆时针填充：热量越高，弧沿 11 点 / 10 点方向往左长；
+    // 冷却时末端逐帧退回 12 点。ImGui 要求 a_min <= a_max，所以把区间写成
+    // [ -π/2 - ratio·2π, -π/2 ]，路径仍按角度递增生成，覆盖的正是逆时针那一段。
+    if (shown_ratio > 0.002f) {
+        const float top_angle = -kPi * 0.5f;
+        const float start_angle = top_angle - shown_ratio * 2.0f * kPi;
+        const ImU32 arc_color = HeatArcColor(shown_ratio);
+        draw_list->PathArcTo(center, radius, start_angle, top_angle, kArcSegments);
+        draw_list->PathStroke(arc_color, kFillThickness * s, ImDrawFlags_None);
+    }
+
+    // 环下方数值行：热量 当前 / 上限；超热量时整行转红并补英文提示。
+    char value_text[48];
+    if (heat.valid) {
+        std::snprintf(value_text, sizeof(value_text), "热量 %.0f / %u", heat.current, heat.maximum);
+    } else {
+        std::snprintf(value_text, sizeof(value_text), "热量 -- / --");
+    }
+    const bool overheat = heat.valid && heat.current >= static_cast<float>(heat.maximum);
+    const ImU32 value_color = overheat ? IM_COL32(255, 120, 108, 255)
+                                       : (shown_ratio >= 0.75f ? IM_COL32(245, 150, 110, 255)
+                                                                : RoboGo::ui::kTextTertiary);
+    const float label_y = center.y + radius + 10.0f * s;
+    AddTextCenteredIn(draw_list, center.x - 90.0f * s, center.x + 90.0f * s, label_y,
+                      value_color, value_text, 11);
+
+    // 超热量：整圈已红，再在环内下方压一行 Overheat，和官方一致。
+    if (overheat) {
+        AddTextCenteredIn(draw_list, center.x - 70.0f * s, center.x + 70.0f * s,
+                          center.y + radius * 0.45f, IM_COL32(255, 120, 108, 255),
+                          "OVERHEAT", 10);
+    }
+
+    ImGui::End();
+}

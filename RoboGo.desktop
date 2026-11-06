@@ -2,7 +2,8 @@
 Version=1.0
 Encoding=UTF-8
 Name=RoboGo
-Exec=/home/yancey/RoboGo/build/release/RoboGo
+# 部署时按本机实际安装路径修改 Exec
+Exec=/path/to/RoboGo/build/release/RoboGo
 StartupNotify=true
 Terminal=true
 Type=Application

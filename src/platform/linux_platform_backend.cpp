@@ -10,7 +10,7 @@
 // 在调试版本中开启 Vulkan 调试报告（用于捕获验证层告警/错误）。
 #ifdef _DEBUG
 #define APP_USE_VULKAN_DEBUG_REPORT  // 调试构建下定义该宏，开启 Vulkan 调试报告
-#endif  // 结束 _DEBUG 条件编译块
+#endif
 
 // 匿名命名空间 —— 仅本编译单元可见的实现细节：视频纹理结构体、LinuxPlatformBackend 类定义及所有 Vulkan/GLFW
 // 辅助工具函数（如扩展查询、内存类型选择、实例/交换链创建等）；不对外暴露，避免污染全局符号。
@@ -25,14 +25,14 @@ struct LinuxVideoTexture {
     int width = 0;  // 纹理宽度（像素）
     int height = 0;  // 纹理高度（像素）
     bool ready = false;  // 纹理已创建且有有效帧数据、可供渲染使用的标志
-};  // LinuxVideoTexture 结构体定义结束
+};
 
 // LinuxDynamicTextureSet —— 双缓冲视频纹理集合：轮换使用两张纹理避免上传与渲染相互阻塞。
 struct LinuxDynamicTextureSet {
     std::array<LinuxVideoTexture, 2> textures;  // 两张轮换使用的视频纹理（双缓冲）
     int current_index = 0;  // 当前用于渲染显示的那张纹理下标
     int next_index = 1;  // 下一帧待写入上传数据的纹理下标
-};  // LinuxDynamicTextureSet 结构体定义结束
+};
 
 // LinuxPlatformBackend —— PlatformBackend 的 Linux 实现：GLFW 窗口 + Vulkan，承载所有 Vulkan 资源管理。
 class LinuxPlatformBackend final : public RoboGo::platform::PlatformBackend {
@@ -42,7 +42,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     // 返回值：C 字符串形式的应用名（静态存储，生命周期安全）。
     [[nodiscard]] const char *application_name() const override {
         return "RoboGo-linux";  // 返回 Linux 平台标识字符串，供日志与调试区分运行平台
-    }  // 结束 application_name 函数
+    }
 
     // 功能：初始化 Linux 后端（GLFW 窗口、Vulkan 实例/设备、交换链、ImGui 上下文）。
     // 思路：初始化 GLFW、按 DPI 缩放创建无 API 窗口，建立 Vulkan 实例/设备/表面/交换链，最后初始化 ImGui 的 GLFW/Vulkan 后端。
@@ -52,7 +52,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         if (!glfwInit()) {  // 初始化 GLFW 库，失败则无法继续
             SPDLOG_CRITICAL("glfwInit失败");  // 记录 GLFW 初始化失败
             return false;  // 初始化失败，终止
-        }  // 结束 GLFW 初始化失败分支
+        }
 
         // 告知 GLFW 不使用 OpenGL（由 Vulkan 自行管理图形 API），并按主显示器缩放创建窗口尺寸。
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // 告知 GLFW 不使用 OpenGL，图形 API 由 Vulkan 自行管理
@@ -66,7 +66,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             SPDLOG_CRITICAL("创建GLFW窗口失败");  // 记录窗口创建失败
             glfwTerminate();  // 终止 GLFW
             return false;  // 窗口创建失败，终止
-        }  // 结束窗口创建失败分支
+        }
         if (!glfwVulkanSupported()) {  // 检查当前环境是否提供 Vulkan 支持
             SPDLOG_CRITICAL("当前环境不支持Vulkan");  // 记录 Vulkan 不可用
             glfwDestroyWindow(window_);  // 销毁已创建的窗口
@@ -85,7 +85,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         const char **glfw_extensions = glfwGetRequiredInstanceExtensions(&extensions_count);  // 取 GLFW 必需的实例扩展名列表（含窗口系统集成所需的扩展）
         for (uint32_t i = 0; i < extensions_count; ++i) {  // 把每个扩展名逐个收集到 ImVector 中
             extensions.push_back(glfw_extensions[i]);  // 收集当前扩展名
-        }  // 结束扩展收集循环
+        }
 
         // 创建 Vulkan 实例、物理/逻辑设备、描述符池、上传命令池与采样器。
         SetupVulkan(extensions);  // 创建 Vulkan 实例/设备/描述符池/采样器等核心对象
@@ -124,14 +124,14 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         RoboGo::app::LoadEmbeddedImGuiFont();  // 加载内嵌的 ImGui 字体
         initialized_ = true;  // 标记后端初始化完成
         return true;  // 初始化成功
-    }  // 结束 Initialize 函数
+    }
 
     // 功能：释放 Linux 后端所有资源（纹理、ImGui、Vulkan 设备/窗口、GLFW）。
     // 思路：先解除输入捕获并等待设备空闲，再释放视频纹理与 ImGui，最后清理 Vulkan 与 GLFW。
     void Shutdown() override {
         if (!initialized_) {  // 未初始化则没有需要释放的资源
             return;  // 提前返回，保证 Shutdown 可重复调用
-        }  // 结束未初始化判断
+        }
 
         SetGameInputCapture(false);  // 退出输入捕获（恢复鼠标）
 
@@ -140,7 +140,6 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         CheckVkResult(err);  // 检查等待结果
 
         DestroyDynamicTextureSet(udp_video_textures_);  // 销毁 UDP 双缓冲纹理
-        DestroyDynamicTextureSet(custom_video_textures_);  // 销毁自定义视频双缓冲纹理
         DestroyVulkanTexture(mini_map_texture_);  // 销毁小地图纹理
 
         ImGui_ImplVulkan_Shutdown();  // 关闭 ImGui Vulkan 后端
@@ -154,14 +153,14 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         window_ = nullptr;  // 清空窗口句柄
         glfwTerminate();  // 终止 GLFW 库
         initialized_ = false;  // 复位初始化标志
-    }  // 结束 Shutdown 函数
+    }
 
     // 功能：处理 GLFW 事件并返回是否继续运行。
     // 思路：轮询 GLFW 事件，若窗口被请求关闭则返回 false。
     [[nodiscard]] bool ProcessEvents() override {
         glfwPollEvents();  // 处理所有待处理窗口事件
         return !glfwWindowShouldClose(window_);  // 窗口未请求关闭则继续主循环
-    }  // 结束 ProcessEvents 函数
+    }
 
     // 功能：开始新的一帧，按需重建交换链并处理窗口最小化暂停。
     // 思路：当帧缓冲尺寸变化或被标记重建时重新创建/调整交换链窗口；窗口最小化则返回 false 跳过本帧。
@@ -187,17 +186,17 @@ public:  // 以下为 PlatformBackend 接口的公开实现
                                                   0);  // 额外创建标志 0
             main_window_data_.FrameIndex = 0;  // 重建后帧索引归零，避免索引越界
             swap_chain_rebuild_ = false;  // 清除重建标志
-        }  // 结束重建分支
+        }
         if (glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0) {  // 窗口被最小化
             ImGui_ImplGlfw_Sleep(10);  // 暂停 10ms 避免空转
             return false;  // 本帧跳过渲染
-        }  // 结束最小化分支
+        }
 
         ImGui_ImplVulkan_NewFrame();  // 启动 ImGui 的 Vulkan 后端帧（准备描述符与缓冲）
         ImGui_ImplGlfw_NewFrame();  // 启动 ImGui 的 GLFW 后端帧（采集鼠标键盘输入）
         ImGui::NewFrame();  // 开始新的 ImGui 逻辑帧（重置绘制列表）
         return true;  // 本帧可以正常渲染，返回 true
-    }  // 结束 BeginFrame 函数
+    }
 
     // 功能：渲染并提交本帧，同时清理颜色为不透明黑。
     // 思路：尺寸非法时直接返回；否则设置清屏色并调用 FrameRender/FramePresent。
@@ -205,7 +204,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     void RenderFrame(ImDrawData *draw_data) override {
         if (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f) {  // 尺寸非法（窗口不可见）
             return;  // 直接跳过本帧渲染
-        }  // 结束尺寸非法分支
+        }
 
         // 清屏色设为不透明黑色（RGBA）。
         main_window_data_.ClearValue.color.float32[0] = 0.0f;
@@ -214,7 +213,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         main_window_data_.ClearValue.color.float32[3] = 1.0f;  // 清屏色 A 分量（1.0 表示完全不透明）
         FrameRender(draw_data);  // 录制并提交本帧渲染命令
         FramePresent();  // 将完成的帧呈现到屏幕
-    }  // 结束 RenderFrame 函数
+    }
 
     // 功能：切换游戏输入捕获模式（隐藏并锁定鼠标）。
     // 思路：enabled 为真时把 GLFW 光标模式设为 DISABLED（隐藏并捕获），否则恢复为 NORMAL。
@@ -222,16 +221,16 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     void SetGameInputCapture(const bool enabled) override {
         if (window_ == nullptr || game_input_captured_ == enabled) {  // 窗口无效或状态未变化时无需处理
             return;  // 窗口无效或状态已一致，无需处理
-        }  // 结束提前返回
+        }
 
         glfwSetInputMode(window_, GLFW_CURSOR, enabled ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);  // 按开关设置光标模式：DISABLED 隐藏并捕获，NORMAL 恢复普通光标
         if (enabled) {  // 开启捕获时的日志分支
             SPDLOG_DEBUG("已启用Linux隐藏并锁定鼠标模式");  // 调试日志：已进入隐藏并锁定鼠标的模式
         } else {  // 关闭捕获的分支
             SPDLOG_DEBUG("已恢复Linux鼠标模式");  // 调试日志：已恢复普通鼠标模式
-        }  // 结束日志分支
+        }
         game_input_captured_ = enabled;  // 记录当前捕获状态
-    }  // 结束 SetGameInputCapture 函数
+    }
 
     // 功能：从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
     // 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
@@ -241,11 +240,9 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         switch (slot) {  // 按纹理槽类型分流到不同的上传实现
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 图传视频槽
                 return UploadDynamicTexture(udp_video_textures_, frame);  // UDP 视频走双缓冲动态纹理上传
-            case RoboGo::app::TextureSlot::CustomVideo:  // 自定义客户端视频槽
-                return UploadDynamicTexture(custom_video_textures_, frame);  // 自定义视频同样走双缓冲动态纹理上传
             case RoboGo::app::TextureSlot::MiniMap:  // 小地图槽
                 return UploadStaticTexture(mini_map_texture_, frame.buffer.data(), frame.width, frame.height);  // 小地图内容变化不频繁，走静态纹理上传
-        }  // 结束 switch 分支
+        }
         return false;  // 未知槽位或不支持，返回失败
     }  // 结束 UploadTexture（视频帧重载）
 
@@ -256,7 +253,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) override {
         if (slot != RoboGo::app::TextureSlot::MiniMap) {  // 仅小地图接受 DecodedImage
             return false;  // 槽位不支持，返回失败
-        }  // 结束槽位判断
+        }
         return UploadStaticTexture(mini_map_texture_, image.pixels.data(), image.width, image.height);  // 把解码出的像素上传为小地图静态纹理
     }  // 结束 UploadTexture（解码图像重载）
 
@@ -268,31 +265,29 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         switch (slot) {  // 按槽位返回对应的纹理视图
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 视频槽
                 return BuildTextureView(udp_video_textures_.textures[udp_video_textures_.current_index]);  // 取当前正在显示的那一张 UDP 纹理
-            case RoboGo::app::TextureSlot::CustomVideo:  // 自定义视频槽
-                return BuildTextureView(custom_video_textures_.textures[custom_video_textures_.current_index]);  // 取当前正在显示的那一张自定义视频纹理
             case RoboGo::app::TextureSlot::MiniMap:  // 小地图槽
                 return BuildTextureView(mini_map_texture_);  // 小地图是静态纹理，直接取它
-        }  // 结束 switch 分支
+        }
         return {};  // 未命中任何槽位，返回空视图
-    }  // 结束 GetTextureView 函数
+    }
 
 private:  // 以下为内部实现细节，不对外暴露
     // 功能：GLFW 错误回调，将 GLFW 报错输出到日志。
     static void GlfwErrorCallback(const int error, const char *description) {
         SPDLOG_ERROR("GLFW错误 code={} description={}", error, description);  // 输出 GLFW 报错
-    }  // 结束 GlfwErrorCallback 函数
+    }
 
     // 功能：检查 Vulkan 调用结果，非成功则记录错误，错误(<0)时直接终止进程。
     // 参数：err —— Vulkan 返回码；VK_SUCCESS 直接返回，非成功记日志，<0（错误）时调用 std::abort 终止。
     static void CheckVkResult(const VkResult err) {
         if (err == VK_SUCCESS) {  // 成功则无需任何处理
             return;  // 直接返回
-        }  // 结束成功判断
+        }
         SPDLOG_ERROR("Vulkan错误 result={}", static_cast<int>(err));  // 记录非成功返回码
         if (err < 0) {  // 负值表示致命错误，无法继续运行
             std::abort();  // 错误级直接终止进程
-        }  // 结束致命错误分支
-    }  // 结束 CheckVkResult 函数
+        }
+    }
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT  // 调试构建下才注册调试报告回调
     // 功能：Vulkan 调试报告回调，将验证层/性能告警输出到日志。
@@ -314,17 +309,17 @@ private:  // 以下为内部实现细节，不对外暴露
         SPDLOG_WARN("Vulkan调试报告 message={}", message);  // 把校验层/驱动的告警写入日志
         return VK_FALSE;  // 返回 VK_FALSE 表示不中断引发该消息的 Vulkan 调用
     }  // 回调必须返回 VK_FALSE，表示不中断调用
-#endif  // 结束调试报告条件编译块
+#endif
 
     // 功能：判断某 Vulkan 扩展是否在给定的扩展属性列表中可用。
     [[nodiscard]] static bool IsExtensionAvailable(const ImVector<VkExtensionProperties> &properties, const char *extension) {
         for (const VkExtensionProperties &property: properties) {  // 遍历可用的扩展属性列表
             if (strcmp(property.extensionName, extension) == 0) {  // 比较扩展名是否完全一致
                 return true;  // 找到该扩展
-            }  // 结束匹配判断
-        }  // 结束遍历
+            }
+        }
         return false;  // 未找到
-    }  // 结束 IsExtensionAvailable 函数
+    }
 
     // 功能：依据类型过滤位与所需内存属性，找到合适的物理设备内存类型索引。
     // 思路：遍历物理设备内存类型，同时满足属性标志与类型过滤位则返回索引。
@@ -337,10 +332,10 @@ private:  // 以下为内部实现细节，不对外暴露
             if ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties  // 属性位必须完整包含期望的属性
                 && (type_filter & (1u << i))) {  // 并且该内存类型必须在资源允许的掩码内
                 return i;  // 命中则返回该内存类型索引
-            }  // 结束单个类型判断
-        }  // 结束遍历
+            }
+        }
         return static_cast<uint32_t>(-1);  // 无匹配时返回 -1，调用方应视为错误
-    }  // 结束 FindMemoryType 函数
+    }
 
     // 功能：创建 Vulkan 实例、物理/逻辑设备、描述符池、纹理上传命令池与采样器。
     // 思路：枚举可用扩展后创建实例（按需加验证层/可移植位），选取物理设备与队列族，再创建逻辑设备及相关资源。
@@ -361,20 +356,20 @@ private:  // 以下为内部实现细节，不对外暴露
 
         if (IsExtensionAvailable(properties, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {  // 可用则启用“设备属性查询 2”扩展（后续查询特性需要它）
             instance_extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);  // 把它加入启用的扩展列表
-        }  // 结束扩展追加
+        }
 #ifdef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME  // 平台相关：可移植性枚举扩展（部分平台的 Vulkan 实现需要）
         if (IsExtensionAvailable(properties, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {  // 该平台提供此扩展时才启用
             instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);  // 加入扩展列表
             create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;  // 打开可移植设备枚举标志
-        }  // 结束可移植扩展分支
-#endif  // 结束条件编译块
+        }
+#endif
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT  // 调试构建：启用校验层与调试报告扩展
         const char *layers[] = {"VK_LAYER_KHRONOS_validation"};  // 要启用的层：Khronos 官方校验层
         create_info.enabledLayerCount = 1;  // 启用 1 个层
         create_info.ppEnabledLayerNames = layers;  // 指向层名数组
         instance_extensions.push_back("VK_EXT_debug_report");  // 追加调试报告扩展，用于接收校验层消息
-#endif  // 结束调试层条件编译块
+#endif
 
         create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.Size);  // 启用扩展的数量
         create_info.ppEnabledExtensionNames = instance_extensions.Data;  // 指向扩展名数组
@@ -396,7 +391,7 @@ private:  // 以下为内部实现细节，不对外暴露
         debug_report_ci.pUserData = this;  // 把后端指针作为用户数据传入回调
         err = create_debug_report_callback(instance_, &debug_report_ci, allocator_, &debug_report_);  // 创建调试报告回调对象
         CheckVkResult(err);  // 检查创建结果
-#endif  // 结束调试回调注册块
+#endif
 
         physical_device_ = ImGui_ImplVulkanH_SelectPhysicalDevice(instance_);  // 由 ImGui 辅助函数选择一块合适的 GPU
         IM_ASSERT(physical_device_ != VK_NULL_HANDLE);  // 断言确实选中了物理设备
@@ -413,8 +408,8 @@ private:  // 以下为内部实现细节，不对外暴露
         vkEnumerateDeviceExtensionProperties(physical_device_, nullptr, &properties_count, properties.Data);  // 把设备扩展属性写入缓冲
         if (IsExtensionAvailable(properties, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {  // 设备支持该扩展时才启用
             device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);  // 加入设备扩展列表
-        }  // 结束判断
-#endif  // 结束条件编译块
+        }
+#endif
 
         const float queue_priority[] = {1.0f};  // 队列优先级：单队列取最高
         VkDeviceQueueCreateInfo queue_info = {};  // 队列创建信息（清零）
@@ -437,7 +432,7 @@ private:  // 以下为内部实现细节，不对外暴露
         VkDescriptorPoolSize pool_sizes[] = {
                 {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE},  // 池中预留的“采样图像”描述符数量
                 {VK_DESCRIPTOR_TYPE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE},  // 池中预留的“采样器”描述符数量
-        };  // 池尺寸数组结束
+        };
         VkDescriptorPoolCreateInfo pool_info = {};  // 描述符池创建信息（清零）
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;  // 填写结构体类型
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;  // 允许单独释放描述符集（纹理销毁时需要归还）
@@ -471,7 +466,7 @@ private:  // 以下为内部实现细节，不对外暴露
         sampler_info.maxAnisotropy = 1.0f;  // 关闭各向异性过滤
         err = vkCreateSampler(device_, &sampler_info, allocator_, &video_texture_sampler_);  // 创建视频纹理采样器
         CheckVkResult(err);  // 检查创建结果
-    }  // 结束 SetupVulkan 函数
+    }
 
     // 功能：校验表面支持并创建交换链窗口数据（选择表面格式/呈现模式/建立交换链）。
     // 思路：先确认队列族支持该表面，再选择 RGBA 表面格式与 FIFO 呈现模式，最后创建或调整交换链窗口。
@@ -482,7 +477,7 @@ private:  // 以下为内部实现细节，不对外暴露
         if (result != VK_TRUE) {  // 队列族不支持该表面则无法呈现，属于致命错误
             SPDLOG_CRITICAL("当前GPU不支持Vulkan窗口表面");  // 记录错误日志
             std::exit(-1);  // 无法补救，直接终止进程
-        }  // 结束表面支持判断
+        }
 
         // 优先尝试 B8G8R8A8 / R8G8B8A8 等常用格式，配合 sRGB 非线性色彩空间。
         const VkFormat request_surface_image_format[] = {
@@ -490,7 +485,7 @@ private:  // 以下为内部实现细节，不对外暴露
                 VK_FORMAT_R8G8B8A8_UNORM,  // 其次 RGBA8
                 VK_FORMAT_B8G8R8_UNORM,  // 再次无 Alpha 的 BGR8
                 VK_FORMAT_R8G8B8_UNORM,  // 最后 RGB8
-        };  // 候选格式数组结束
+        };
         const VkColorSpaceKHR request_surface_color_space = VK_COLORSPACE_SRGB_NONLINEAR_KHR;  // 期望的 sRGB 非线性色彩空间
         main_window_data_.Surface = surface;  // 把表面记录到交换链窗口数据
         main_window_data_.SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(  // 由 ImGui 辅助函数从候选中选出实际支持的格式
@@ -518,7 +513,7 @@ private:  // 以下为内部实现细节，不对外暴露
                                               height,  // 初始高度
                                               min_image_count_,  // 最小图像数
                                               0);  // 额外创建标志 0
-    }  // 结束 SetupVulkanWindow 函数
+    }
 
     // 功能：销毁交换链窗口数据并销毁 Vulkan 表面。
     void CleanupVulkanWindow() {
@@ -526,8 +521,8 @@ private:  // 以下为内部实现细节，不对外暴露
         if (main_window_data_.Surface != VK_NULL_HANDLE) {  // 表面句柄存在才需要销毁
             vkDestroySurfaceKHR(instance_, main_window_data_.Surface, allocator_);  // 销毁 Vulkan 表面
             main_window_data_.Surface = VK_NULL_HANDLE;  // 复位表面句柄
-        }  // 结束表面销毁
-    }  // 结束 CleanupVulkanWindow 函数
+        }
+    }
 
     // 功能：释放 Vulkan 级资源（描述符池、采样器、命令池、调试回调、设备、实例）。
     // 思路：按创建逆序销毁，调试报告回调经由实例函数指针销毁。
@@ -540,11 +535,11 @@ private:  // 以下为内部实现细节，不对外暴露
         auto *destroy_debug_report_callback =  // 声明销毁回调的函数指针变量
                 reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance_, "vkDestroyDebugReportCallbackEXT"));  // 通过实例函数指针取得扩展销毁函数地址
         destroy_debug_report_callback(instance_, debug_report_, allocator_);  // 销毁调试报告回调对象
-#endif  // 结束调试回调销毁条件编译块
+#endif
 
         vkDestroyDevice(device_, allocator_);  // 销毁逻辑设备（必须晚于所有由它创建的资源）
         vkDestroyInstance(instance_, allocator_);  // 销毁 Vulkan 实例，断开与驱动的连接
-    }  // 结束 CleanupVulkan 函数
+    }
 
     // 功能：渲染一帧——获取交换链图像、录制命令缓冲、提交渲染命令。
     // 思路：获取下一图像（过期则标记重建并返回），等待/重置 fence 与命令池，开渲染通道绘制后提交命令。
@@ -562,13 +557,13 @@ private:  // 以下为内部实现细节，不对外暴露
         // 交换链过期或次优时标记重建；仅过期则本帧直接返回。
         if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
             swap_chain_rebuild_ = true;  // 标记需要重建交换链
-        }  // 结束过期/次优判断
+        }
         if (err == VK_ERROR_OUT_OF_DATE_KHR) {  // 交换链已过期，本帧无法渲染
             return;  // 本帧直接返回，等下帧重建后再画
-        }  // 结束过期判断
+        }
         if (err != VK_SUBOPTIMAL_KHR) {  // 次优属于可接受结果，其它错误才需要检查
             CheckVkResult(err);  // 检查并上报真正的错误
-        }  // 结束错误检查
+        }
 
         ImGui_ImplVulkanH_Frame *frame = &main_window_data_.Frames[main_window_data_.FrameIndex];  // 取当前帧数据（含命令缓冲/围栏/帧缓冲）
         // 等待该帧的 fence（上一轮渲染完成），再重置以便本帧复用。
@@ -613,18 +608,18 @@ private:  // 以下为内部实现细节，不对外暴露
         submit_info.signalSemaphoreCount = 1;  // 完成时发出 1 个信号量
         submit_info.pSignalSemaphores = &render_complete_semaphore;  // 发出“渲染完成”信号量，供呈现阶段等待
 
-        err = vkEndCommandBuffer(frame->CommandBuffer);  // 结束命令缓冲录制
+        err = vkEndCommandBuffer(frame->CommandBuffer);
         CheckVkResult(err);  // 检查录制结果
         err = vkQueueSubmit(queue_, 1, &submit_info, frame->Fence);  // 提交到队列，GPU 完成时给本帧围栏发信号
         CheckVkResult(err);  // 检查提交结果
-    }  // 结束 FrameRender 函数
+    }
 
     // 功能：将已渲染完成的帧呈现到屏幕，并轮转信号量索引。
     // 思路：若需重建交换链则跳过；否则用“渲染完成”信号量提交呈现，处理过期/次优，并递增 SemaphoreIndex。
     void FramePresent() {
         if (swap_chain_rebuild_) {  // 需要重建交换链时跳过呈现
             return;  // 直接返回，等下一帧重建后再呈现
-        }  // 结束重建判断
+        }
 
         VkSemaphore render_complete_semaphore = main_window_data_.FrameSemaphores[main_window_data_.SemaphoreIndex].RenderCompleteSemaphore;  // 本帧渲染完成信号量
         VkPresentInfoKHR present_info = {};  // 呈现信息（清零）
@@ -637,15 +632,15 @@ private:  // 以下为内部实现细节，不对外暴露
         VkResult err = vkQueuePresentKHR(queue_, &present_info);  // 提交呈现请求
         if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {  // 过期或次优都标记需要重建
             swap_chain_rebuild_ = true;  // 置重建标志
-        }  // 结束判断
+        }
         if (err == VK_ERROR_OUT_OF_DATE_KHR) {  // 过期则本帧到此结束
             return;  // 直接返回
-        }  // 结束过期判断
+        }
         if (err != VK_SUBOPTIMAL_KHR) {  // 非次优的其它错误才需要上报
             CheckVkResult(err);  // 检查并上报错误
-        }  // 结束错误检查
+        }
         main_window_data_.SemaphoreIndex = (main_window_data_.SemaphoreIndex + 1) % main_window_data_.SemaphoreCount;  // 轮转信号量索引（双缓冲）
-    }  // 结束 FramePresent 函数
+    }
 
     // 功能：从内存 RGBA 像素创建 Vulkan 图像并上传（经暂存缓冲 + 命令缓冲拷贝，含布局屏障转换）。
     // 思路：建设备本地图像并分配显存，建图像视图；再用可映射的暂存缓冲写入像素，提交拷贝与屏障命令后等待完成。
@@ -673,7 +668,7 @@ private:  // 以下为内部实现细节，不对外暴露
         err = vkCreateImage(device_, &image_info, allocator_, &texture.image);
         if (err != VK_SUCCESS) {  // 创建失败则返回
             return false;  // 上报失败
-        }  // 结束失败判断
+        }
 
         // 查询图像内存需求，为其在设备本地内存中分配并绑定显存。
         VkMemoryRequirements image_memory_requirements;
@@ -689,7 +684,7 @@ private:  // 以下为内部实现细节，不对外暴露
             vkDestroyImage(device_, texture.image, allocator_);  // 销毁刚创建的图像
             texture.image = VK_NULL_HANDLE;  // 复位句柄
             return false;  // 上报失败
-        }  // 结束显存分配失败分支
+        }
 
         vkBindImageMemory(device_, texture.image, texture.memory, 0);  // 把显存绑定到图像
 
@@ -709,7 +704,7 @@ private:  // 以下为内部实现细节，不对外暴露
             texture.image = VK_NULL_HANDLE;  // 复位图像句柄
             texture.memory = VK_NULL_HANDLE;  // 复位显存句柄
             return false;  // 上报失败
-        }  // 结束视图创建失败分支
+        }
 
         // 创建可映射的暂存缓冲（主机可见），用于把像素从 CPU 侧送入 GPU。
         VkBufferCreateInfo staging_buffer_info = {};
@@ -723,7 +718,7 @@ private:  // 以下为内部实现细节，不对外暴露
         if (err != VK_SUCCESS) {  // 创建失败则回收纹理相关资源
             DestroyVulkanTexture(texture);  // 销毁已创建的图像、视图与显存
             return false;  // 上报失败
-        }  // 结束缓冲创建失败分支
+        }
 
         VkMemoryRequirements staging_memory_requirements;  // 暂存缓冲的内存需求
         vkGetBufferMemoryRequirements(device_, staging_buffer, &staging_memory_requirements);  // 查询缓冲的内存大小与允许的内存类型
@@ -739,7 +734,7 @@ private:  // 以下为内部实现细节，不对外暴露
             vkDestroyBuffer(device_, staging_buffer, allocator_);  // 销毁暂存缓冲
             DestroyVulkanTexture(texture);  // 销毁纹理相关资源
             return false;  // 上报失败
-        }  // 结束显存分配失败分支
+        }
 
         vkBindBufferMemory(device_, staging_buffer, staging_memory, 0);  // 把显存绑定到暂存缓冲
 
@@ -750,7 +745,7 @@ private:  // 以下为内部实现细节，不对外暴露
             vkDestroyBuffer(device_, staging_buffer, allocator_);  // 销毁缓冲
             DestroyVulkanTexture(texture);  // 销毁纹理相关资源
             return false;  // 上报失败
-        }  // 结束映射失败分支
+        }
         memcpy(mapped_data, data, static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);  // 把 RGBA 像素拷入暂存缓冲
         vkUnmapMemory(device_, staging_memory);  // 取消映射（数据已落入显存）
 
@@ -767,7 +762,7 @@ private:  // 以下为内部实现细节，不对外暴露
             vkDestroyBuffer(device_, staging_buffer, allocator_);  // 销毁暂存缓冲
             DestroyVulkanTexture(texture);  // 销毁纹理相关资源
             return false;  // 上报失败
-        }  // 结束命令缓冲分配失败分支
+        }
 
         VkCommandBufferBeginInfo begin_info = {};  // 命令缓冲开始信息（清零）
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;  // 填写结构体类型
@@ -816,7 +811,7 @@ private:  // 以下为内部实现细节，不对外暴露
                              0, nullptr,  // 无缓冲内存屏障
                              1, &barrier);  // 1 个图像内存屏障
 
-        vkEndCommandBuffer(command_buffer);  // 结束命令缓冲录制
+        vkEndCommandBuffer(command_buffer);
 
         VkSubmitInfo submit_info = {};  // 提交信息（清零）
         submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;  // 填写结构体类型
@@ -839,7 +834,7 @@ private:  // 以下为内部实现细节，不对外暴露
         texture.width = width;  // 记录纹理宽度
         texture.height = height;  // 记录纹理高度
         return true;  // 创建并上传成功
-    }  // 结束 CreateVulkanImage 函数
+    }
 
     // 功能：销毁一张 Vulkan 纹理占用的全部资源（描述符集、视图、图像、显存），并复位结构体字段。
     // 思路：逐项判空后调用对应 vkDestroy*/vkFree*，最后把句柄置回 VK_NULL_HANDLE、宽高归零、ready 置 false，
@@ -848,13 +843,13 @@ private:  // 以下为内部实现细节，不对外暴露
     void DestroyVulkanTexture(LinuxVideoTexture &texture) {
         if (texture.descriptor_set != VK_NULL_HANDLE) {  // 有描述符集则先从 ImGui 注销
             ImGui_ImplVulkan_RemoveTexture(texture.descriptor_set);  // 把描述符集归还给 ImGui 的描述符池
-        }  // 结束描述符注销
+        }
         if (texture.view != VK_NULL_HANDLE) {  // 图像视图存在则销毁
             vkDestroyImageView(device_, texture.view, allocator_);  // 销毁图像视图
-        }  // 结束视图销毁
+        }
         if (texture.image != VK_NULL_HANDLE) {  // 图像存在则销毁
             vkDestroyImage(device_, texture.image, allocator_);  // 销毁图像
-        }  // 结束图像销毁
+        }
         if (texture.memory != VK_NULL_HANDLE) {  // 显存存在则释放
             vkFreeMemory(device_, texture.memory, allocator_);  // 释放显存
         }  // 结束显存释放
@@ -866,7 +861,7 @@ private:  // 以下为内部实现细节，不对外暴露
         texture.width = 0;  // 宽度归零
         texture.height = 0;  // 高度归零
         texture.ready = false;  // 标记为不可用
-    }  // 结束 DestroyVulkanTexture 函数
+    }
 
     // 功能：为已创建好的 Vulkan 图像视图登记 ImGui 描述符集，使其可作为纹理被 ImGui 绘制。
     // 思路：调用 ImGui_ImplVulkan_AddTexture，指定图像布局为 SHADER_READ_ONLY_OPTIMAL（只读采样），
@@ -876,7 +871,7 @@ private:  // 以下为内部实现细节，不对外暴露
         texture.descriptor_set = ImGui_ImplVulkan_AddTexture(  // 向 ImGui 登记纹理，返回可用的描述符集
                 texture.view,  // 被采样的图像视图
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);  // 采样时图像必须处于只读布局
-    }  // 结束 CreateVideoDescriptorSet 函数
+    }
 
     // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引（Vulkan 版）。
     // 思路：先销毁 next 槽旧图像，创建新 Vulkan 图像并上传，登记 ImGui 描述符集；成功后切换 current/next 索引。
@@ -886,17 +881,17 @@ private:  // 以下为内部实现细节，不对外暴露
         LinuxVideoTexture &next_texture = texture_set.textures[texture_set.next_index];  // 取“下一张”作为写入目标
         if (next_texture.image != VK_NULL_HANDLE) {  // 该槽已有旧图像则先销毁
             DestroyVulkanTexture(next_texture);  // 销毁旧图像以复用
-        }  // 结束旧图像销毁
+        }
         if (!CreateVulkanImage(frame.buffer.data(), frame.width, frame.height, next_texture)) {  // 创建并上传新的 Vulkan 图像
             return false;  // 创建/上传失败，返回失败
-        }  // 结束上传失败分支
+        }
         CreateVideoDescriptorSet(next_texture);  // 为新图像登记 ImGui 描述符集
         next_texture.ready = true;  // 标记已写入有效帧
         texture_set.current_index = texture_set.next_index;  // 切换当前显示指针
         texture_set.next_index = (texture_set.next_index + 1) % 2;  // 轮转下一张写入槽
         next_texture.ready = false;  // 刚写入的这帧尚未就绪（待切换）
         return true;  // 动态纹理上传与轮换成功
-    }  // 结束 UploadDynamicTexture 函数
+    }
 
     // 功能：向静态纹理（小地图）上传一次像素数据（Vulkan 版）。
     // 思路：先销毁旧图像与视图，创建新 Vulkan 图像并上传，再登记 ImGui 描述符集。
@@ -908,13 +903,13 @@ private:  // 以下为内部实现细节，不对外暴露
                                            const int height) {  // 纹理高度
         if (texture.image != VK_NULL_HANDLE) {  // 旧图像存在则先销毁
             DestroyVulkanTexture(texture);  // 销毁旧图像
-        }  // 结束旧图像销毁
+        }
         if (!CreateVulkanImage(data, width, height, texture)) {  // 创建并上传新的 Vulkan 图像
             return false;  // 创建/上传失败
-        }  // 结束上传失败分支
+        }
         CreateVideoDescriptorSet(texture);  // 登记 ImGui 描述符集
         return true;  // 静态纹理上传成功
-    }  // 结束 UploadStaticTexture 函数
+    }
 
     // 功能：销毁纹理组中的全部纹理（双缓冲的两张），用于后端析构或重建时释放显存。
     // 思路：遍历 textures 数组逐个调用 DestroyVulkanTexture，不重置索引（对象即将被丢弃）。
@@ -922,8 +917,8 @@ private:  // 以下为内部实现细节，不对外暴露
     void DestroyDynamicTextureSet(LinuxDynamicTextureSet &texture_set) {
         for (auto &texture: texture_set.textures) {  // 遍历集合中的两张纹理
             DestroyVulkanTexture(texture);  // 销毁集合中的每张纹理
-        }  // 结束遍历
-    }  // 结束 DestroyDynamicTextureSet 函数
+        }
+    }
 
     // 功能：由视频纹理构建供 ImGui 使用的 TextureView（描述符集句柄 + 像素尺寸）。
     // 思路：把 ImGui 描述符集（VkDescriptorSet）转为 ImTextureID 填入纹理引用，并携带宽高。
@@ -933,10 +928,10 @@ private:  // 以下为内部实现细节，不对外暴露
         RoboGo::app::TextureView texture_view;  // 构造供 ImGui 使用的纹理视图
         if (texture.descriptor_set != VK_NULL_HANDLE) {  // 描述符集有效时才提供可用的纹理引用
             texture_view.texture_ref = ImTextureRef(reinterpret_cast<ImTextureID>(texture.descriptor_set));  // 描述符集转为 ImTextureID
-        }  // 结束有效性判断
+        }
         texture_view.size = ImVec2(static_cast<float>(texture.width), static_cast<float>(texture.height));  // 携带像素尺寸
         return texture_view;  // 返回纹理视图
-    }  // 结束 BuildTextureView 函数
+    }
 
     VkAllocationCallbacks *allocator_ = nullptr;  // Vulkan 内存分配回调，为空表示使用驱动默认分配器
     VkInstance instance_ = VK_NULL_HANDLE;  // Vulkan 实例，应用与 Vulkan 驱动的顶层连接句柄
@@ -949,20 +944,19 @@ private:  // 以下为内部实现细节，不对外暴露
     VkSampler video_texture_sampler_ = VK_NULL_HANDLE;  // 采样器，定义视频纹理的过滤与寻址方式
 #ifdef APP_USE_VULKAN_DEBUG_REPORT  // 调试构建下才存在调试回调成员
     VkDebugReportCallbackEXT debug_report_ = VK_NULL_HANDLE;  // 调试报告回调，用于接收验证层的告警与错误
-#endif  // 结束调试回调成员的条件编译块
+#endif
     GLFWwindow *window_ = nullptr;  // GLFW 主窗口句柄
     ImGui_ImplVulkanH_Window main_window_data_ = {};  // 交换链窗口数据，含表面、交换链、渲染通道与帧缓冲
     uint32_t min_image_count_ = 2;  // 交换链最小图像数，2 表示双缓冲
     bool swap_chain_rebuild_ = false;  // 交换链需重建标志，窗口尺寸变化或呈现失败时置位
     float main_scale_ = 1.0f;  // 主显示器 DPI 内容缩放因子，用于窗口尺寸与字号缩放
     LinuxDynamicTextureSet udp_video_textures_;  // UDP 图传视频流的双缓冲纹理
-    LinuxDynamicTextureSet custom_video_textures_;  // 自定义客户端视频流的双缓冲纹理
     LinuxVideoTexture mini_map_texture_;  // 小地图静态纹理
     bool initialized_ = false;  // 后端已完成 Vulkan/ImGui 初始化并可销毁资源的标志
     bool game_input_captured_ = false;  // 游戏输入捕获状态，启用时窗口独占键鼠输入
-};  // LinuxPlatformBackend 类定义结束
+};
 
-}// namespace
+}  // namespace
 
 namespace RoboGo::platform {  // 进入平台命名空间，声明工厂函数
 
@@ -971,8 +965,8 @@ namespace RoboGo::platform {  // 进入平台命名空间，声明工厂函数
 //       主程序只依赖本接口，从而实现跨平台同源代码。
 std::unique_ptr<PlatformBackend> CreatePlatformBackend() {
     return std::make_unique<LinuxPlatformBackend>();  // 构造 Linux 后端并以基类指针返回
-}  // 结束 CreatePlatformBackend 函数
+}
 
-}// namespace RoboGo::platform
+}  // namespace RoboGo::platform
 
-#endif  // 结束非 Windows 条件编译块
+#endif

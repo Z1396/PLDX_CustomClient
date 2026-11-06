@@ -24,7 +24,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         constexpr auto kBindRetryDelay = std::chrono::milliseconds(500);
         // 请求的内核接收缓冲区大小：高码率图传下减少丢包
         constexpr std::size_t kReceiveBufferBytes = 20 * 1024 * 1024;
-    }  // 匿名命名空间结束
+    }
 
     // 功能：构造视频流接收器并启动后台接收协程。
     // 思路：先用 error_code 版本打开并绑定 UDP socket（失败只记日志，绝不抛异常），
@@ -40,10 +40,10 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                          kBindRetryDelay.count(),
                          listen_endpoint.address().to_string(),
                          listen_endpoint.port());  // 明确告诉现场：客户端仍会启动，只是暂时没有画面
-        }  // 结束首次绑定分支
+        }
         // 在 io_context 上分离式启动接收循环；即使当前未绑定成功也要启动，循环内部会重试
         boost::asio::co_spawn(io_context, receive_loop(), boost::asio::detached);  // detached：协程自管理生命周期，不阻塞构造函数
-    }  // 构造函数结束
+    }
 
     // 功能：以 error_code 方式打开并绑定 UDP socket（可重复调用）。
     // 返回：true 表示已绑定成功，可以开始收包。
@@ -51,18 +51,18 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         boost::system::error_code error_code;  // 复用错误码，避免异常
         if (socket.is_open()) {  // 复用前先关掉旧句柄（重绑路径）
             socket.close(error_code);  // 关闭失败也无所谓，下面会重新 open
-        }  // 结束旧句柄关闭
+        }
         socket.open(listen_endpoint.protocol(), error_code);  // 打开 IPv4 UDP socket
         if (error_code) {  // 打开失败（描述符耗尽等）
             SPDLOG_ERROR("打开视频流socket失败 message={}", error_code.message());  // 记录原因
             return false;  // 交给上层重试
-        }  // 结束打开失败分支
+        }
         // 调大接收缓冲区；失败不致命（系统上限可能更低），仅提示实际请求值
         socket.set_option(boost::asio::socket_base::receive_buffer_size(kReceiveBufferBytes), error_code);
         if (error_code) {  // 缓冲区设置失败不阻断收包
             SPDLOG_WARN("设置视频流接收缓冲区失败 message={} 请求值={}", error_code.message(), kReceiveBufferBytes);
             error_code.clear();  // 清掉错误码，继续 bind
-        }  // 结束缓冲区设置分支
+        }
         socket.bind(listen_endpoint, error_code);  // 绑定监听端口
         if (error_code) {  // 端口被占用/权限不足
             SPDLOG_ERROR("绑定视频流端口失败 endpoint={}:{} message={}（端口可能被其它程序占用）",
@@ -71,12 +71,12 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                          error_code.message());  // 现场最常见的原因：上一个 RoboGo 实例还没退干净
             socket.close(error_code);  // 关掉半开的 socket，避免句柄泄漏
             return false;  // 交给上层重试
-        }  // 结束绑定失败分支
+        }
         SPDLOG_INFO("视频流接收器已就绪 local_endpoint={} receive_buffer_bytes={}",  // 打印实际绑定成功的地址，便于确认端口是否被占用/重绑
                     socket.local_endpoint().address().to_string() + ":" + std::to_string(socket.local_endpoint().port()),  // 拼成 "ip:port" 便于阅读
                     kReceiveBufferBytes);  // 日志里同时记录请求的缓冲区大小
         return true;  // 绑定成功
-    }  // OpenAndBind 结束
+    }
 
     // 功能：停止接收器。
     // 思路：置 is_running=false 并通过关闭 socket 使正在进行的 async_receive_from 立即返回错误，从而退出循环。
@@ -87,8 +87,8 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         socket.close(error_code);  // 关闭 socket 会让挂起中的 async_receive_from 以 operation_aborted 立刻返回
         if (error_code) {  // 关闭失败一般说明 socket 早已关闭或描述符失效
             SPDLOG_ERROR("关闭视频流socket失败 message={}", error_code.message());  // 记录失败原因但不向上抛，保证析构安全
-        }  // if 结束
-    }  // stop 结束
+        }
+    }
 
     // 功能：UDP 接收主协程：循环接收图传数据包并投递给解码管线；出错时自愈重绑。
     // 思路：用固定 64KB 缓冲接收每个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；
@@ -107,8 +107,8 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                     boost::asio::steady_timer retry_timer(executor, kBindRetryDelay);  // 等一会儿再试，避免打满 CPU
                     co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
                     continue;  // 回到循环顶部再试
-                }  // 结束重试失败分支
-            }  // 结束未绑定判断
+                }
+            }
 
             // 关键：这里用 as_tuple 而不是 use_awaitable。
             // 图传发送端重启、网线抖动、ICMP 端口不可达都可能让收包返回错误；
@@ -122,7 +122,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             if (recv_ec) {  // 收包失败：对端关闭 / 端口不可达 / socket 被 stop() 关闭
                 if (!is_running.load(std::memory_order_relaxed)) {  // stop() 触发的关闭属预期
                     break;  // 退出循环
-                }  // 结束主动停止判断
+                }
                 SPDLOG_WARN("视频流接收中断 code={} message={}，{}ms 后重绑",
                             static_cast<long long>(recv_ec.value()),
                             recv_ec.message(),
@@ -132,7 +132,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                 boost::asio::steady_timer rebind_timer(executor, kRebindDelay);  // 退避定时器
                 co_await rebind_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常
                 continue;  // 回到顶部重绑并继续收包
-            }  // 结束收包失败分支
+            }
 
             // 记录发送方地址，用于日志与抓包
             const std::string sender = sender_endpoint.address().to_string() + ":" + std::to_string(sender_endpoint.port());  // 拼成 "ip:port" 字符串
@@ -141,13 +141,13 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             RoboGo::logging::log_network_payload("udp-video",  // 通道名：标记这是 UDP 图传流量
                                                  "rx",  // 方向：rx 表示接收到的数据
                                                  "video-stream",  // 伪话题名：UDP 无 topic，用固定串占位
-                                                 std::span<const uint8_t>(buffer.data(), length),  // 只暴露本次实际收到的 length 字节，而非整块 64KB
+                                                 std::span<const uint8_t>(buffer).first(length),  // 从整块缓冲区构造带边界的 span，再取本次实收的 length 字节
                                                  sender);  // 发送方地址，便于多路流溯源
             // 把数据指针与长度交给解码管线
             on_receive_packet(buffer.data(), length);  // 回调内必须完成拷贝/解析，返回后 buffer 可能被下一包覆盖
-        }  // while 结束
+        }
 
         SPDLOG_INFO("视频流接收循环已退出");  // 协程正常返回前的最后一条日志
-    }  // receive_loop 结束
+    }
 
-}// namespace RoboGo::io  // 网络 IO 命名空间结束
+}  // namespace RoboGo::io

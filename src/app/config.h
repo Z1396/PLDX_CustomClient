@@ -21,4 +21,4 @@ std::string LoadConfiguredMqttServer();
 // 返回：true 表示保存成功。
 bool SaveConfiguredMqttServer(std::string_view host_port);
 
-}// namespace RoboGo::app  // 应用层命名空间结束
+}  // namespace RoboGo::app

@@ -249,6 +249,7 @@ endfunction()
 
 set(EMBEDDED_RESOURCE_SOURCES "")
 add_embedded_resource("resources/map.png" "embedded_map_png")
+add_embedded_resource("resources/map_terrain.png" "embedded_map_terrain_png")  # 地形分层叠加层（由 2027 高度掩膜生成，带 alpha）
 add_embedded_resource("resources/zcool.ttf" "embedded_zcool_font")
 add_embedded_resource("proto/messages.proto" "embedded_messages_proto")
 
@@ -257,9 +258,17 @@ add_executable(RoboGo WIN32
     src/main.cpp
     src/app/application.cpp
     src/app/config.cpp
+    src/app/custom_control_publisher.cpp
+    src/app/robot_registry.cpp
+    src/app/perf_stats.cpp
     src/app/imgui_setup.cpp
     src/custom_control_payload.cpp
     src/main_window.cpp
+    src/mqtt/event_formatter.cpp
+    src/mqtt/handlers_match.cpp
+    src/mqtt/handlers_robot.cpp
+    src/mqtt/handlers_ui.cpp
+    src/mqtt/mqtt_router.cpp
     src/keyboard_mouse_state_manager.cpp
     src/panel/bottom_panel.cpp
     src/panel/buff_panel.cpp
@@ -269,13 +278,12 @@ add_executable(RoboGo WIN32
     src/panel/log_panel.cpp
     src/panel/mini_map.cpp
     src/panel/panel_layout.cpp
+    src/panel/perf_panel.cpp
     src/panel/robot_status_panel.cpp
     src/panel/start_panel.cpp
     src/logging/logging.cpp
     src/io/mqtt_client.cpp
     src/io/video_stream_receiver.cpp
-    src/video/custom_byte_block_video_decoder.cpp
-    src/video/custom_byte_block_video_decoder_worker.cpp
     src/video/rgba_image_transform.cpp
     src/video/video_decoder.cpp
     src/video/video_shards_manager.cpp
@@ -303,7 +311,14 @@ target_include_directories(RoboGo PRIVATE
 if(WIN32)
     target_compile_definitions(RoboGo PRIVATE _WIN32_WINNT=0x0601)
 endif()
-target_compile_definitions(RoboGo PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
+# 日志级别：Release 只编到 INFO，DEBUG/TRACE 语句会被编译器整条剔除（连参数都不求值）；
+# Debug 构建保留 TRACE 便于排查。
+# 这一条直接影响帧时间：视频路径里原本每帧都有一条 SPDLOG_DEBUG，Release 下等于每帧白做一次字符串格式化。
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(RoboGo PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
+else()
+    target_compile_definitions(RoboGo PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO)
+endif()
 
 set_source_files_properties(
     src/resource/resources.cpp
@@ -334,3 +349,35 @@ elseif(MSVC)
     target_compile_options(RoboGo PRIVATE /bigobj /W4)
     target_link_options(RoboGo PRIVATE /MAP)
 endif()
+
+# ---------------------------------------------------------------------------
+# 单元测试：只覆盖纯逻辑（载荷布局 / 发布节流 / 事件文案 / ID 映射），不依赖 ImGui 与平台后端。
+# 构建：cmake --build build/release --target RoboGoTests
+# 运行：ctest --test-dir build/release --output-on-failure
+# ---------------------------------------------------------------------------
+enable_testing()
+
+add_executable(RoboGoTests
+    tests/test_main.cpp
+    src/app/robot_registry.cpp
+    src/custom_control_payload.cpp
+    src/mqtt/event_formatter.cpp
+    gen/messages.pb.cc
+)
+target_include_directories(RoboGoTests PRIVATE include gen src)
+target_precompile_headers(RoboGoTests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/include/pch.h>")
+target_compile_definitions(RoboGoTests PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO)
+if(WIN32)
+    target_compile_definitions(RoboGoTests PRIVATE _WIN32_WINNT=0x0601)
+endif()
+target_link_libraries(RoboGoTests PRIVATE
+    spdlog::spdlog
+    utf8_validity
+    protobuf::libprotobuf-lite
+    async_mqtt_asio_bind
+    ffmpeg
+    imgui
+    readerwriterqueue
+    stb
+)
+add_test(NAME robogo_unit COMMAND RoboGoTests)
