@@ -1,4 +1,7 @@
 // logging.cpp：日志模块实现——spdlog 初始化与关闭、日志目录与会话 ID 管理，以及网络报文按自定义二进制格式的抓取与落盘。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <readerwriterqueue.h>
+// [/pch-split]
 #include "logging.h"  // 本编译单元的主头文件(声明 initialize/shutdown 等)
 #include "embedded_messages_proto.h"  // 内嵌的 messages.proto 原始文本(用于落盘保存)
 #include "network_capture_format.h"  // 抓包标志位与 BuildNetworkCaptureFlags

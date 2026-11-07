@@ -2,6 +2,12 @@
 #pragma once
 
 #include <pch.h>  // 预编译头：集中引入 STL/protobuf/ImGui 等第三方头，加速整体编译
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_stdlib.h"
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "custom_control_payload.h"  // 自定义控制包的字节布局与打包函数（手写实现，不由 protobuf 生成）
 #include "io/mqtt_client.h"  // MQTT 客户端封装：提供 publish/subscribe 等接口，用于与裁判系统通信
 

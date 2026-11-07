@@ -1,4 +1,9 @@
 // buff_panel.cpp：增益/Buff 状态面板的实现。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "buff_panel.h"  // 引入本面板对应的头文件（含函数声明与依赖）
 
 // 功能：根据 Buff 类型与等级生成展示名称（如「攻击增益 +1」「防御增益 -1」）。

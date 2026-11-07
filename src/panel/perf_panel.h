@@ -2,6 +2,9 @@
 #pragma once
 
 #include <pch.h>
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 
 namespace RoboGo::panel {
 

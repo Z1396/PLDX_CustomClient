@@ -2,6 +2,10 @@
 // 2027-11-06 按「主界面定稿」：由堆叠的彩色文字+进度条，改为一张卡片
 // （身份 + 32px 大血量数字 + 血条 + 热量/弹量/缓冲能量三栏）。
 // 设备连接状态、42mm 装配权限、自瞄/小陀螺等原有信息全部保留，压缩到卡片底部两行。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "robot_status_panel.h"
 
 #include <cstdio>

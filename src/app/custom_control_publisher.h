@@ -2,6 +2,10 @@
 #pragma once
 
 #include <pch.h>
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 
 #include "io/mqtt_client.h"   // MqttClient：发布 CustomControl 话题
 #include "main_window.h"      // State：读取全局单位状态与节流时间戳

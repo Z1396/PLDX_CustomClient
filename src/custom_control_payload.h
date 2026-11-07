@@ -1,6 +1,10 @@
 #pragma once  // 头文件包含守卫：防止本头被重复包含
 
 #include <pch.h>  // 预编译头(PCH)：集中包含 STL、spdlog 等公共依赖
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 
 // 自定义控制载荷模块：定义上报给裁判系统的自定义字节块布局与编解码辅助接口。
 // 【2027 协议变更】空中支援指令/状态已在 2027 协议中删除，原用于"呼叫标志 + 冷却计数"的 2 字节

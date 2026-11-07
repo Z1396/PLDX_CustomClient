@@ -1,4 +1,8 @@
 // 比赛全局类 MQTT 消息处理（协议 2.2.3 ~ 2.2.7）：比赛状态、全局单位、后勤、特殊机制、事件。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "mqtt/handlers.h"
 
 #include "app/robot_registry.h"      // kRobotTypeToSlot：兵种 -> 本地槽位映射

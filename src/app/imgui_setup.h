@@ -1,6 +1,9 @@
 #pragma once  // 头文件包含守卫：防止重复包含
 
 #include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 
 // ImGui 初始化模块：负责 ImGui 上下文、导航与样式缩放，以及内嵌中文字体的加载。
 namespace RoboGo::app {  // 进入应用层命名空间

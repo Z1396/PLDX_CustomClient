@@ -3,6 +3,9 @@
 // 沿用主 HUD 定稿的视觉令牌；战术地图绘制与交互保持项目原设计。
 #pragma once
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 #include "main_window.h"   // 提供 State 全局状态（比赛阶段、双方单位、日志等）
 #include "io/mqtt_client.h"   // 提供 MqttClient，用于下发哨兵/飞镖/地图标记指令
 

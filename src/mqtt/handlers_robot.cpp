@@ -1,5 +1,9 @@
 // 本机与友军状态类 MQTT 消息处理（协议 2.2.8 ~ 2.2.13、2.2.16）。
 // 这些消息都是「解析成功即覆盖 State 快照」，没有额外副作用。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "mqtt/handlers.h"
 
 namespace RoboGo::mqtt {

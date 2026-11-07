@@ -4,6 +4,10 @@
 #pragma once
 
 #include <pch.h>
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "ui/theme.h"
 
 namespace RoboGo::ui::hud {

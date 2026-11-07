@@ -2,6 +2,10 @@
 #pragma once  // 头文件包含守卫：防止重复包含
 
 #include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 
 namespace RoboGo::logging {  // 进入日志命名空间
 

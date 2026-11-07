@@ -1,5 +1,9 @@
 // 界面侧机制与指令回执类 MQTT 消息处理（协议 2.2.14 起）：
 // Buff、判罚、地图打点、雷达目标、科技核心、性能选型同步、能量机关、哨兵姿态、飞镖目标、哨兵指令回执。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "mqtt/handlers.h"
 
 #include <ranges>  // std::ranges::find_if（Buff 原地续期查找）

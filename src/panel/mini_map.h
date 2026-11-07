@@ -1,6 +1,9 @@
 // mini_map.h：小地图面板，声明 ShowMiniMap 接口。
 #pragma once
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 #include "main_window.h"  // 提供 State（雷达/路径数据）
 #include "io/mqtt_client.h"  // 提供 MqttClient（标记模式下下发坐标）
 

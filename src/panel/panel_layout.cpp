@@ -1,6 +1,10 @@
 // panel_layout.cpp：面板布局与通用 ImGui 样式/子窗口工具的实现。属于「业务功能层-UI」。
 // 提供 RAII 风格的样式栈(ScopedStyle)、子窗口(ScopedChildWindow)、带标题面板(ScopedTitledPanel)，
 // 以及统一的按钮/输入框/滑块样式构造器与一行多面板横向排布(ShowPanelRow)，供各功能面板复用。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "panel_layout.h"
 #include "ui/theme.h"   // 统一视觉令牌：三级表面、低对比描边、降饱和语义色
 

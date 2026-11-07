@@ -7,6 +7,7 @@
 
 #ifdef _WIN32   // 崩溃栈诊断需要 Win32 + dbghelp（仅在 Windows 下引入）
 #include <windows.h>   // 异常处理与线程上下文：SetUnhandledExceptionFilter / CONTEXT
+#include <shellapi.h>  // [pch-split] CommandLineToArgvW：把 WinMain 的命令行拆成 argv
 #include <dbghelp.h>   // 符号解析：SymInitialize / SymFromAddr / StackWalk64
 #endif   // 结束 Windows 头文件引入
 

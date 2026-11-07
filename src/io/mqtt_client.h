@@ -13,6 +13,11 @@
 #pragma once  // 头文件包含守卫：防止重复包含
 
 #include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库(async_mqtt/Boost.Asio/spdlog 等)
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <boost/asio.hpp>
+#include <async_mqtt/asio_bind/client_fwd.hpp>
+#include <async_mqtt/asio_bind/predefined_layer/mqtt.hpp>
+// [/pch-split]
 
 namespace RoboGo::io {  // 进入网络 IO 命名空间
 

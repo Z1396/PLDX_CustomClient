@@ -2,6 +2,9 @@
 #pragma once
 
 #include <pch.h>  // 预编译头，集中提供 ImGui/标准库依赖
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 
 namespace RoboGo::panel {  // 面板工具统一放在 RoboGo::panel 命名空间
 

@@ -2,6 +2,9 @@
 #pragma once
 
 #include <pch.h>   // 预编译头（集中包含常用头以加速编译）
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 
 #include "app/application_types.h"   // 应用层类型（TextureSlot / VideoFrame / TextureView 等）
 #include "resource/resources.h"      // 资源层类型（DecodedImage 等）

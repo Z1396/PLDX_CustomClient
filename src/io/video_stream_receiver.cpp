@@ -12,6 +12,10 @@
 //   3) 从未绑定成功时每 500ms 重试一次，等占用端口的进程退出后自动接上。
 // 依赖：Boost.Asio（UDP + 协程）、spdlog、RoboGo::logging（网络抓包）。
 // ============================================================================
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <boost/asio.hpp>
+#include <readerwriterqueue.h>
+// [/pch-split]
 #include "video_stream_receiver.h"  // 本编译单元的主头文件(声明 VideoStreamReceiver)
 #include "logging/logging.h"  // 网络报文抓包接口(log_network_payload)
 

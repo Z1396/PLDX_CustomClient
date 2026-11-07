@@ -2,6 +2,16 @@
 // 说明：本头只放纯数据结构与轻量内联判断，不引入任何实现依赖，便于各层共享。
 
 #include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库(std::string/vector、ImGui 类型等)
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+// [/pch-split]
 
 // 应用层公共数据结构：定义视频帧、UI 日志、纹理槽/视图及启动参数等类型。
 namespace RoboGo::app {  // 进入应用层命名空间

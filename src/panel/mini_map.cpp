@@ -1,4 +1,8 @@
 // mini_map.cpp：战场小地图面板的实现。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "mini_map.h"
 #include "keyboard_mouse_state_manager.h"   // 标记模式开关（is_marker_mode）与指挥台状态
 #include "app/team_util.h"                  // 共享阵营/雷达工具：WeAreRed / RadarRobotIds

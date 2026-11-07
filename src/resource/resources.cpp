@@ -8,6 +8,10 @@
 #pragma GCC diagnostic ignored "-Wunused-function"  // 屏蔽未使用函数告警
 #endif
 #include <pch.h>   // 引入预编译头：集中包含 STL、spdlog、imgui、stb 等公共依赖
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#define STBI_ONLY_PNG  // 仅编译 PNG 解码器，剔除其它格式以减小体积
+#include <stb_image.h>
+// [/pch-split]
 #if defined(__clang__)  // Clang 分支：还原告警状态
 #pragma clang diagnostic pop  // 恢复之前保存的告警设置
 #elif defined(__GNUC__)  // GCC 分支：还原告警状态

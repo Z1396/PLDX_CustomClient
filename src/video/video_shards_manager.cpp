@@ -1,3 +1,18 @@
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <ranges>  // std::views：分片重组时的范围视图
+#ifdef _WIN32
+#include <winsock2.h>  // ntohs/ntohl（Windows 字节序转换）
+#else
+#include <arpa/inet.h>  // ntohs/ntohl（Linux 字节序转换）
+#endif
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+// [/pch-split]
 #include "video_shards_manager.h" // 引入本文件的类声明
 
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。

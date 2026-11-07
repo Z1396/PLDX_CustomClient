@@ -2,6 +2,17 @@
 // 实现纹理上传(Vulkan)、交换链重建、游戏输入捕获切换等，对外行为与 Windows 后端保持一致。
 #ifndef _WIN32
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#ifndef _WIN32
+#ifndef GLFW_INCLUDE_VULKAN
+#define GLFW_INCLUDE_VULKAN  // 让 GLFW 头同时引入 Vulkan 头
+#endif
+#include <GLFW/glfw3.h>
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+#endif
+// [/pch-split]
 #include "platform/platform_backend.h"  // 包含平台后端抽象接口声明（PlatformBackend 基类、TextureView、TextureSlot 等）
 
 #include "app/imgui_setup.h"  // 包含 ImGui 通用初始化与字体加载函数声明

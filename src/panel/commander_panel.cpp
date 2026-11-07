@@ -10,6 +10,11 @@
 //   · 指令区：高饱和实心按钮 → 分层级幽灵按钮；
 //   · 战术地图：绘制与交互完全沿用项目原设计，未改动。
 // 所有字段都取裁判系统真实数据；指令下发、页签与地图打点回调全部保留。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "commander_panel.h"
 
 #include "keyboard_mouse_state_manager.h"   // 指挥台退出、地图打点、指挥手角色查询

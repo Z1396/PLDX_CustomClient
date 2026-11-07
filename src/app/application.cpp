@@ -1,4 +1,16 @@
 // application.cpp：应用程序核心——解析启动参数、搭建后台服务(MQTT / UDP 视频流 / 字节块解码线程)，驱动主渲染循环、视频纹理上传与键鼠上报。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <boost/asio.hpp>
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+#include <readerwriterqueue.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "application.h"  // 本编译单元的主头文件(声明 ParseLaunchOptions / RunApplication)
 
 #include "config.h"  // 应用级配置：MQTT 服务端地址的持久化读写
@@ -233,6 +245,7 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
     // 最后创建一个专用线程运行 Asio io_context。
     explicit BackgroundServices(const LaunchOptions &options)  // explicit：防止 LaunchOptions 被隐式转换
         :   udp_frame_converter_(options.invert_udp_video), // AvFrameRgbaConverterUDP udp_frame_converter_帧转换器(带初始旋转开关)
+        
             // MQTT 客户端：连接裁判系统；收到消息时投递到主线程消息队列。
             mqtt_client_(io_context_,  // 共用本类的 io_context
                         options.mqtt_host,  // 解析后的 broker 主机
@@ -265,12 +278,14 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
                 io_context_.run(); // 阻塞运行，直到 io_context_.stop()
                 SPDLOG_INFO("IO线程已退出");  // 说明 stop() 已生效，线程即将结束
             }),  // IO 线程 lambda 结束
-            video_test_enabled_(options.video_test) {  // 初始化列表最后一项：是否启用合成视频源
-        if (video_test_enabled_) {  // 开发自检模式：没有图传时用合成画面验证整条链路
-            SPDLOG_INFO("合成视频源已启用 --video-test（仅用于自检，比赛请勿开启）");
-            video_test_thread_ = std::thread([this]() { RunVideoTestSource(); });  // 独立线程按 60fps 产帧
-        }
-    }  // 构造函数结束(全部工作在初始化列表中完成)
+
+            video_test_enabled_(options.video_test) // 初始化列表最后一项：是否启用合成视频源
+            {  
+                if (video_test_enabled_) {  // 开发自检模式：没有图传时用合成画面验证整条链路
+                    SPDLOG_INFO("合成视频源已启用 --video-test（仅用于自检，比赛请勿开启）");
+                    video_test_thread_ = std::thread([this]() { RunVideoTestSource(); });  // 独立线程按 60fps 产帧
+                }
+            }  // 构造函数结束(全部工作在初始化列表中完成)
 
     // 功能：析构时确保后台服务全部停止、线程回收。
     ~BackgroundServices() {  // 保证异常/提前 return 时也能停服，不残留线程

@@ -9,6 +9,10 @@
 //       原子修订号(endpoint_revision)与标志(is_client_id_updated)感知主线程的参数变更并重建连接。
 // 依赖：async_mqtt、Boost.Asio 协程、spdlog、RoboGo::logging（网络抓包）。
 // ============================================================================
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <async_mqtt/all.hpp>
+// [/pch-split]
 #include "mqtt_client.h"
 // 本编译单元的主头文件(声明 MqttClient)
 #include "logging/logging.h"  // 网络报文抓包接口(log_network_payload)

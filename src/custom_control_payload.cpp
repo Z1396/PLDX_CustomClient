@@ -1,4 +1,8 @@
 // 自定义控制载荷实现：将敌情打包成固定布局二进制载荷，同时控制MQTT上报发布节奏
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "custom_control_payload.h"  // 本模块头文件：载荷布局常量与函数声明
 
 // 功能：组装完整自定义上报载荷，固定长度std::array，固定字段排布、小端编码

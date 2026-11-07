@@ -34,6 +34,13 @@ float get_mouse_sensitivity();
 // 参数 sensitivity：新的灵敏度值。
 void set_mouse_sensitivity(float sensitivity);
 
+// 功能：累加一次「相对鼠标位移」（与光标在屏幕上的绝对位置无关）。
+// 来源：Windows 后端在 WM_INPUT / RAWMOUSE.lLastX/lLastY 里调用；Linux 侧由 UI 线程读 ImGui 的 MouseDelta 累加。
+// 说明：内部会乘当前灵敏度，且只在比赛模式下累加；累加值由上报线程按 71Hz 取走并清空。
+//       之所以要相对位移：光标会被 ClipCursor 钉在窗口边缘，用绝对坐标算 delta 会归零，云台就转不过去了。
+// 参数 delta_x/delta_y：鼠标硬件本次报告的相对位移（像素，可为负）。
+void accumulate_relative_mouse_delta(float delta_x, float delta_y);
+
 // 功能：查询当前是否处于地图点位标记模式。
 bool is_marker_mode();
 

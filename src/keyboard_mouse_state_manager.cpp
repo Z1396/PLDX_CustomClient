@@ -6,6 +6,13 @@
 //   60Hz 屏就是 60Hz、144Hz 屏会跑到 76.9Hz（超过协议上限）、掉帧就直接掉控制频率。
 //   现在渲染循环只把按键状态与鼠标增量写进原子变量，由独立线程按固定周期取走并发送，
 //   上报频率与画面刷新率彻底解耦。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <messages.pb.h>
+// [/pch-split]
 #include "keyboard_mouse_state_manager.h"  // 本模块头文件：对外函数声明与依赖(ImGui/MQTT/Protobuf 消息类型)
 
 #ifdef _WIN32
@@ -17,6 +24,10 @@
 // 说明：Windows 默认定时器精度约 15.6ms，若不调 timeBeginPeriod，sleep_until 会被拉到 64Hz 左右，
 //       虽然也不违规，但会明显低于预期；启动线程时已把精度提到 1ms。
 constexpr std::chrono::milliseconds kPublishPeriod(14);
+
+// 鼠标位移定点累加的放大倍数：把浮点位移放大成整数存进 atomic<int64_t>，发布时再除回去。
+// 这样既避开浮点原子 fetch_add 的兼容性问题，又不会像原来 int32 那样把 <1 像素的慢速微调截断成 0。
+constexpr int64_t kMouseDeltaFixedScale = 1024;
 
 // 鼠标按键在 g_state.pending_buttons 中的位定义（避免三个独立原子变量，读的时候能一次取齐）。
 constexpr uint32_t kButtonLeft = 1u << 0;
@@ -30,8 +41,9 @@ namespace {
 struct KeyboardMouseState {
     // 跨线程共享状态(UI 线程写，上报线程读/取走)
     std::atomic<bool> game_mode_enabled{false};
-    std::atomic<int32_t> pending_mouse_x{0};
-    std::atomic<int32_t> pending_mouse_y{0};
+    // 鼠标位移用定点数累加（实际像素 * kMouseDeltaFixedScale），保留小数余量，避免灵敏度 <1 时丢微调。
+    std::atomic<int64_t> pending_mouse_x{0};
+    std::atomic<int64_t> pending_mouse_y{0};
     std::atomic<int32_t> pending_mouse_z{0};
     std::atomic<uint32_t> pending_keyboard_value{0};
     std::atomic<uint32_t> pending_buttons{0};
@@ -47,8 +59,6 @@ struct KeyboardMouseState {
     // 上报线程自身状态
     std::thread publisher_thread;
     std::atomic<bool> publisher_running{false};
-    std::thread mouse_sampler_thread;
-    std::atomic<bool> mouse_sampler_running{false};
     RoboGo::io::MqttClient *publisher_client = nullptr;
 
     // terrain overlay toggle: shared by both map views
@@ -156,7 +166,23 @@ float get_mouse_sensitivity() {  // 只读访问器
 // 参数 sensitivity：新的灵敏度值。
 void set_mouse_sensitivity(float sensitivity) {  // 由配置界面调整灵敏度
     SPDLOG_INFO("更新鼠标灵敏度 old={} new={}", g_state.mouse_sensitivity.load(std::memory_order_relaxed), sensitivity);  // "{}" 为 spdlog 占位符，按参数顺序替换
-    g_state.mouse_sensitivity.store(sensitivity, std::memory_order_relaxed);  // 更新灵敏度，采样线程下一轮生效
+    g_state.mouse_sensitivity.store(sensitivity, std::memory_order_relaxed);  // 更新灵敏度，下一次位移累加时生效
+}
+
+// 功能：累加一次相对鼠标位移（由平台后端 / UI 线程调用，上报线程按周期取走）。
+// 关键点：这是「鼠标硬件报告的相对量」，与光标在屏幕上的绝对坐标无关，
+//         所以光标被 ClipCursor 钉在窗口边缘时仍能持续产生位移，云台才能连续 360° 旋转。
+void accumulate_relative_mouse_delta(const float delta_x, const float delta_y) {
+    // 菜单 / 指挥台里的移动一律丢弃，避免切回比赛时把菜单操作一次性算进云台。
+    if (!g_state.game_mode_enabled.load(std::memory_order_acquire)) {
+        return;
+    }
+    const float sensitivity = g_state.mouse_sensitivity.load(std::memory_order_relaxed);
+    const float scale = static_cast<float>(kMouseDeltaFixedScale);
+    g_state.pending_mouse_x.fetch_add(static_cast<int64_t>(delta_x * sensitivity * scale),
+                                      std::memory_order_relaxed);  // 定点累加 X（保留小数余量）
+    g_state.pending_mouse_y.fetch_add(static_cast<int64_t>(delta_y * sensitivity * scale),
+                                      std::memory_order_relaxed);  // 定点累加 Y
 }
 
 // 功能：查询当前是否处于地图点位标记模式。
@@ -253,11 +279,13 @@ static void PublishKeyboardMouseOnce() {
     // 单包位移限幅：正常 14ms 内人手最多挪几个像素到几十像素，500 已经非常宽松。
     // 限幅的意义是兜住"极端卡顿/休眠唤醒/采样线程被挂起"这类情况：
     // 没有限幅时，攒下的几千位移会一次性发给机器人，云台会猛地甩到一边（现场很难解释）。
-    constexpr int32_t kMaxMouseDeltaPerPacket = 500;  // 单包最大位移（像素）
-    const int32_t raw_mouse_x = g_state.pending_mouse_x.exchange(0, std::memory_order_acq_rel);  // 取走 X 累计位移
-    const int32_t raw_mouse_y = g_state.pending_mouse_y.exchange(0, std::memory_order_acq_rel);  // 取走 Y 累计位移
-    const int32_t mouse_x = std::clamp(raw_mouse_x, -kMaxMouseDeltaPerPacket, kMaxMouseDeltaPerPacket);  // 限幅后的 X
-    const int32_t mouse_y = std::clamp(raw_mouse_y, -kMaxMouseDeltaPerPacket, kMaxMouseDeltaPerPacket);  // 限幅后的 Y
+    constexpr float kMaxMouseDeltaPerPacket = 500.0f;  // 单包最大位移（像素）
+    // 从定点累加量还原成浮点像素，再做单包限幅；定点保留了 <1 像素的微调余量，不会像原来那样被截断。
+    const float scale = static_cast<float>(kMouseDeltaFixedScale);
+    const float raw_mouse_x = static_cast<float>(g_state.pending_mouse_x.exchange(0, std::memory_order_acq_rel)) / scale;
+    const float raw_mouse_y = static_cast<float>(g_state.pending_mouse_y.exchange(0, std::memory_order_acq_rel)) / scale;
+    const int32_t mouse_x = static_cast<int32_t>(std::clamp(raw_mouse_x, -kMaxMouseDeltaPerPacket, kMaxMouseDeltaPerPacket));  // 限幅后的 X
+    const int32_t mouse_y = static_cast<int32_t>(std::clamp(raw_mouse_y, -kMaxMouseDeltaPerPacket, kMaxMouseDeltaPerPacket));  // 限幅后的 Y
     const int32_t mouse_z = g_state.pending_mouse_z.exchange(0, std::memory_order_acq_rel);  // 滚轮位移
     const uint32_t keyboard_value = g_state.pending_keyboard_value.load(std::memory_order_relaxed);  // 键盘位掩码
     const uint32_t buttons = g_state.pending_buttons.load(std::memory_order_relaxed);  // 鼠标按键掩码
@@ -295,51 +323,10 @@ static void KeyboardMousePublishLoop() {
     }  // 结束主循环
 }
 
-#ifdef _WIN32
-// 功能：按约 1ms 的周期采样光标位置，把位移累加进待发累计量。
-// 为什么要独立采样：鼠标位移是"累计量"，采样频率直接决定输入分辨率。
-//   原来在渲染循环里读 io.MouseDelta，等于把鼠标采样率锁死在刷新率上：
-//   - 60Hz 屏每 16.7ms 才采一次，慢速微调时位移被量化成一帧一个台阶，手感发涩；
-//   - 某一帧卡了 100ms，这 100ms 的位移会攒成一包一次发出去，云台会突然甩一下；
-//   - 换个 144Hz 显示器手感就变了，同一份配置在不同机器上不一致。
-//   改成独立线程按 1ms 采样后，位移粒度提高约 16 倍，且与渲染帧率彻底无关。
-void MouseSampleLoop() {
-    POINT last_position{0, 0};  // 上一次采样到的光标位置
-    bool has_last_position = false;  // 是否已有基准点
-    while (g_state.mouse_sampler_running.load(std::memory_order_acquire)) {  // 直到 stop 请求
-        // 非比赛模式：不累计位移，并丢弃基准点（避免进入比赛时把菜单里的移动一次性算进去）
-        if (!g_state.game_mode_enabled.load(std::memory_order_acquire)) {
-            has_last_position = false;  // 丢弃基准
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));  // 空闲时降低唤醒频率
-            continue;  // 下一轮
-        }
-
-        POINT current_position{0, 0};  // 本次采样结果
-        if (GetCursorPos(&current_position) == 0) {  // 取不到（锁屏/切换桌面/会话切换）
-            has_last_position = false;  // 丢弃基准，避免恢复后算出一个巨大的跳变
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));  // 稍后再试
-            continue;  // 下一轮
-        }
-
-        if (!has_last_position) {  // 刚进入比赛模式：这一轮只记录基准
-            last_position = current_position;  // 记录基准
-            has_last_position = true;  // 标记已有基准
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));  // 1ms 后再采
-            continue;  // 不产生位移
-        }
-
-        const int32_t delta_x = current_position.x - last_position.x;  // X 位移（物理像素）
-        const int32_t delta_y = current_position.y - last_position.y;  // Y 位移（物理像素）
-        last_position = current_position;  // 更新基准
-        if (delta_x != 0 || delta_y != 0) {  // 有移动才累加
-            const float sensitivity = g_state.mouse_sensitivity.load(std::memory_order_relaxed);  // 取当前灵敏度
-            g_state.pending_mouse_x.fetch_add(static_cast<int32_t>(delta_x * sensitivity), std::memory_order_relaxed);  // 累加 X
-            g_state.pending_mouse_y.fetch_add(static_cast<int32_t>(delta_y * sensitivity), std::memory_order_relaxed);  // 累加 Y
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));  // 1ms 周期（timeBeginPeriod(1) 已把精度提上来）
-    }
-}
-#endif
+// Windows 端的鼠标位移不再由本模块采样：平台后端注册 Raw Input 后，
+// 在 WndProc 的 WM_INPUT 分支取 RAWMOUSE.lLastX/lLastY（鼠标硬件的相对位移），
+// 直接调用 accumulate_relative_mouse_delta 累加。相对位移与光标屏幕位置无关，
+// 因此即使 ClipCursor 把光标钉在窗口边缘，云台也能连续 360° 旋转。
 
 // 功能：启动键鼠上报线程（进程内只启动一次）。
 // 参数 mqtt_client：发布用的客户端，调用方必须保证其生命周期长于本线程（application 里先 stop 再停 MQTT）。
@@ -351,11 +338,9 @@ void start_keyboard_mouse_publisher(RoboGo::io::MqttClient &mqtt_client) {
 #ifdef _WIN32
     timeBeginPeriod(1);  // 把系统定时器精度提到 1ms，否则 sleep_until(14ms) 会被拉到 ~15.6ms
 #endif
+    // 鼠标位移由平台后端（Windows: WM_INPUT / Linux: ImGui MouseDelta）直接累加到原子量，
+    // 这里只需要一个按固定周期打包发布的上报线程，不再另起光标采样线程。
     g_state.publisher_thread = std::thread(KeyboardMousePublishLoop);  // 启动上报线程
-#ifdef _WIN32
-    g_state.mouse_sampler_running.store(true, std::memory_order_release);  // 置位采样线程标志
-    g_state.mouse_sampler_thread = std::thread(MouseSampleLoop);  // 启动 1ms 光标采样线程
-#endif
     SPDLOG_INFO("键鼠上报线程已启动 period_ms={} expected_hz={}",  // 记录实际配置，便于现场核对频率
                 kPublishPeriod.count(),  // 周期毫秒
                 1000 / kPublishPeriod.count());  // 预期频率（71Hz，低于协议 75Hz 上限）
@@ -366,12 +351,6 @@ void stop_keyboard_mouse_publisher() {
     if (!g_state.publisher_running.exchange(false, std::memory_order_acq_rel)) {  // 未启动或已停止
         return;  // 直接返回
     }
-#ifdef _WIN32
-    g_state.mouse_sampler_running.store(false, std::memory_order_release);  // 先停采样线程
-    if (g_state.mouse_sampler_thread.joinable()) {  // 可连接才需要 join
-        g_state.mouse_sampler_thread.join();  // 最多等 1ms
-    }  // 结束采样线程回收
-#endif
     if (g_state.publisher_thread.joinable()) {  // 线程可连接才需要 join
         g_state.publisher_thread.join();  // 最多等一个上报周期（14ms）
     }
@@ -423,8 +402,18 @@ void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client) {
         return;  // 非比赛模式直接返回，不做后续采样
     }
 
-    // 鼠标位移已由 MouseSampleLoop 按 1ms 独立采样，这里**不再**读 io.MouseDelta（否则会重复累计，
-    // 而且又把采样率锁回渲染帧率）。滚轮没有高频采样源，仍按帧取用即可（离散事件，不受帧率影响）。
+    // Windows：相对位移由平台后端在 WM_INPUT（RAWMOUSE.lLastX/lLastY）里调用
+    //          accumulate_relative_mouse_delta 累加，与光标屏幕位置无关、不受 ClipCursor 边界限制。
+    // Linux：GLFW_CURSOR_DISABLED 下 ImGui 的 MouseDelta 就是虚拟光标的相对位移，在这里按帧累加。
+#ifndef _WIN32
+    const float sensitivity = g_state.mouse_sensitivity.load(std::memory_order_relaxed);
+    const float scale = static_cast<float>(kMouseDeltaFixedScale);
+    g_state.pending_mouse_x.fetch_add(static_cast<int64_t>(io.MouseDelta.x * sensitivity * scale),
+                                      std::memory_order_relaxed);  // 累加 X 相对位移
+    g_state.pending_mouse_y.fetch_add(static_cast<int64_t>(io.MouseDelta.y * sensitivity * scale),
+                                      std::memory_order_relaxed);  // 累加 Y 相对位移
+#endif
+    // 滚轮没有高频采样源，仍按帧取用即可（离散事件，不受帧率影响）。
     g_state.pending_mouse_z.fetch_add(static_cast<int32_t>(io.MouseWheel), std::memory_order_relaxed);  // 滚轮增量不乘灵敏度
 
     // 将各按键状态按位打包进 32 位键盘值(低 16 位对应 W/S/A/D/Shift/Ctrl/Q~B 等键)。

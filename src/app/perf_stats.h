@@ -3,6 +3,9 @@
 // 不加锁、不分配内存，单次记录开销在纳秒级，可以安全地放在每帧热路径上。
 #pragma once
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 #include <atomic>
 #include <chrono>
 #include <cstdint>

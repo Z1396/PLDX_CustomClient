@@ -1,3 +1,13 @@
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <boost/asio.hpp>
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+// [/pch-split]
 #include "video_stream_manager.h" // 引入本文件的类声明
 
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。

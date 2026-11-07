@@ -4,6 +4,10 @@
 //   1. 新增协议话题只需在表里加一行、在 handlers.h 加一个声明，不必在 500 多行的分支链里找位置；
 //   2. 原来最坏要比较 22 次字符串、平均 11.5 次，二分后稳定 4~5 次，且 string_view 比较不做 strlen；
 //   3. 「已支持哪些 topic」一眼可见，和协议文档能直接对照。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "mqtt/mqtt_router.h"
 
 #include "mqtt/handlers.h"

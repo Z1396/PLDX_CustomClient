@@ -2,6 +2,16 @@
 #pragma once
 
 #include <pch.h> // 预编译头：提供 map/array/vector/optional/function 等标准库与 moodycamel 无锁队列
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+#include <readerwriterqueue.h>
+// [/pch-split]
 
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {

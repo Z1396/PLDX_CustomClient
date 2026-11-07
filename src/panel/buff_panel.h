@@ -1,6 +1,9 @@
 // buff_panel.h：增益/Buff 状态面板，声明面板绘制与 Buff 辅助函数接口。
 #pragma once
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+// [/pch-split]
 #include "main_window.h"  // 引入主窗口头文件（提供 State 类型与 ImGui/ImVec 等依赖）
 
 // 功能：绘制当前机器人已激活的 Buff 列表及其剩余时间进度条。

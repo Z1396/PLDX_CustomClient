@@ -6,6 +6,11 @@
 //   · 2 保留位、6 空中、8 飞镖、9 雷达在 2027 协议里没有血量，不再占位；
 //   · 兵种名、弹药行、角标等重复/无用文字全部去掉。
 // 全部使用 ImDrawList 直接绘制（不接收交互），由主窗口在每帧开头调用。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "header_panel.h"
 
 #include <cstdio>

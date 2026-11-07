@@ -338,6 +338,14 @@ target_link_libraries(RoboGo PRIVATE
     stb
 )
 
+# 拆分全局 PCH 后，第三方头改由各 TU 显式包含，原本只在构建 PCH 时报一次的风格类诊断
+# 会成倍放大（实测 99% 的 warning 来自 boost/spdlog/imgui/ffmpeg，而非项目源码）。
+# 先关掉全部诊断组，随后再开 -Wall/-Wextra，保留项目代码的基础诊断；不改变生成代码。
+# 注意顺序：-Wno-everything 必须在 -Wall/-Wextra 之前，否则会把它们一起关掉。
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(RoboGo PRIVATE -Wno-everything)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(RoboGo PRIVATE -Wall -Wextra)
     set_source_files_properties(
@@ -366,6 +374,9 @@ add_executable(RoboGoTests
 )
 target_include_directories(RoboGoTests PRIVATE include gen src)
 target_precompile_headers(RoboGoTests PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/include/pch.h>")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(RoboGoTests PRIVATE -Wno-everything -Wall -Wextra)
+endif()
 target_compile_definitions(RoboGoTests PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO)
 if(WIN32)
     target_compile_definitions(RoboGoTests PRIVATE _WIN32_WINNT=0x0601)

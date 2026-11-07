@@ -2,6 +2,11 @@
 // 2027-11-06 按「主界面定稿」：把两组长条 + 构成行合成一条居中的双色带，
 // 控制度用大数字，总伤害 / 存活 / 图传清晰度压到一行；复活与装配状态仍在下方居中显示。
 // 数据来源与缓动策略不变，只改呈现。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "bottom_panel.h"
 
 #include <algorithm>

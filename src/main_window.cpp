@@ -1,4 +1,10 @@
 // main_window.cpp：主窗口实现——MQTT 下行消息分发与状态刷新、各面板布局调度、自定义控制包下发，以及本车/系统日志的维护。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_stdlib.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "main_window.h"  // 本模块头文件：引入 State 定义与 ShowMainWindow/HandleMqttMessage 等函数声明
 #include "mqtt/mqtt_router.h"  // MQTT 下行分发：按 topic 查表调用 mqtt/handlers_*.cpp 中的处理函数
 #include "keyboard_mouse_state_manager.h"  // 键鼠状态管理器：准星面板据此读取操作手的鼠标位移/按键状态

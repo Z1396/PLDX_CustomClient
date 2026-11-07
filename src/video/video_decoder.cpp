@@ -1,3 +1,12 @@
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+// [/pch-split]
 #include "video_decoder.h" // 引入本文件的类声明
 #include "logging/logging.h" // 引入 spdlog 宏封装（SPDLOG_INFO/WARN/ERROR 等）
 #include <libavutil/hwcontext.h> // 硬件解码设备上下文（D3D11VA）

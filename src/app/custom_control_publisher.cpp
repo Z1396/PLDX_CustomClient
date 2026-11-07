@@ -2,6 +2,10 @@
 //
 // 这 13 字节是客户端与机器人电控之间的私有约定：5 个 uint16 小端血量槽 + 2 字节保留 + 1 字节调试计数。
 // 任何格式改动都必须与电控同步，否则机器人端会读错位。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "app/custom_control_publisher.h"
 
 #include "custom_control_payload.h"  // BuildCustomControlPayload / 槽位与偏移常量

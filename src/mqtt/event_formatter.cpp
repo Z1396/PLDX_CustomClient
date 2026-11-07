@@ -1,4 +1,8 @@
 // Event 消息文案翻译与顶部提示入队实现。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "mqtt/event_formatter.h"
 
 #include "app/robot_registry.h"   // GetRobotName：robot_id -> 中文名

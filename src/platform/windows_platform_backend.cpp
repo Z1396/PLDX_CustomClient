@@ -2,12 +2,25 @@
 // 实现纹理上传(D3D12)、窗口消息处理、游戏输入捕获切换等，对外行为与 Linux 后端保持一致。
 #ifdef _WIN32
 
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <d3d12.h>
+#include <dxgidebug.h>
+#include <dxgi1_5.h>
+#include "imgui_impl_dx12.h"
+#include "imgui_impl_win32.h"
+#endif
+// [/pch-split]
 #include "platform/platform_backend.h"  // 包含平台后端抽象接口声明（PlatformBackend 基类、TextureView、TextureSlot 等）
 #include "app/perf_stats.h"  // 记录图传分辨率（性能面板显示）
 
 #include "app/imgui_setup.h"  // 包含 ImGui 通用初始化与字体加载函数声明
 #include "logging/logging.h"  // 包含 spdlog 日志宏，用于输出运行期诊断信息
 #include "resources.h"  // 包含资源 ID 定义（例如窗口图标 IDI_APP_ICON）
+#include "keyboard_mouse_state_manager.h"  // 累加 Raw Input 上报的相对鼠标位移
 
 // 在调试版本中开启 DX12 调试层，便于发现资源泄漏与 API 误用。
 #ifdef _DEBUG
@@ -204,6 +217,21 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         ::ShowWindow(hwnd_, SW_SHOWDEFAULT); // 显示窗口
         ::UpdateWindow(hwnd_); // 更新窗口状态
 
+        // 注册鼠标 Raw Input：接收鼠标硬件上报的「相对位移」(RAWMOUSE.lLastX/lLastY)，
+        // 而不是 GetCursorPos 的绝对屏幕坐标。光标会被 ClipCursor 钉在窗口边缘，
+        // 绝对坐标会因此停止变化、云台转不过去；相对位移与光标位置无关，可连续 360° 旋转。
+        // dwFlags=0：只在窗口处于前台时投递，避免后台误采。注册随窗口销毁自动失效。
+        RAWINPUTDEVICE raw_mouse_device{};
+        raw_mouse_device.usUsagePage = 0x01;  // HID_USAGE_PAGE_GENERIC
+        raw_mouse_device.usUsage = 0x02;      // HID_USAGE_GENERIC_MOUSE
+        raw_mouse_device.dwFlags = 0;
+        raw_mouse_device.hwndTarget = hwnd_;
+        if (!::RegisterRawInputDevices(&raw_mouse_device, 1, sizeof(raw_mouse_device))) {
+            SPDLOG_WARN("注册鼠标 Raw Input 失败，Windows 端鼠标位移将不可用");
+        } else {
+            SPDLOG_INFO("鼠标 Raw Input 已注册（相对位移模式）");
+        }
+
         // 初始化本应用通用的 ImGui 样式/配置，再初始化 Win32 与 DX12 两个 ImGui 后端。
         RoboGo::app::InitializeCommonImGui(main_scale_);
 
@@ -382,7 +410,7 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             rect.top = top_left.y; // 更新矩形上边界
             rect.right = bottom_right.x; // 更新矩形右边界
             rect.bottom = bottom_right.y; // 更新矩形下边界
-            ClipCursor(&rect);  // 把鼠标锁定在该矩形内并隐藏光标，避免操作手误移出窗口。
+            ClipCursor(&rect);  // 只把「光标」锁在窗口内防误点其它窗口；位移来自 WM_INPUT 相对量，不受此边界影响
             ShowCursor(FALSE);  // 隐藏系统鼠标光标
             SPDLOG_DEBUG("已锁定Windows鼠标光标区域 left={} top={} right={} bottom={}",  // 调试日志：记录锁定后的裁剪矩形，便于排查坐标换算问题
                          rect.left,  // 日志参数：矩形左边界
@@ -1302,6 +1330,29 @@ private:  // 以下为内部实现细节，不对外暴露
                     CreateRenderTarget();  // 重建渲染目标
                 }
                 return 0;  // 已处理 WM_SIZE
+            case WM_INPUT: {  // 鼠标硬件的相对位移（Raw Input），与光标绝对屏幕位置无关
+                UINT raw_size = 0;  // 第一次调用只查询所需缓冲区大小
+                if (::GetRawInputData(reinterpret_cast<HRAWINPUT>(l_param), RID_INPUT, nullptr,
+                                      &raw_size, sizeof(RAWINPUTHEADER)) != 0
+                    || raw_size == 0) {
+                    break;  // 查询失败或数据为空，交给 DefWindowProc 收尾
+                }
+                std::vector<std::uint8_t> raw_buffer(raw_size);
+                const UINT copied = ::GetRawInputData(reinterpret_cast<HRAWINPUT>(l_param), RID_INPUT,
+                                                      raw_buffer.data(), &raw_size, sizeof(RAWINPUTHEADER));
+                if (copied == raw_size) {
+                    const auto *raw = reinterpret_cast<const RAWINPUT *>(raw_buffer.data());
+                    if (raw->header.dwType == RIM_TYPEMOUSE) {  // 只要鼠标，忽略键盘等其它 HID
+                        const RAWMOUSE &mouse = raw->data.mouse;
+                        // MOUSE_MOVE_ABSOLUTE 表示设备上报的是绝对坐标，不能当相对位移用。
+                        if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+                            accumulate_relative_mouse_delta(static_cast<float>(mouse.lLastX),
+                                                            static_cast<float>(mouse.lLastY));
+                        }
+                    }
+                }
+                break;  // 必须交给 DefWindowProc 完成 Raw Input 数据的清理
+            }
             case WM_SYSCOMMAND:  // 系统命令消息（例如 Alt 键唤出系统菜单）
                 // 屏蔽通过 Alt 键触发的系统菜单，避免干扰游戏操作。
                 if ((w_param & 0xfff0) == SC_KEYMENU) {

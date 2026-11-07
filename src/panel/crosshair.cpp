@@ -6,6 +6,10 @@
 //   · 环从 12 点方向逆时针增长（用户评审后改向），热量冷却时弧长随时间倒退（数据 10Hz，再叠一层平滑）；
 //   · 环下方补上「热量 当前 / 上限」数值，操作手不用去左下角本车卡找。
 // 旧实现只在热量 >1% 时画一段从 3 点方向起、绿→黄→红渐变的弧，且没有底环与数值。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "crosshair.h"
 
 #include <algorithm>

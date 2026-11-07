@@ -2,6 +2,10 @@
 #pragma once
 
 #include <pch.h>
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include <google/protobuf/message.h>
+#include <messages.pb.h>
+// [/pch-split]
 #include "main_window.h"  // State 完整定义（各处理函数写入的目标）
 
 namespace RoboGo::mqtt {

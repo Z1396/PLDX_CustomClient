@@ -1,6 +1,10 @@
 // log_panel.cpp：运行日志面板的实现。
 // 2027-11-06 按「主界面定稿」：去掉「本车日志 + 系统日志」标题，事件直接浮在背景上；
 // 每行加一条按级别取色的细竖标，替代原来的灰面板与标题，其余日志合并/去重/自动滚动逻辑不变。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "log_panel.h"
 #include "ui/theme.h"
 

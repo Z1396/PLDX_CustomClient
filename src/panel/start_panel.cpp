@@ -1,3 +1,9 @@
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_stdlib.h"
+#include "imgui_internal.h"
+#include <messages.pb.h>
+// [/pch-split]
 #include "start_panel.h"
 #include "app/config.h"   // 应用级配置：登录成功后把 MQTT 地址持久化，下次启动免手输
 #include "keyboard_mouse_state_manager.h"   // 标记模式开关（is_marker_mode/enter_marker_mode 等）的声明

@@ -2,6 +2,15 @@
 #pragma once // 头文件只包含一次，防止重复定义
 
 #include <pch.h> // 预编译头：引入 AVCodecContext/AVPacket/AVFrame/std::function 等依赖
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
+#include <libswscale/swscale.h>
+}
+// [/pch-split]
 
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video { // 进入视频模块命名空间

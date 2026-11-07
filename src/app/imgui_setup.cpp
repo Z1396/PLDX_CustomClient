@@ -1,4 +1,8 @@
 // imgui_setup.cpp：ImGui 初始化——创建上下文、配置键鼠与手柄导航、应用暗色主题并按 DPI 缩放，以及字体加载与后端绑定。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "imgui_setup.h"  // 本编译单元的主头文件(声明 InitializeCommonImGui / LoadEmbeddedImGuiFont)
 
 #include "embedded_zcool_font.h"  // 编译期嵌入的 ZCOOL 中文字体字节数组与其长度(避免运行时读外部字体文件)

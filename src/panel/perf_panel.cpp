@@ -1,5 +1,9 @@
 // perf_panel.cpp：性能浮层实现——把 perf_stats 采集到的耗时按"绿/黄/红"三档着色显示。
 // 为什么要有这个面板：优化之前先有尺子。所有"预计省 X ms"的判断都必须在这里看到实际变化。
+// [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
+#include "imgui.h"
+#include "imgui_internal.h"
+// [/pch-split]
 #include "perf_panel.h"
 
 #include "app/perf_stats.h"  // 指标快照
