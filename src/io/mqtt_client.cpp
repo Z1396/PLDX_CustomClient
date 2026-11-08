@@ -98,6 +98,24 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
           on_receive_message(on_receive_message) {  // 拷贝 std::function(可能已捕获 this，需保证生命周期长于本对象)
         SPDLOG_INFO("创建MQTT客户端 host={} port={}", this->host_ip, this->port);  // 显式 this-> 以区分入参与同名成员
         // 在 io_context 上分离式启动连接主循环
+        /*1. **第一个参数：io_context**
+        协程的调度器，协程里面所有 `co_await`（async_read/async_connect/async_write）都跑在这个 io_context 事件循环上。
+        2. **第二个参数：run ()**
+        这是一个**asio 可等待协程函数**，签名一般长这样：
+        asio::awaitable<void> run()
+        {
+            // 里面 co_await 异步操作，比如 connect、读写socket
+            co_return;
+        }
+        > 注意：这里写 `run()` 是**调用这个协程函数，拿到 awaitable 对象**传给 co_spawn。
+        3. **第三个参数：boost::asio::detached**
+        这是重点。
+        - 普通 co_spawn 你可以传一个回调 / `use_future`，用来等协程结束、拿结果、抓异常；
+        - **`detached` = 我不管这个协程了，启动之后直接撒手不管**
+        ✅ 协程自持（self-owned），协程内部生命周期自己管理，不需要外部持有句柄
+        ✅ `co_spawn` 调用**立刻返回**，不会阻塞在这里等连接 / 等 run 跑完
+        ❗ 坑点：**协程里面抛异常没人捕获，程序直接崩溃！**
+        > detached 的语义就是：放弃接收协程的完成通知和异常。*/
         boost::asio::co_spawn(io_context, run(), boost::asio::detached);  // detached：协程自持，构造立即返回，不等连接结果
     }
 

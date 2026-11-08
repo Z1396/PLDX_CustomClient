@@ -45,8 +45,8 @@ struct KeyboardMouseState {
     std::atomic<int64_t> pending_mouse_x{0};
     std::atomic<int64_t> pending_mouse_y{0};
     std::atomic<int32_t> pending_mouse_z{0};
-    std::atomic<uint32_t> pending_keyboard_value{0};
-    std::atomic<uint32_t> pending_buttons{0};
+    std::atomic<uint32_t> pending_keyboard_value{0};// 键盘按键状态位图
+    std::atomic<uint32_t> pending_buttons{0};// 鼠标按键状态位图
 
     // 仅 UI 线程访问的状态(含地形叠加开关，地图界面共用)
     std::atomic<float> mouse_sensitivity{1.0f};

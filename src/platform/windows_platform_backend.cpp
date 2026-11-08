@@ -1198,7 +1198,7 @@ private:  // 以下为内部实现细节，不对外暴露
     // 思路：先释放旧纹理再上传新数据，并记录尺寸；静态纹理内容不频繁变化。
     // 参数：texture —— 目标纹理（引用，会被更新）；data —— 源像素；width/height —— 尺寸。
     // 返回值：true 上传成功，false 失败。
-    [[nodiscard]] bool UploadStaticTexture(WindowsVideoTexture &texture,
+    [[nodiscard]] bool UploadStaticTexture(WindowsVideoTexture &texture,// 目标纹理（引用，会被更新）
                                            const uint8_t *data,  // 源像素数据
                                            const int width,  // 纹理宽度
                                            const int height) const {  // 纹理高度
@@ -1206,7 +1206,9 @@ private:  // 以下为内部实现细节，不对外暴露
             texture.texture->Release();  // 释放旧的 D3D12 资源
             texture.texture = nullptr;  // 置空指针
         }  // 结束旧纹理释放
-        if (!LoadTextureFromMemory(data, width, height, texture.cpu_handle, &texture.texture)) {  // 创建并上传新的静态纹理
+
+        // 创建并上传新的静态纹理
+        if (!LoadTextureFromMemory(data, width, height, texture.cpu_handle, &texture.texture)) {  
             return false;  // 纹理创建/上传失败
         }
         texture.width = width;  // 记录纹理宽度

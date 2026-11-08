@@ -39,9 +39,13 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     int width = 0;       // 解码后的图像宽度
     int height = 0;      // 解码后的图像高度
     int channels_in_file = 0;   // 准备接收解码后的图像尺寸与文件实际通道数
-    // 调用 stb_image 解码函数，将编码字节流解码为 RGBA8 像素
-    // 解码成功返回像素指针，失败返回 nullptr
-    stbi_uc *decoded_pixels = stbi_load_from_memory(  // 从内存缓冲区解码图像，返回 stb 内部 malloc 的像素首地址
+    /*`stbi_load_from_memory`：stb_image 提供的内存版解码接口，不是从文件读，是直接拿已经在内存里的图片字节（比如网络下载、资源包里读出来的 `encoded_bytes`）解码。
+
+    - 入参：图片数据指针、数据长度
+    - 输出参数：`width/height/channels_in_file` 带出原图宽高、原图通道数
+    - 最后参数 `STBI_rgb_alpha`：强制输出 4 通道 RGBA，不管原图是 RGB 3 通道还是带透明的 PNG，统一转 RGBA，GPU 纹理上传逻辑就不用写多分支。
+    - 返回值：stb 内部 `malloc` 出来的一块像素缓冲区，必须手动 stbi_image_free 释放，否则内存泄漏；失败返回 `nullptr`。*/
+    stbi_uc *decoded_pixels = stbi_load_from_memory(  
             encoded_bytes.data(),         // 指向编码字节流的指针
             static_cast<int>(encoded_bytes.size()),   // 编码字节流的字节数
             &width,   // 接收解码后的图像宽度
@@ -58,6 +62,8 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     image.width = width;  // 赋值解码后的图像宽度
     image.height = height;    // 赋值解码后的图像高度
     const std::size_t pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;   // 计算总像素字节数 = 宽 * 高 * 4(RGBA)
+    //`.assign(起始指针, 结束指针)` 是 vector 的一个成员函数：把 [a, b) 这一段内存里的数据，复制进来，替换掉 vector 原来里面所有内容。
+    // 区间是左闭右开：包含 `decoded_pixels` 指向的那个字节，**不包含** `decoded_pixels + pixel_count` 这个地址。刚好就是我们全部像素的范围。
     image.pixels.assign(decoded_pixels, decoded_pixels + pixel_count);   // 将 stb 分配的像素拷贝进 vector 托管，便于自动释放
     stbi_image_free(decoded_pixels);   // 释放 stb 内部 malloc 的内存，避免泄漏
 

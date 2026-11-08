@@ -584,7 +584,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
         SPDLOG_INFO("程序启动完成 startup_ms={}", startup_ms);  // 记录启动耗时
 
         // 主循环：如果遇到窗口关闭消息（比如用户点击关闭按钮），标记应关闭，退出循环。
-        while (platform_backend.ProcessEvents()) {  // 泵一次平台事件(窗口消息/输入)
+        while (platform_backend.ProcessEvents()) {  
             const auto frame_start = std::chrono::steady_clock::now();  // 整帧计时起点
             // F12 开关性能浮层：只在非文本输入时响应，避免在输入框里打字误触。
             if (ImGui::IsKeyPressed(ImGuiKey_F12, false) && !ImGui::GetIO().WantTextInput) {
