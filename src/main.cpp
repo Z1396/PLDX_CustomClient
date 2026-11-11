@@ -23,7 +23,9 @@ namespace {  // 匿名命名空间：内部链接，避免符号与其他翻译�
 //       定位完成后可整段删除；不设环境变量时完全不生效。
 #pragma comment(lib, "dbghelp.lib")   // 链接 dbghelp（Windows SDK 自带）
 
-// 功能：未处理异常过滤器——把异常地址与调用栈（含函数名/文件行号）写入 crash_trace.txt。
+/**
+ * @brief 未处理异常过滤器——把异常地址与调用栈（含函数名/文件行号）写入 crash_trace.txt。
+ */
 LONG WINAPI RoboGoCrashHandler(EXCEPTION_POINTERS *exception_info) {   // 由 SetUnhandledExceptionFilter 回调
     std::FILE *file = std::fopen("crash_trace.txt", "w");   // 输出文件放在进程工作目录
     if (file == nullptr) {   // 打不开就直接放行，避免二次崩溃
@@ -82,7 +84,9 @@ LONG WINAPI RoboGoCrashHandler(EXCEPTION_POINTERS *exception_info) {   // 由 Se
     return EXCEPTION_EXECUTE_HANDLER;   // 让进程按系统默认方式退出
 }
 
-// 功能：按环境变量决定是否安装崩溃栈记录器。
+/**
+ * @brief 按环境变量决定是否安装崩溃栈记录器。
+ */
 void InstallCrashTraceIfRequested() {   // 在 WinMain 一开始调用
     const char *enabled = std::getenv("ROBOGO_CRASH_TRACE");   // 读取开关
     if (enabled != nullptr && *enabled != '\0') {   // 设置了才安装
@@ -90,9 +94,11 @@ void InstallCrashTraceIfRequested() {   // 在 WinMain 一开始调用
     }
 }
 
-// 功能：在 Windows 平台下解析进程 Unicode 命令行，转换为 UTF-8 字符串列表。
-// 思路：GetCommandLineW 获取宽字符命令行，CommandLineToArgvW 切分参数，
-//       再逐条用 WideCharToMultiByte(CP_UTF8) 转码为 std::string。
+/**
+ * @brief 在 Windows 平台下解析进程 Unicode 命令行，转换为 UTF-8 字符串列表。
+ * @note 思路：GetCommandLineW 获取宽字符命令行，CommandLineToArgvW 切分参数，再逐条用 WideCharToMultiByte(CP_UTF8) 转码为
+ *        std::string。
+ */
 std::vector<std::string> CollectCommandLineArgs() {  // Windows 版：不接收 argc/argv，直接从系统读完整命令行
     std::vector<std::string> args;  // 存放转码后的 UTF-8 参数列表(不含程序自身路径)
     int argc = 0;  // 出参：CommandLineToArgvW 写回切分出的参数个数
@@ -114,8 +120,10 @@ std::vector<std::string> CollectCommandLineArgs() {  // Windows 版：不接收 
     return args;  // 返回收集完成的参数列表
 }
 #else  // 非 Windows 平台走标准 C 入口
-// 功能：在非 Windows 平台下收集标准 main 参数(argc/argv)为字符串列表。
-// 思路：跳过 argv[0]（程序路径），将剩余 C 字符串直接构造为 std::string。
+/**
+ * @brief 在非 Windows 平台下收集标准 main 参数(argc/argv)为字符串列表。
+ * @note 思路：跳过 argv[0]（程序路径），将剩余 C 字符串直接构造为 std::string。
+ */
 std::vector<std::string> CollectCommandLineArgs(const int argc, char *argv[]) {  // POSIX 版：直接使用 main 传入的 argv
     std::vector<std::string> args;  // 存放转换后的参数列表(不含程序自身路径)
     args.reserve(static_cast<size_t>(std::max(argc - 1, 0))); // 预分配容量，避免逐个 push 时的多次重新分配
@@ -127,8 +135,10 @@ std::vector<std::string> CollectCommandLineArgs(const int argc, char *argv[]) { 
 }
 #endif
 
-// 功能：统一的主流程入口，封装与平台无关的程序初始化与运行逻辑。
-// 思路：创建平台后端 -> 解析启动参数 -> 初始化日志 -> 运行应用主循环 -> 关闭日志。
+/**
+ * @brief 统一的主流程入口，封装与平台无关的程序初始化与运行逻辑。
+ * @note 思路：创建平台后端 -> 解析启动参数 -> 初始化日志 -> 运行应用主循环 -> 关闭日志。
+ */
 int RunMain(const std::vector<std::string> &args) {  // args 为已转码的命令行参数列表(不含程序路径)
     auto platform_backend = RoboGo::platform::CreatePlatformBackend(); // 工厂创建平台后端(Win=DX12+Win32 / Linux=Vulkan+GLFW)
 
@@ -148,8 +158,10 @@ int RunMain(const std::vector<std::string> &args) {  // args 为已转码的命�
 }  // namespace
 
 #ifdef _WIN32  // Windows 使用 GUI 子系统的 WinMain 作为入口(由链接器 /SUBSYSTEM:WINDOWS 指定)
-// 功能：Windows 平台 GUI 程序入口(WinMain)。
-// 思路：忽略未使用的 Win32 参数，收集命令行参数后调用 RunMain。
+/**
+ * @brief Windows 平台 GUI 程序入口(WinMain)。
+ * @note 思路：忽略未使用的 Win32 参数，收集命令行参数后调用 RunMain。
+ */
 int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE previous_instance, PSTR command_line, int show_command) {  // WINAPI 即 __stdcall 调用约定；HINSTANCE 为模块句柄，show_command 为窗口显示方式
     // 标记以下 Win32 参数为有意未使用，抑制编译器警告。
     (void) h_instance;  // 当前进程实例句柄，本项目不使用
@@ -160,8 +172,10 @@ int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE previous_instance, PSTR comma
     return RunMain(CollectCommandLineArgs()); // 收集 Windows 命令行参数后进入主流程
 }
 #else  // 非 Windows 平台使用标准 main
-// 功能：非 Windows 平台的标准程序入口(main)。
-// 思路：直接接收 argc/argv，转发给 RunMain 启动主流程。
+/**
+ * @brief 非 Windows 平台的标准程序入口(main)。
+ * @note 思路：直接接收 argc/argv，转发给 RunMain 启动主流程。
+ */
 int main(const int argc, char *argv[]) {  // argc 参数个数(含程序路径)；argv 参数数组
     return RunMain(CollectCommandLineArgs(argc, argv)); // 收集标准参数后进入主流程
 }

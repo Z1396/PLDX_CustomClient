@@ -12,11 +12,24 @@
 
 namespace RoboGo::mqtt {
 
-// 2.2.14 Buff 增益（获得时触发，此后 1Hz）：同一时刻可存在多个，按 robot_id + buff_type 原地续期。
+/**
+ * @brief 2.2.14 Buff 增益（获得时触发，此后 1Hz）：同一时刻可存在多个，按 robot_id + buff_type 原地续期。；解析成功后写入 State::active_buffs
+ *        快照
+ * @param state 全局状态，写入 active_buffs。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleBuff(State &state, std::string_view topic, const std::string &payload) {
     Buff buff;
     if (!ParseInto(topic, payload, buff)) {
         return;
+    }
+    // 补给区 Buff（type=6）是「兑换允许发弹量」按钮的唯一解锁依据。
+    // 单独打一条不受限流的日志：现场按钮一直灰时，先看这里有没有到。
+    if (buff.buff_type() == 6) {
+        SPDLOG_INFO("补给区Buff到达 robot_id={} left_time={}", buff.robot_id(), buff.buff_left_time());
     }
     BuffWithTimestamp buff_entry;
     buff_entry.buff = buff;
@@ -40,8 +53,9 @@ void HandleBuff(State &state, std::string_view topic, const std::string &payload
     static std::chrono::steady_clock::time_point last_buff_log_time{};
     static uint32_t buff_log_skips = 0;
     const auto now_time = std::chrono::steady_clock::now();
+    // 每秒最多一条日志，超过部分省略
     const bool should_log = last_buff_log_time.time_since_epoch().count() == 0
-                            || now_time - last_buff_log_time >= std::chrono::seconds(1);
+                            || now_time - last_buff_log_time >= std::chrono::seconds(1);                        
     if (should_log) {
         SPDLOG_INFO("新增Buff robot_id={} buff_type={} left_time={} 省略={}",
                     buff.robot_id(), buff.buff_type(), buff.buff_left_time(), buff_log_skips);
@@ -52,8 +66,15 @@ void HandleBuff(State &state, std::string_view topic, const std::string &payload
     }
 }
 
-// 2.2.15 判罚信息（触发式）：黄牌 / 红牌 / 超功率 / 超热量 / 超射速。
-// 协议只推「罚了什么、罚多久」，不推剩余时间，因此记录本地接收时刻，由顶部横幅自行倒数。
+/**
+ * @brief 2.2.15 判罚信息（触发式）：黄牌 / 红牌 / 超功率 / 超热量 / 超射速。 协议只推「罚了什么、罚多久」，不推剩余时间，因此记录本地接收时刻，由顶部横幅自行倒数。；解析成功后写入
+ *        State::penalty_info 快照
+ * @param state 全局状态，写入 penalty_info。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandlePenaltyInfo(State &state, std::string_view topic, const std::string &payload) {
     PenaltyInfo penalty_info;
     if (!ParseInto(topic, payload, penalty_info)) {
@@ -84,7 +105,14 @@ void HandlePenaltyInfo(State &state, std::string_view topic, const std::string &
     state.penalty_received_time = std::chrono::steady_clock::now();
 }
 
-// 2.2.17 地图点击标记（触发式）：操作手打点后裁判系统回传的同步信息。
+/**
+ * @brief 2.2.17 地图点击标记（触发式）：操作手打点后裁判系统回传的同步信息。；解析成功后写入 State::map_click_info 快照
+ * @param state 全局状态，写入 map_click_info。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleMapClickInfo(State &state, std::string_view topic, const std::string &payload) {
     MapClickInfo message;
     if (ParseInto(topic, payload, message)) {
@@ -92,7 +120,14 @@ void HandleMapClickInfo(State &state, std::string_view topic, const std::string 
     }
 }
 
-// 2.2.18 雷达目标信息（触发式）：12 台机器人位置。
+/**
+ * @brief 2.2.18 雷达目标信息（触发式）：12 台机器人位置。；解析成功后写入 State::radar_info_to_client 快照
+ * @param state 全局状态，写入 radar_info_to_client。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRadarInfoToClient(State &state, std::string_view topic, const std::string &payload) {
     RadarInfoToClient message;
     if (ParseInto(topic, payload, message)) {
@@ -100,7 +135,14 @@ void HandleRadarInfoToClient(State &state, std::string_view topic, const std::st
     }
 }
 
-// 2.2.21 科技核心（能量机关）运动状态（1Hz）。
+/**
+ * @brief 2.2.21 科技核心（能量机关）运动状态（1Hz）。；解析成功后写入 State::tech_core_motion_state_sync 快照
+ * @param state 全局状态，写入 tech_core_motion_state_sync。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleTechCoreMotionStateSync(State &state, std::string_view topic, const std::string &payload) {
     TechCoreMotionStateSync message;
     if (ParseInto(topic, payload, message)) {
@@ -108,7 +150,14 @@ void HandleTechCoreMotionStateSync(State &state, std::string_view topic, const s
     }
 }
 
-// 2.2.23 性能体系同步（1Hz）：服务器权威的发射机构 / 底盘选型，开局面板据此回显。
+/**
+ * @brief 2.2.23 性能体系同步（1Hz）：服务器权威的发射机构 / 底盘选型，开局面板据此回显。；解析成功后写入 State::robot_performance_selection_sync 快照
+ * @param state 全局状态，写入 robot_performance_selection_sync。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotPerformanceSelectionSync(State &state, std::string_view topic, const std::string &payload) {
     RobotPerformanceSelectionSync message;
     if (!ParseInto(topic, payload, message)) {
@@ -119,7 +168,14 @@ void HandleRobotPerformanceSelectionSync(State &state, std::string_view topic, c
     state.last_received_robot_performance_selection_sync = std::chrono::steady_clock::now();
 }
 
-// 2.2.28 能量机关状态（1Hz）：未激活 / 激活中 / 已激活 + 灯臂数 + 平均环数。
+/**
+ * @brief 2.2.28 能量机关状态（1Hz）：未激活 / 激活中 / 已激活 + 灯臂数 + 平均环数。；解析成功后写入 State::rune_status_sync 快照
+ * @param state 全局状态，写入 rune_status_sync。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRuneStatusSync(State &state, std::string_view topic, const std::string &payload) {
     RuneStatusSync message;
     if (ParseInto(topic, payload, message)) {
@@ -127,7 +183,14 @@ void HandleRuneStatusSync(State &state, std::string_view topic, const std::strin
     }
 }
 
-// 2.2.30 哨兵姿态（1Hz）：进攻 / 防御 / 移动 + 弱化 / 强化标记。
+/**
+ * @brief 2.2.30 哨兵姿态（1Hz）：进攻 / 防御 / 移动 + 弱化 / 强化标记。；解析成功后写入 State::sentry_status_sync 快照
+ * @param state 全局状态，写入 sentry_status_sync。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleSentryStatusSync(State &state, std::string_view topic, const std::string &payload) {
     SentryStatusSync message;
     if (ParseInto(topic, payload, message)) {
@@ -135,7 +198,14 @@ void HandleSentryStatusSync(State &state, std::string_view topic, const std::str
     }
 }
 
-// 2.2.31 飞镖目标选择（1Hz）：选定目标 + 闸门状态。
+/**
+ * @brief 2.2.31 飞镖目标选择（1Hz）：选定目标 + 闸门状态。；解析成功后写入 State::dart_select_target_status_sync 快照
+ * @param state 全局状态，写入 dart_select_target_status_sync。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleDartSelectTargetStatusSync(State &state, std::string_view topic, const std::string &payload) {
     DartSelectTargetStatusSync message;
     if (ParseInto(topic, payload, message)) {
@@ -143,8 +213,15 @@ void HandleDartSelectTargetStatusSync(State &state, std::string_view topic, cons
     }
 }
 
-// 2.2.33 哨兵控制指令结果（触发式）：指令编号 + 执行结果码。
-// 2027 协议只推「指令编号 + 结果码」不推失败原因，所以这里补一条日志：成功走 INFO、失败走 WARNING。
+/**
+ * @brief 2.2.33 哨兵控制指令结果（触发式）：指令编号 + 执行结果码。 2027 协议只推「指令编号 + 结果码」不推失败原因，所以这里补一条日志：成功走 INFO、失败走 WARNING。；解析成功后写入
+ *        State::sentry_ctrl_result 快照
+ * @param state 全局状态，写入 sentry_ctrl_result。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleSentryCtrlResult(State &state, std::string_view topic, const std::string &payload) {
     SentryCtrlResult message;
     if (!ParseInto(topic, payload, message)) {
@@ -159,3 +236,4 @@ void HandleSentryCtrlResult(State &state, std::string_view topic, const std::str
 }
 
 }  // namespace RoboGo::mqtt
+

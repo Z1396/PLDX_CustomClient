@@ -6,8 +6,10 @@
 // [/pch-split]
 #include "buff_panel.h"  // 引入本面板对应的头文件（含函数声明与依赖）
 
-// 功能：根据 Buff 类型与等级生成展示名称（如「攻击增益 +1」「防御增益 -1」）。
-// 思路：先按类型给出基础名，再追加符号化的等级与单位（% 或 /s）。
+/**
+ * @brief 根据 Buff 类型与等级生成展示名称（如「攻击增益 +1」「防御增益 -1」）。
+ * @note 思路：先按类型给出基础名，再追加符号化的等级与单位（% 或 /s）。
+ */
 std::string GetBuffName(uint32_t buff_type, int32_t buff_level) {  // buff_type：增益种类编号；buff_level：带符号等级
     std::string name;  // 用于逐段拼接最终的展示名称
     switch (buff_type) {  // 按增益类型分支拼接基础名称
@@ -49,7 +51,9 @@ std::string GetBuffName(uint32_t buff_type, int32_t buff_level) {  // buff_type�
     return name;  // 返回拼接完成的名称
 }  // 返回拼接完成的完整名称
 
-// 功能：根据 Buff 类型返回对应展示颜色，便于按种类区分。
+/**
+ * @brief 根据 Buff 类型返回对应展示颜色，便于按种类区分。
+ */
 ImVec4 GetBuffTypeColor(uint32_t buff_type) {  // 参数 buff_type：增益种类编号；返回 ImVec4(R,G,B,A) 颜色（分量 0~1）
     switch (buff_type) {  // 按类型返回固定调色板颜色（RGBA 分量取值 0~1）
         case 1:  // 攻击增益 - 红色
@@ -71,8 +75,10 @@ ImVec4 GetBuffTypeColor(uint32_t buff_type) {  // 参数 buff_type：增益种�
     }
 }  // 返回选中的颜色
 
-// 功能：绘制当前机器人已激活 Buff 列表，含名称、剩余时间进度条与秒数。
-// 思路：取当前 robot_id 过滤 active_buffs，按本地经过时间推算剩余秒数并绘制进度条。
+/**
+ * @brief 绘制当前机器人已激活 Buff 列表，含名称、剩余时间进度条与秒数。
+ * @note 思路：取当前 robot_id 过滤 active_buffs，按本地经过时间推算剩余秒数并绘制进度条。
+ */
 void ShowBuffPanel(const State &state) {  // state：全局状态（含静态状态与激活 Buff 列表）
     // 无装饰/不可移动/无背景/不保存设置的浮动窗口
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration |

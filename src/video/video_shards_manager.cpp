@@ -18,30 +18,38 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video {
 
-    // 功能：析构时复位流状态并清空队列，确保分片占用内存被释放。
+    /**
+     * @brief 析构时复位流状态并清空队列，确保分片占用内存被释放。
+     */
     VideoShardsManager::~VideoShardsManager() {
         reset_stream_state(); // 复位帧序列与缓存状态
         drain_packet_queue(); // 排空残留队列并释放内存
     }
 
-    // 功能：保存完整帧回调，供重组完成后通知上层。
+    /**
+     * @brief 保存完整帧回调，供重组完成后通知上层。
+     */
     void VideoShardsManager::set_frame_callback(const std::function<void(const std::vector<uint8_t> &frame)> &frame_callback) {
         this->frame_callback = frame_callback; // 保存完整帧就绪回调
         SPDLOG_INFO("已设置视频完整帧回调"); // 记录回调设置成功
     }
 
-    // 功能：把收到的一帧分片数据拷贝后入队，与解码线程解耦。
-    // 思路：队列只持有裸指针+长度，需先 new 拷贝数据避免在 UDP 回调栈上悬空。
+    /**
+     * @brief 把收到的一帧分片数据拷贝后入队，与解码线程解耦。
+     * @note 思路：队列只持有裸指针+长度，需先 new 拷贝数据避免在 UDP 回调栈上悬空。
+     */
     void VideoShardsManager::on_receive_shard(const uint8_t *data, size_t size) {
         auto *packet = new uint8_t[size]; // 在堆上拷贝分片数据，避免 UDP 回调栈悬空
         memcpy(packet, data, size); // 拷贝原始分片字节
         packet_queue.emplace(packet, size); // 无锁入队，交给解码线程处理
     }
 
-    // 功能：处理一个分片包：背压控制、解析包头、维护帧 ID 序列、入窗重组并输出完整帧。
-    // 思路：先按队列水位丢弃陈旧分片；再解析「帧ID/分片ID/整帧长度」头；用归一化帧 ID 计算相对窗口偏移，
-    //       处理 16 位帧 ID 回绕、过期丢弃、整体丢帧冲刷；最后把分片放入窗口，凑齐即拼接回调并滑窗。
-    // 返回值：true 表示可继续处理；false 表示收到 wake() 的唤醒哨兵，调用方应退出循环。
+    /**
+     * @brief 处理一个分片包：背压控制、解析包头、维护帧 ID 序列、入窗重组并输出完整帧。
+     * @note 思路：先按队列水位丢弃陈旧分片；再解析「帧ID/分片ID/整帧长度」头；用归一化帧 ID 计算相对窗口偏移，处理 16 位帧 ID 回绕、过期丢弃、整体丢帧冲刷；最后把分片放入窗口，
+     *        凑齐即拼接回调并滑窗。
+     * @return true 表示可继续处理；false 表示收到 wake() 的唤醒哨兵，调用方应退出循环。
+     */
     bool VideoShardsManager::handle_once() {
         // 如果数据包过多导致阻塞，就丢弃旧的数据包
         if (packet_queue.size_approx() >= 512) { // 队列积压过多则触发背压丢弃
@@ -203,13 +211,17 @@ namespace RoboGo::video {
         return true; // 正常处理完一个分片
     }
 
-    // 功能：投递一个唤醒哨兵，让阻塞在 wait_dequeue 上的处理线程立即返回。
-    // 说明：moodycamel 的阻塞队列没有 abort 接口，用"空指针包"当哨兵是最简单可靠的做法。
+    /**
+     * @brief 投递一个唤醒哨兵，让阻塞在 wait_dequeue 上的处理线程立即返回。
+     * @note 说明：moodycamel 的阻塞队列没有 abort 接口，用"空指针包"当哨兵是最简单可靠的做法。
+     */
     void VideoShardsManager::wake() {
         packet_queue.emplace(nullptr, 0); // 哨兵：handle_once 见到 first==nullptr 即返回 false
     }
 
-    // 功能：复位整个流的帧序列与缓存，用于初次启动或检测到流重置时。
+    /**
+     * @brief 复位整个流的帧序列与缓存，用于初次启动或检测到流重置时。
+     */
     void VideoShardsManager::reset_stream_state() {
         for (auto &frame_shards: cache_frames) { // 逐个槽位释放分片内存并清零
             reset_frame_shards(frame_shards); // 逐槽释放分片内存并清零
@@ -222,7 +234,9 @@ namespace RoboGo::video {
         full_frame.clear(); // 清空完整帧缓冲
     }
 
-    // 功能：排空数据包队列，释放所有尚未处理的原始分片内存。
+    /**
+     * @brief 排空数据包队列，释放所有尚未处理的原始分片内存。
+     */
     void VideoShardsManager::drain_packet_queue() {
         std::pair<uint8_t *, size_t> packet; // 出队暂存
         while (packet_queue.try_dequeue(packet)) { // 持续出队直到空
@@ -230,7 +244,9 @@ namespace RoboGo::video {
         }
     }
 
-    // 功能：释放单帧槽位内全部分片内存并清零，使该槽位可复用。
+    /**
+     * @brief 释放单帧槽位内全部分片内存并清零，使该槽位可复用。
+     */
     void VideoShardsManager::reset_frame_shards(FrameShards &frame_shards) {
         // 遍历有序分片映射，逐个释放裸指针
         for (const auto &item: frame_shards.shards | std::views::values) { // 遍历有序分片映射（取 value）

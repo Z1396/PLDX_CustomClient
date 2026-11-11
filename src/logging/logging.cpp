@@ -51,8 +51,10 @@ constexpr std::uint8_t kDirectionRx = 1;       // 接收
 constexpr std::uint8_t kDirectionTx = 2;       // 发送
 constexpr std::string_view kDefaultLogRootDirectory = "logs";  // 默认日志根目录（相对程序运行目录）
 
-// 功能：线程安全地把 time_t 转为本地时间的 std::tm。
-// 思路：Windows 用 localtime_s，其它平台用 localtime_r（均避免非线程安全的 localtime）。
+/**
+ * @brief 线程安全地把 time_t 转为本地时间的 std::tm。
+ * @note 思路：Windows 用 localtime_s，其它平台用 localtime_r（均避免非线程安全的 localtime）。
+ */
 std::tm local_time(std::time_t time_point) {  // 入参为秒级时间戳
     std::tm result{};  // 存放本地时间分解结果的临时结构
 #ifdef _WIN32  // Windows 平台的线程安全转换
@@ -63,8 +65,10 @@ std::tm local_time(std::time_t time_point) {  // 入参为秒级时间戳
     return result;  // 返回填充好的本地时间分解结构
 }
 
-// 功能：生成会话 ID（"年月日_时分秒_毫秒"），保证每次启动目录唯一。
-// 思路：取系统时钟，拆分为本地日历时间与毫秒尾数，格式化拼接。
+/**
+ * @brief 生成会话 ID（"年月日_时分秒_毫秒"），保证每次启动目录唯一。
+ * @note 思路：取系统时钟，拆分为本地日历时间与毫秒尾数，格式化拼接。
+ */
 std::string make_session_id() {  // 返回形如 2026-11-01_16-45-03.042 的字符串
     // 获取当前系统时钟的时间点（C++ chrono 时间对象）
     const auto now = std::chrono::system_clock::now();  // 系统壁钟时刻，可映射为日历时间
@@ -94,8 +98,10 @@ std::string make_session_id() {  // 返回形如 2026-11-01_16-45-03.042 的字�
 }
 
 
-// 功能：解析日志根目录。
-// 思路：优先读取环境变量 ROBOGO_LOG_ROOT，未设置或为空则回退默认 "logs"。
+/**
+ * @brief 解析日志根目录。
+ * @note 思路：优先读取环境变量 ROBOGO_LOG_ROOT，未设置或为空则回退默认 "logs"。
+ */
 std::filesystem::path resolve_log_root_directory() {  // 允许部署时用环境变量重定向日志位置
     // 优先读取环境变量 ROBOGO_LOG_ROOT，若设置且非空则返回其值且[0] != '\0'(非空字符串)
     if (const char *env_value = std::getenv("ROBOGO_LOG_ROOT"); env_value != nullptr && env_value[0] != '\0') {  // C++17 if 初始化语句同时完成取值与判空
@@ -106,7 +112,9 @@ std::filesystem::path resolve_log_root_directory() {  // 允许部署时用环�
     return std::filesystem::path(kDefaultLogRootDirectory);  // 回退到默认 "logs" 目录
 }
 
-// 功能：把传输类型字符串编码为单字节枚举值。
+/**
+ * @brief 把传输类型字符串编码为单字节枚举值。
+ */
 std::uint8_t encode_transport(std::string_view transport) {  // 字符串→编码，便于紧凑落盘
     if (transport == "mqtt") {  // MQTT 传输类型
         return kTransportMqtt;  // 编码 1
@@ -117,7 +125,9 @@ std::uint8_t encode_transport(std::string_view transport) {  // 字符串→编�
     return kTransportUnknown;  // 未知传输类型
 }
 
-// 功能：把方向字符串编码为单字节枚举值。
+/**
+ * @brief 把方向字符串编码为单字节枚举值。
+ */
 std::uint8_t encode_direction(std::string_view direction) {  // 字符串→编码
     if (direction == "rx") {  // 接收方向
         return kDirectionRx;  // 编码 1
@@ -128,8 +138,10 @@ std::uint8_t encode_direction(std::string_view direction) {  // 字符串→编�
     return kDirectionUnknown;  // 未知方向
 }
 
-// 功能：以“小端”字节序把整数追加到字节缓冲。
-// 思路：逐字节取低 8 位并右移，依次 push，实现与平台无关的小端序列化。
+/**
+ * @brief 以“小端”字节序把整数追加到字节缓冲。
+ * @note 思路：逐字节取低 8 位并右移，依次 push，实现与平台无关的小端序列化。
+ */
 template<typename Integer>  // 模板：支持任意整型宽度(这里用到 uint16/uint32/uint64)
 void append_little_endian(std::vector<std::uint8_t> &buffer, Integer value) {  // 把 value 追加到 buffer 尾部
     static_assert(std::is_integral_v<Integer>, "Integer type required");  // 编译期断言：只接受整型，防止误传浮点/指针
@@ -141,8 +153,10 @@ void append_little_endian(std::vector<std::uint8_t> &buffer, Integer value) {  /
     }
 }
 
-// 功能：以“小端”把整数直接写入文件流。
-// 思路：先序列化到临时缓冲，再整体 write，减少多次 IO 调用。
+/**
+ * @brief 以“小端”把整数直接写入文件流。
+ * @note 思路：先序列化到临时缓冲，再整体 write，减少多次 IO 调用。
+ */
 template<typename Integer>  // 模板同 append_little_endian
 void write_little_endian(std::ofstream &stream, Integer value) {  // 直接落盘，无需调用方拼缓冲
     std::vector<std::uint8_t> buffer;  // 临时字节缓冲
@@ -151,8 +165,10 @@ void write_little_endian(std::ofstream &stream, Integer value) {  // 直接落�
     stream.write(reinterpret_cast<const char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));  // ofstream::write 只接受 char*，故重新解释
 }
 
-// 功能：计算数据的 CRC32（IEEE 802.3 多项式，查表法）。
-// 思路：首次调用惰性构建 256 项反射表；随后逐字节查表异或，结果取反。
+/**
+ * @brief 计算数据的 CRC32（IEEE 802.3 多项式，查表法）。
+ * @note 思路：首次调用惰性构建 256 项反射表；随后逐字节查表异或，结果取反。
+ */
 std::uint32_t crc32(std::span<const std::uint8_t> data) {  // 入参为待校验的字节视图
     // 静态局部变量：仅初始化一次的生成多项式表（反射 0xEDB88320）
     static std::array<std::uint32_t, 256> table = [] {  // 立即执行的 lambda，首次进入时构建
@@ -178,17 +194,13 @@ std::uint32_t crc32(std::span<const std::uint8_t> data) {  // 入参为待校验
     return value ^ 0xFFFFFFFFU;  // 末尾取反，得到标准 CRC32
 }
 
-// 功能：将 NetworkCaptureRecord 抓包记录，序列化为二进制的 body 载荷（不含CRC，CRC由上层 write_record 后续追加）
-// 协议排布规则（全部小端序）：
-// [uint64 timestamp_us] [uint8 transport] [uint8 direction]
-// [uint16 channel_len] [uint16 peer_len] [uint32 payload_len]
-// [channel字符串字节] [peer字符串字节] [payload原始数据包字节]
-//
-// 变长字段说明：channel、peer、payload 长度不固定，所以先存【长度】，再存【内容】；
-// 长度字段有上限约束，超出上限时直接截断内容，防止越界、溢出：
-//   channel / peer 长度用 uint16 存储 → 最大 65535 字节
-//   payload 长度用 uint32 存储 → 最大 4294967295 字节
-// 所有多字节整数统一按小端写入，保证跨平台解析一致性（不受CPU本机大小端影响）
+/**
+ * @brief 将 NetworkCaptureRecord 抓包记录，序列化为二进制的 body 载荷（不含CRC，CRC由上层 write_record 后续追加）协议排布规则（全部小端序）
+ *        ：[uint64 timestamp_us] [uint8 transport] [uint8 direction] [uint16 channel_len] [uint16
+ *        peer_len] [uint32 payload_len] [channel字符串字节] [peer字符串字节] [payload原始数据包字节]变长字段说明：channel、
+ *        peer、payload 长度不固定，所以先存【长度】，再存【内容】；长度字段有上限约束，超出上限时直接截断内容，防止越界、溢出：channel / peer 长度用 uint16
+ *        存储 → 最大 65535 字节payload 长度用 uint32 存储 → 最大 4294967295 字节所有多字节整数统一按小端写入，保证跨平台解析一致性（不受CPU本机大小端影响）
+ */
 std::vector<std::uint8_t> build_record_body(const NetworkCaptureRecord &record) {  // 返回可变长字节缓冲
     // 截断 channel 字符串长度：不能超过 uint16 能表示的最大值，然后强转成 uint16
     const auto channel_length = static_cast<std::uint16_t>(std::min<std::size_t>(record.channel.size(), std::numeric_limits<std::uint16_t>::max()));  // min 保证不溢出
@@ -225,11 +237,12 @@ std::vector<std::uint8_t> build_record_body(const NetworkCaptureRecord &record) 
     return body;  // 返回组装好的 body
 }
 
-// 功能：把一条抓包记录，按照自定义二进制文件格式写入输出流
-// 文件单条记录整体格式（顺序全部小端）：
-// [魔数 kRecordMagic] [uint32 body_size] [uint32 body_crc32] [body二进制数据]
-// 思路：先调用 build_record_body 生成 body 二进制，算出body长度、CRC校验值，
-//       按协议依次写入头部信息 + body；后续复盘读文件时，依靠魔数同步、CRC校验判断数据是否损坏
+/**
+ * @brief 把一条抓包记录，按照自定义二进制文件格式写入输出流文件单条记录整体格式（顺序全部小端）：[魔数 kRecordMagic] [uint32 body_size] [uint32
+ *        body_crc32] [body二进制数据]
+ * @note 思路：先调用 build_record_body 生成 body 二进制，算出body长度、CRC校验值，按协议依次写入头部信息 + body；后续复盘读文件时，依靠魔数同步、
+ *        CRC校验判断数据是否损坏
+ */
 void write_record(std::ofstream &stream, const NetworkCaptureRecord &record) {  // 在写盘线程中调用
     // 序列化record，生成body二进制载荷（body内部格式见build_record_body）
     const std::vector<std::uint8_t> body = build_record_body(record);  // 生成 body
@@ -248,9 +261,10 @@ void write_record(std::ofstream &stream, const NetworkCaptureRecord &record) {  
     stream.write(reinterpret_cast<const char *>(body.data()), static_cast<std::streamsize>(body.size()));  // 输出 body 本体
 }
 
-// 功能：按需把缓冲区数据刷入磁盘，落盘抓包文件
-// 思路：磁盘IO很慢，不写一条刷一次；策略：强制刷新标志 或者 累计写满32条记录再flush
-//       平衡磁盘性能（减少频繁系统调用）和崩溃丢数据风险，防止程序异常退出时数据还留在页缓存里没写到硬盘
+/**
+ * @brief 按需把缓冲区数据刷入磁盘，落盘抓包文件
+ * @note 思路：磁盘IO很慢，不写一条刷一次；策略：强制刷新标志 或者 累计写满32条记录再flush平衡磁盘性能（减少频繁系统调用）和崩溃丢数据风险，防止程序异常退出时数据还留在页缓存里没写到硬盘
+ */
 void flush_capture_stream(bool force_flush) {  // force_flush 为 true 时无条件刷盘
     // 文件没有打开，直接返回
     if (!g_network_capture_stream.is_open()) {  // is_open 判断流是否关联了有效文件
@@ -263,9 +277,10 @@ void flush_capture_stream(bool force_flush) {  // force_flush 为 true 时无条
     }
 }
 
-// 功能：网络抓包后台写盘线程主循环
-// 思路：阻塞式从无锁队列取抓包记录；收到停止信号并且队列已经空了，线程才退出。
-//       每次取到一条后，一次性把队列里积压的全部记录批量写完，减少多次flush、减少线程切换开销；写完按阈值触发落盘
+/**
+ * @brief 网络抓包后台写盘线程主循环
+ * @note 思路：阻塞式从无锁队列取抓包记录；收到停止信号并且队列已经空了，线程才退出。每次取到一条后，一次性把队列里积压的全部记录批量写完，减少多次flush、减少线程切换开销；写完按阈值触发落盘
+ */
 void network_capture_loop() {  // 该函数运行在独立线程中
     SPDLOG_INFO("网络抓包线程已启动");  // 记录线程生命周期，便于排查卡死
 
@@ -305,9 +320,11 @@ void network_capture_loop() {  // 该函数运行在独立线程中
 
 }  // namespace
 
-// 功能：初始化日志与抓包子系统（仅执行一次）。
-// 思路：解析根目录与生成会话 ID，建立会话目录；保存当前 proto 定义便于旧日志解析；配置 spdlog 异步双 sink；
-//       按抓包档位决定是否打开抓包文件（Off 不创建文件，失败只告警不抛异常）；启动抓包后台线程。
+/**
+ * @brief 初始化日志与抓包子系统（仅执行一次）。
+ * @note 思路：解析根目录与生成会话 ID，建立会话目录；保存当前 proto 定义便于旧日志解析；配置 spdlog 异步双 sink；按抓包档位决定是否打开抓包文件（Off 不创建文件，
+ *        失败只告警不抛异常）；启动抓包后台线程。
+ */
 void initialize(std::string_view application_name, const bool invert_udp_video, const CaptureMode capture_mode) {  // 进程启动时调用
     //std::call_once表示调用一次，后续调用不会执行
     std::call_once(g_initialize_once, [application_name, invert_udp_video, capture_mode]() {  // 用 once_flag 保证多线程下也只执行一次
@@ -425,7 +442,9 @@ void initialize(std::string_view application_name, const bool invert_udp_video, 
     });
 }
 
-// 功能：把字符串解析成抓包档位（大小写不敏感）。
+/**
+ * @brief 把字符串解析成抓包档位（大小写不敏感）。
+ */
 CaptureMode ParseCaptureMode(std::string_view text) {  // 供命令行与环境变量解析使用
     std::string normalized(text);  // 复制一份便于转小写
     std::transform(normalized.begin(), normalized.end(), normalized.begin(),  // 逐字符转小写
@@ -441,13 +460,17 @@ CaptureMode ParseCaptureMode(std::string_view text) {  // 供命令行与环境�
     return CaptureMode::MqttOnly;  // 其余一律按默认档位处理
 }
 
-// 功能：查询当前生效的抓包档位。
+/**
+ * @brief 查询当前生效的抓包档位。
+ */
 CaptureMode current_capture_mode() {
     return g_capture_mode.load(std::memory_order_acquire);  // 原子读，任意线程可调用
 }
 
-// 功能：关闭日志系统。
-// 思路：未初始化直接返回；置停止标志并 join 抓包线程（其会落盘关文件），随后关闭 spdlog 并复位标志。
+/**
+ * @brief 关闭日志系统。
+ * @note 思路：未初始化直接返回；置停止标志并 join 抓包线程（其会落盘关文件），随后关闭 spdlog 并复位标志。
+ */
 void shutdown() {  // 进程退出前调用
     if (!g_is_initialized) {  // 未初始化时无需关闭
         return;  // 直接返回
@@ -461,7 +484,9 @@ void shutdown() {  // 进程退出前调用
     g_is_initialized = false;  // 复位标志，允许后续重新初始化
 }
 
-// 功能：返回是否已初始化。
+/**
+ * @brief 返回是否已初始化。
+ */
 bool is_initialized() {  // 供其他模块判断能否写日志
     return g_is_initialized;  // 读取初始化标志
 }
@@ -471,23 +496,31 @@ const std::filesystem::path &log_root_directory() {  // 返回根目录引用，
     return g_log_root_directory;  // 直接返回内部静态变量
 }
 
-// 功能：返回本次运行的日志目录（logs/ 下的会话子目录），供外部写附加文件。
+/**
+ * @brief 返回本次运行的日志目录（logs/ 下的会话子目录），供外部写附加文件。
+ */
 const std::filesystem::path &log_directory() {  // 返回引用，调用方只读
     return g_log_directory;  // 会话目录
 }
 
-// 功能：返回网络抓包文件路径（network_capture.bin 等），由网络模块在记录报文时使用。
+/**
+ * @brief 返回网络抓包文件路径（network_capture.bin 等），由网络模块在记录报文时使用。
+ */
 const std::filesystem::path &network_capture_path() {  // 返回引用
     return g_network_capture_path;  // 抓包文件路径
 }
 
-// 功能：返回本次运行的唯一会话 ID（用于日志目录命名与抓包文件关联）。
+/**
+ * @brief 返回本次运行的唯一会话 ID（用于日志目录命名与抓包文件关联）。
+ */
 const std::string &session_id() {  // 返回引用
     return g_session_id;  // 会话 ID 字符串
 }
 
-// 功能：把文本截断到 max_length，超出追加 "...(truncated)"。
-// 思路：长度不足直接返回副本；否则取前缀并加标记。
+/**
+ * @brief 把文本截断到 max_length，超出追加 "...(truncated)"。
+ * @note 思路：长度不足直接返回副本；否则取前缀并加标记。
+ */
 std::string truncate_text(std::string_view text, std::size_t max_length) {  // 默认上限 512，见头文件
     if (text.size() <= max_length) {  // 长度未超限
         return std::string(text);  // 由 string_view 构造独立副本
@@ -497,17 +530,18 @@ std::string truncate_text(std::string_view text, std::size_t max_length) {  // �
     return truncated;  // 返回截断结果
 }
 
-// 功能：把一笔网络报文入队（供抓包线程写盘）。
-// 思路：未初始化或已请求停止则跳过；填充记录各字段，尝试入队，队列满则告警丢弃（不阻塞采集方）。
-void log_network_payload(std::string_view transport,  // 传输类型字符串
-                         std::string_view direction,  // 方向字符串
-                         std::string_view channel,  // 通道名
+/**
+ * @brief 把一笔网络报文入队（供抓包线程写盘）。
+ * @note 思路：未初始化或已请求停止则跳过；填充记录各字段，尝试入队，队列满则告警丢弃（不阻塞采集方）。
+ */
+void log_network_payload(std::string_view transport,  // 传输类型字符串"udp-video"
+                         std::string_view direction,  // 方向字符串"rx"
+                         std::string_view channel,  // 通道名"video-stream"
                          std::span<const std::uint8_t> payload,  // 原始字节
                          std::string_view peer) {  // 对端地址
     if (!g_is_initialized || !g_capture_enabled.load(std::memory_order_acquire) || g_network_stop_requested.load(std::memory_order_acquire)) {  // 未就绪/未启用/正在关闭则跳过
         return;  // 直接返回，避免向已关闭的文件写入
     }
-
     // 档位过滤：默认只抓 MQTT，图传 UDP 分片不落盘（每场可省下约 1GB 写入）。
     const CaptureMode mode = g_capture_mode.load(std::memory_order_acquire);  // 读一次档位，避免重复原子读
     if (mode == CaptureMode::Off) {  // 抓包已关闭（含"打开文件失败后自动降级"）
@@ -532,7 +566,7 @@ void log_network_payload(std::string_view transport,  // 传输类型字符串
     if (!g_network_capture_queue.emplace(std::move(record))) {  // emplace 失败表示队列已满
         SPDLOG_WARN("网络抓包队列已满，丢弃记录 channel={} peer={} bytes={}",  // 告警并给出丢弃规模
                     channel,  // 丢弃记录的通道
-                    peer,  // 丢弃记录的对端
+                    peer,  // 丢弃记录的对端地址
                     payload.size());  // 丢弃的字节数
     }
 }

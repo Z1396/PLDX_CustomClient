@@ -61,7 +61,13 @@ import time
 
 
 def _varint(value: int) -> bytes:
-    """把整数编码成 protobuf varint（负数按 64 位补码处理）。"""
+    """@brief 把整数编码成 protobuf varint（负数按 64 位补码处理）。
+
+    @param value 待编码的值；类型注解 int；用于 `if value < 0:`
+    @return bytes
+    @note 负数先加 1<<64 转成无符号 64 位补码，否则会编码出 10 字节异常值。
+    @note 本函数是全部 protobuf 编码的最底层原语，_tag / pb_uint / pb_string 都依赖它。
+    """
     if value < 0:
         value += 1 << 64
     out = bytearray()
@@ -76,50 +82,108 @@ def _varint(value: int) -> bytes:
 
 
 def _tag(field: int, wire_type: int) -> bytes:
-    """字段头：field_number << 3 | wire_type。"""
+    """@brief 字段头：field_number << 3 | wire_type。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _varint((field << 3) | wire_type)`
+    @param wire_type protobuf wire type（0=varint / 2=长度前缀 / 5=定长 32 位）；类型注解 int；用于 `return _varint((field << 3) | wire_type)`
+    @return bytes
+    @note 编码/解析调用链：_varint。
+    @note 字段头用 varint 编码，因此字段号 >15 时会占 2 字节，改字段号必须同步 proto/messages.proto。
+    """
     return _varint((field << 3) | wire_type)
 
 
 def pb_uint(field: int, value: int) -> bytes:
-    """uint32/int32/bool 字段（wire type 0）。"""
+    """@brief uint32/int32/bool 字段（wire type 0）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 0) + _varint(int(value))`
+    @param value 待编码的值；类型注解 int；用于 `return _tag(field, 0) + _varint(int(value))`
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    @note uint32 / int32 / bool 共用 wire type 0；bool 直接按 0/1 写入。
+    """
     return _tag(field, 0) + _varint(int(value))
 
 
 def pb_float(field: int, value: float) -> bytes:
-    """float 字段（wire type 5，固定 4 字节小端）。"""
+    """@brief float 字段（wire type 5，固定 4 字节小端）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 5) + struct.pack("<f", float(value))`
+    @param value 待编码的值；类型注解 float；用于 `return _tag(field, 5) + struct.pack("<f", float(value))`
+    @return bytes
+    @note 编码/解析调用链：_tag。
+    @note 固定 4 字节小端，与 proto 的 float（不是 double）对应。
+    """
     return _tag(field, 5) + struct.pack("<f", float(value))
 
 
 def pb_string(field: int, value: str) -> bytes:
-    """string 字段（wire type 2）。"""
+    """@brief string 字段（wire type 2）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 2) + _varint(len(raw)) + raw`
+    @param value 待编码的值；类型注解 str；用于 `raw = value.encode("utf-8")`
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    """
     raw = value.encode("utf-8")
     return _tag(field, 2) + _varint(len(raw)) + raw
 
 
 def pb_packed_uint(field: int, values) -> bytes:
-    """repeated uint32（默认 packed 编码）。"""
+    """@brief repeated uint32（默认 packed 编码）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 2) + _varint(len(body)) + body`
+    @param values 可迭代数值序列，逐项编码后按 packed 规则拼接；用于 `body = b"".join(_varint(int(v)) for v in values)`
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    @note repeated uint32 默认 packed：整段 body 先拼好，再用一次长度前缀包住。
+    """
     body = b"".join(_varint(int(v)) for v in values)
     return _tag(field, 2) + _varint(len(body)) + body
 
 
 def _concat(*parts) -> bytes:
-    """把多个已编码字段拼成一条消息（空字段直接跳过）。"""
+    """@brief 把多个已编码字段拼成一条消息（空字段直接跳过）。
+
+    @return bytes
+    @note 实现要点：`return b"".join(p for p in parts if p)`。
+    """
     return b"".join(p for p in parts if p)
 
 
 def pb_bytes(field: int, value: bytes) -> bytes:
-    """bytes 字段（wire type 2）。"""
+    """@brief bytes 字段（wire type 2）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 2) + _varint(len(value)) + bytes(valu`
+    @param value 待编码的值；类型注解 bytes；用于 `return _tag(field, 2) + _varint(len(value)) + bytes(valu`
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    """
     return _tag(field, 2) + _varint(len(value)) + bytes(value)
 
 
 def pb_packed_int32(field: int, values) -> bytes:
-    """repeated int32（packed）；负数按 64 位补码 varint，与 int32 编码一致。"""
+    """@brief repeated int32（packed）；负数按 64 位补码 varint，与 int32 编码一致。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 2) + _varint(len(body)) + body`
+    @param values 可迭代数值序列，逐项编码后按 packed 规则拼接；用于 `body = b"".join(_varint(int(v) & ((1 << 64) - 1)) for v `
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    @note 负数按 64 位补码再取 varint，与 protobuf 的 int32 编码规则一致。
+    """
     body = b"".join(_varint(int(v) & ((1 << 64) - 1)) for v in values)
     return _tag(field, 2) + _varint(len(body)) + body
 
 
 def pb_message(field: int, payload: bytes) -> bytes:
-    """嵌套 message 字段（wire type 2，内容即子消息的序列化字节）。"""
+    """@brief 嵌套 message 字段（wire type 2，内容即子消息的序列化字节）。
+
+    @param field protobuf 字段号，参与 (field << 3 | wire_type) 生成字段头；类型注解 int；用于 `return _tag(field, 2) + _varint(len(payload)) + payload`
+    @param payload 消息体字节串（protobuf 序列化结果或私有二进制包）；类型注解 bytes；用于 `return _tag(field, 2) + _varint(len(payload)) + payload`
+    @return bytes
+    @note 编码/解析调用链：_tag / _varint。
+    @note 嵌套消息的 payload 本身已是完整序列化结果，外层只加字段头 + 长度。
+    """
     return _tag(field, 2) + _varint(len(payload)) + payload
 
 
@@ -129,7 +193,13 @@ def pb_message(field: int, payload: bytes) -> bytes:
 
 
 def _read_varint(data: bytes, pos: int):
-    """从 data[pos:] 读一个 varint，返回 (值, 新位置)。"""
+    """@brief 从 data[pos:] 读一个 varint，返回 (值, 新位置)。
+
+    @param data protobuf 二进制原始字节串；类型注解 bytes；用于 `while pos < len(data):`
+    @param pos data 中的起始读取偏移；类型注解 int；用于 `while pos < len(data):`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 实现要点：`result = 0`。
+    """
     result = 0
     shift = 0
     while pos < len(data):
@@ -143,12 +213,13 @@ def _read_varint(data: bytes, pos: int):
 
 
 def parse_fields(data: bytes) -> dict:
-    """把一条 protobuf 消息解成 {字段号: [值, ...]}。
+    """@brief 把一条 protobuf 消息解成 {字段号: [值, ...]}。 wire type 0 -> varint（bool/uint32/int32 统一按无符号读出，调用方按需转）； wire type 2 -> bytes（string / bytes / packed repeated / 嵌套 message 都先原样保留）； wire type 5 -> float（4 字节小端）； wire type 1 -> double（8 字节小端，本项目用不到但顺手支持）。
 
-    wire type 0 -> varint（bool/uint32/int32 统一按无符号读出，调用方按需转）；
-    wire type 2 -> bytes（string / bytes / packed repeated / 嵌套 message 都先原样保留）；
-    wire type 5 -> float（4 字节小端）；
-    wire type 1 -> double（8 字节小端，本项目用不到但顺手支持）。
+    @param data protobuf 二进制原始字节串；类型注解 bytes；用于 `while pos < len(data):`
+    @return dict
+    @note 编码/解析调用链：_read_varint。
+    @note 手写解码器，只覆盖本项目上行指令用到的三种 wire type；未知类型按长度跳过。
+    @note 上行指令解析全部走这里，不依赖 protoc 生成的 Python 代码。
     """
     out = {}
     pos = 0
@@ -174,7 +245,14 @@ def parse_fields(data: bytes) -> dict:
 
 
 def field_u(fields: dict, number: int, default=0):
-    """取标量字段（varint）；int32 负数会被读成大整数，这里转回有符号。"""
+    """@brief 取标量字段（varint）；int32 负数会被读成大整数，这里转回有符号。
+
+    @param fields parse_fields() 得到的 {字段号: 值} 映射；类型注解 dict；用于 `values = fields.get(number)`
+    @param number 要取出的字段号；类型注解 int；用于 `values = fields.get(number)`
+    @param default 字段缺失或类型不符时返回的兜底值；用于 `return default`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 字段类型不符或不存在时返回 default，让上行指令的缺字段不至于抛异常。
+    """
     values = fields.get(number)
     if not values:
         return default
@@ -185,19 +263,39 @@ def field_u(fields: dict, number: int, default=0):
 
 
 def field_b(fields: dict, number: int, default=b""):
-    """取长度前缀字段（bytes / string / packed / 嵌套 message）。"""
+    """@brief 取长度前缀字段（bytes / string / packed / 嵌套 message）。
+
+    @param fields parse_fields() 得到的 {字段号: 值} 映射；类型注解 dict；用于 `values = fields.get(number)`
+    @param number 要取出的字段号；类型注解 int；用于 `values = fields.get(number)`
+    @param default 字段缺失或类型不符时返回的兜底值；用于 `return values[-1] if values else default`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 实现要点：`values = fields.get(number)`。
+    """
     values = fields.get(number)
     return values[-1] if values else default
 
 
 def field_f(fields: dict, number: int, default=0.0):
-    """取 float 字段。"""
+    """@brief 取 float 字段。
+
+    @param fields parse_fields() 得到的 {字段号: 值} 映射；类型注解 dict；用于 `values = fields.get(number)`
+    @param number 要取出的字段号；类型注解 int；用于 `values = fields.get(number)`
+    @param default 字段缺失或类型不符时返回的兜底值；用于 `return values[-1] if values else default`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 实现要点：`values = fields.get(number)`。
+    """
     values = fields.get(number)
     return values[-1] if values else default
 
 
 def parse_packed_uint(data: bytes):
-    """解析 packed repeated uint32/int32 的字节串。"""
+    """@brief 解析 packed repeated uint32/int32 的字节串。
+
+    @param data protobuf 二进制原始字节串；类型注解 bytes；用于 `while pos < len(data):`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 编码/解析调用链：_read_varint。
+    @note RobotPosition / 路径消息里的 repeated 字段走这里还原成整数列表。
+    """
     out = []
     pos = 0
     while pos < len(data):
@@ -212,7 +310,18 @@ def parse_packed_uint(data: bytes):
 
 
 def msg_game_status(stage: int, countdown: int, elapsed: int, red: int, blue: int) -> bytes:
-    """2.2.3 GameStatus：比赛阶段 / 倒计时 / 比分。"""
+    """@brief 2.2.3 GameStatus：比赛阶段 / 倒计时 / 比分。
+
+    @param stage 比赛阶段码（4=倒计时 / 5=比赛中）；类型注解 int；用于 `pb_uint(5, stage), # current_stage 4=比赛中`
+    @param countdown 当前阶段剩余秒数；类型注解 int；用于 `pb_uint(6, countdown), # stage_countdown_sec`
+    @param elapsed 本阶段已进行秒数；类型注解 int；用于 `pb_uint(7, elapsed), # stage_elapsed_sec`
+    @param red 红方比分；类型注解 int；用于 `pb_uint(3, red), # red_score`
+    @param blue 蓝方比分；类型注解 int；用于 `pb_uint(4, blue), # blue_score`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 对应 proto 的 GameStatus；由 Scenario._publish_game_status() 以 5Hz 下发。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, 1),          # current_round 当前局号
         pb_uint(2, 1),          # total_rounds 总局数
@@ -228,10 +337,12 @@ def msg_game_status(stage: int, countdown: int, elapsed: int, red: int, blue: in
 
 
 def cp_rates(sim: dict) -> tuple:
-    """按阵地控制状态推算每秒控制度增量：完全控制的前哨 +1/秒、基地 +3/秒。
+    """@brief 按阵地控制状态推算每秒控制度增量：完全控制的前哨 +1/秒、基地 +3/秒。 客户端只收到 total_CP 一个总数，前哨/基地的拆分是它自己按这个模型反推的； 模拟器这边也用同一套模型产生总量，两边才对得上（否则分项之和会与总数打架）。
 
-    客户端只收到 total_CP 一个总数，前哨/基地的拆分是它自己按这个模型反推的；
-    模拟器这边也用同一套模型产生总量，两边才对得上（否则分项之和会与总数打架）。
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `ally_outpost = (sim["outpost_r_status"] in (1, 2)) + (si`
+    @return tuple
+    @note 读取 sim 字段：base_ally_ctrl, base_enemy_ctrl, outpost_b_status, outpost_r_status（含义见 _new_sim()）。
+    @note 控制度增速由双方基地控制度差决定，属本地模拟规则，不是协议字段。
     """
     ally_outpost = (sim["outpost_r_status"] in (1, 2)) + (sim["outpost_b_status"] in (1, 2))
     ally_base = (sim["base_ally_ctrl"] == 1) + (sim["base_enemy_ctrl"] == 2)
@@ -241,7 +352,16 @@ def cp_rates(sim: dict) -> tuple:
 
 
 def msg_global_unit_status(sim: dict) -> bytes:
-    """2.2.4 GlobalUnitStatus：基地/前哨血量、阵地控制状态、8 台机器人血量、累计控制度与伤害。"""
+    """@brief 2.2.4 GlobalUnitStatus：基地/前哨血量、阵地控制状态、8 台机器人血量、累计控制度与伤害。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(1, sim["base_ally"]), # 己方基地血量（2027 上限 10000）`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_packed_uint / pb_uint。
+    @note 读取 sim 字段：base_ally, base_ally_ctrl, base_ally_status, base_enemy, base_enemy_ctrl, base_enemy_status, cp_ally, cp_enemy, damage_ally, damage_enemy（含义见 _new_sim()）。
+            等
+    @note robot_health 用 packed repeated，顺序为「己方 + 对方」，客户端 CustomControl 正是按对半切分取敌方血量。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, sim["base_ally"]),            # 己方基地血量（2027 上限 10000）
         pb_uint(2, sim["base_ally_status"]),     # 己方基地状态：0 有 100% 防御增益
@@ -263,7 +383,14 @@ def msg_global_unit_status(sim: dict) -> bytes:
 
 
 def msg_global_logistics(sim: dict) -> bytes:
-    """2.2.5 GlobalLogisticsStatus：经济 / 科技等级 / 加密等级。"""
+    """@brief 2.2.5 GlobalLogisticsStatus：经济 / 科技等级 / 加密等级。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(1, sim["economy"]), # 剩余经济`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：economy, economy_total, encryption_level, tech_level（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, sim["economy"]),          # 剩余经济
         pb_uint(2, sim["economy_total"]),    # 累计总经济
@@ -273,7 +400,16 @@ def msg_global_logistics(sim: dict) -> bytes:
 
 
 def msg_robot_static(sim: dict) -> bytes:
-    """2.2.10 RobotStaticStatus：本机编号/类型/最大血量等（header 靠 robot_id 判红蓝）。"""
+    """@brief 2.2.10 RobotStaticStatus：本机编号/类型/最大血量等（header 靠 robot_id 判红蓝）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(4, sim["robot_id"]), # robot_id（<100 红方，
+            >=100 蓝方`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_float / pb_uint。
+    @note 读取 sim 字段：max_health, performance, robot_id, robot_type（含义见 _new_sim()）。
+    @note 1Hz 下发；max_heat / max_health 决定客户端热量环与血条的分档量程。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, 1),                        # connection_state 已连接
         pb_uint(2, 0),                        # field_state 已上场
@@ -293,7 +429,15 @@ def msg_robot_static(sim: dict) -> bytes:
 
 
 def msg_robot_dynamic(sim: dict) -> bytes:
-    """2.2.11 RobotDynamicStatus：10Hz 实时血量/热量/经验/发弹量。"""
+    """@brief 2.2.11 RobotDynamicStatus：10Hz 实时血量/热量/经验/发弹量。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(1, sim["health"]),`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_float / pb_uint。
+    @note 读取 sim 字段：ammo, buffer_energy, fired, health, heat（含义见 _new_sim()）。
+    @note 10Hz 下发；heat / heat_cooldown_rate / buffer_energy 是准星热量环与冷却显示的数据源。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, sim["health"]),
         pb_float(2, sim["heat"]),
@@ -312,7 +456,14 @@ def msg_robot_dynamic(sim: dict) -> bytes:
 
 
 def msg_robot_module(sim: dict) -> bytes:
-    """2.2.12 RobotModuleStatus：11 个模块在线状态 + 模块化 42mm 装配权限。"""
+    """@brief 2.2.12 RobotModuleStatus：11 个模块在线状态 + 模块化 42mm 装配权限。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(11, sim["modular_42mm"]), # 模块化 42mm 装配权限`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：modular_42mm（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, 1),    # 电源管理
         pb_uint(2, 1),    # RFID
@@ -329,7 +480,15 @@ def msg_robot_module(sim: dict) -> bytes:
 
 
 def msg_penalty(penalty_type: int, effect_sec: int, total_num: int = 1) -> bytes:
-    """2.2.15 PenaltyInfo：判罚类型、持续秒数、累计判罚数。"""
+    """@brief 2.2.15 PenaltyInfo：判罚类型、持续秒数、累计判罚数。
+
+    @param penalty_type 判罚类型（黄牌 / 红牌 / 超热量）；类型注解 int；用于 `pb_uint(1, penalty_type),`
+    @param effect_sec 判罚持续秒数；类型注解 int；用于 `pb_uint(2, effect_sec),`
+    @param total_num 累计判罚次数；类型注解 int；用于 `pb_uint(3, total_num),`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, penalty_type),
         pb_uint(2, effect_sec),
@@ -338,7 +497,14 @@ def msg_penalty(penalty_type: int, effect_sec: int, total_num: int = 1) -> bytes
 
 
 def msg_event(event_id: int, param: str = "") -> bytes:
-    """2.2.7 Event：事件号 + 参数串。"""
+    """@brief 2.2.7 Event：事件号 + 参数串。
+
+    @param event_id 事件编号（1~16）；类型注解 int；用于 `pb_uint(1, event_id),`
+    @param param 事件附带参数；类型注解 str；用于 `pb_string(2, param) if param else b"",`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_string / pb_uint。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, event_id),
         pb_string(2, param) if param else b"",
@@ -346,7 +512,14 @@ def msg_event(event_id: int, param: str = "") -> bytes:
 
 
 def msg_tech_core(sim: dict) -> bytes:
-    """2.2.22 TechCoreMotionStateSync：装配核心状态（用于验证装配面板的禁用逻辑与倒计时）。"""
+    """@brief 2.2.22 TechCoreMotionStateSync：装配核心状态（用于验证装配面板的禁用逻辑与倒计时）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `pb_uint(2, sim["core_state"]), # 1 初始位 / 2 运动中 / 3 已到位`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：core_move, core_putin, core_remain_all, core_remain_step, core_rotate, core_state（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(
         pb_uint(1, 4),                       # 最高可选难度
         pb_uint(2, sim["core_state"]),       # 1 初始位 / 2 运动中 / 3 已到位
@@ -363,7 +536,14 @@ def msg_tech_core(sim: dict) -> bytes:
 
 
 def msg_global_special_mechanism(sim: dict) -> bytes:
-    """2.2.6 正在生效的全局特殊机制（1Hz）。"""
+    """@brief 2.2.6 正在生效的全局特殊机制（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `mechanisms = sim.get("mechanisms", [])`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_packed_int32 / pb_packed_uint。
+    @note 读取 sim 字段：mechanisms（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     mechanisms = sim.get("mechanisms", [])
     ids = [m[0] for m in mechanisms]
     times = [m[1] for m in mechanisms]
@@ -371,7 +551,14 @@ def msg_global_special_mechanism(sim: dict) -> bytes:
 
 
 def msg_robot_injury_stat(sim: dict) -> bytes:
-    """2.2.8 一次存活期间累计受伤统计（1Hz）。"""
+    """@brief 2.2.8 一次存活期间累计受伤统计（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `i = sim["injury"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：injury（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     i = sim["injury"]
     return _concat(pb_uint(1, i["total"]), pb_uint(2, i["collision"]),
                    pb_uint(3, i["small"]), pb_uint(4, i["large"]),
@@ -381,7 +568,14 @@ def msg_robot_injury_stat(sim: dict) -> bytes:
 
 
 def msg_robot_respawn_status(sim: dict) -> bytes:
-    """2.2.9 复活状态（1Hz）。"""
+    """@brief 2.2.9 复活状态（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `r = sim["respawn"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：respawn（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     r = sim["respawn"]
     return _concat(pb_uint(1, 1 if r["pending"] else 0), pb_uint(2, r["total"]),
                    pb_uint(3, r["progress"]), pb_uint(4, 1 if r["free"] else 0),
@@ -389,21 +583,41 @@ def msg_robot_respawn_status(sim: dict) -> bytes:
 
 
 def msg_robot_position(sim: dict) -> bytes:
-    """2.2.13 机器人空间坐标和朝向（1Hz）。"""
+    """@brief 2.2.13 机器人空间坐标和朝向（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `p = sim["position"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_float / pb_uint。
+    @note 读取 sim 字段：position, robot_id（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     p = sim["position"]
     return _concat(pb_float(1, p["x"]), pb_float(2, p["y"]), pb_float(3, p["z"]),
                    pb_float(4, p["yaw"]), pb_uint(5, sim["robot_id"]))
 
 
 def msg_buff(buff: tuple) -> bytes:
-    """2.2.14 Buff（获得时触发，此后 1Hz 定频直到失效）。buff=(robot_id,type,level,max,left)。"""
+    """@brief 2.2.14 Buff（获得时触发，此后 1Hz 定频直到失效）。buff=(robot_id,type,level,max,left)。
+
+    @param buff Buff 元组，含类型、robot_id、剩余时间；类型注解 tuple；用于 `robot_id, buff_type, level, max_time, left_time = buff`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note Buff type=6 是客户端「兑换允许发弹量」按钮解锁的唯一依据，按 g 键触发时会下发。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     robot_id, buff_type, level, max_time, left_time = buff
     return _concat(pb_uint(1, robot_id), pb_uint(2, buff_type), pb_uint(3, level),
                    pb_uint(4, max_time), pb_uint(5, left_time))
 
 
 def _sample_polyline(waypoints, points):
-    """把折线航点按弧长等距采样成 points+1 个整数坐标点。"""
+    """@brief 把折线航点按弧长等距采样成 points+1 个整数坐标点。
+
+    @param waypoints 巡逻路径折线的控制点；用于 `for i in range(len(waypoints) - 1):`
+    @param points 采样后的路径点数；用于 `for k in range(points + 1):`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 实现要点：`import math`。
+    """
     import math
     cum = [0.0]                                   # 累计弧长表：cum[i] = 到第 i 个航点的距离
     for i in range(len(waypoints) - 1):
@@ -425,13 +639,12 @@ def _sample_polyline(waypoints, points):
 
 
 def make_patrol_path(waypoints=None, points=50):
-    """生成一条沿高地巡逻的哨兵轨迹（起点 + 49 段相对偏移）。
+    """@brief 生成一条沿高地巡逻的哨兵轨迹（起点 + 49 段相对偏移）。 之前这里是随机抖动（每段 ±20 的伪随机数），累加 49 次后所有点挤在起点附近， 客户端画出来就是地图左上角一坨乱线；改成标准圆环又太像"UI 画错了个圈"。 这里用一条带直道和拐角的折线（贴近真实下发的规划路线）： 从高地下方出发 -> 沿左侧上 -> 顶边横移 -> 右侧斜下 -> 底边回 -> 闭合。 返回 (start_x, start_y, offset_x, offset_y)，偏移按整数累计，末点回到起点。
 
-    之前这里是随机抖动（每段 ±20 的伪随机数），累加 49 次后所有点挤在起点附近，
-    客户端画出来就是地图左上角一坨乱线；改成标准圆环又太像"UI 画错了个圈"。
-    这里用一条带直道和拐角的折线（贴近真实下发的规划路线）：
-    从高地下方出发 -> 沿左侧上 -> 顶边横移 -> 右侧斜下 -> 底边回 -> 闭合。
-    返回 (start_x, start_y, offset_x, offset_y)，偏移按整数累计，末点回到起点。
+    @param waypoints 巡逻路径折线的控制点；用于 `if waypoints is None:`
+    @param points 采样后的路径点数；用于 `positions = _sample_polyline(waypoints, points)`
+    @return 见函数体 return 语句；具体类型由调用方约定。
+    @note 实现要点：`if waypoints is None:`。
     """
     if waypoints is None:
         waypoints = [(112, 104), (112, 52), (150, 40), (192, 66),
@@ -447,7 +660,14 @@ _PATROL_START_X, _PATROL_START_Y, _PATROL_OFFSET_X, _PATROL_OFFSET_Y = make_patr
 
 
 def msg_robot_path_plan_info(sim: dict) -> bytes:
-    """2.2.16 哨兵轨迹规划（触发式）：49 段相对增量。"""
+    """@brief 2.2.16 哨兵轨迹规划（触发式）：49 段相对增量。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `p = sim["path_plan"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_packed_int32 / pb_uint。
+    @note 读取 sim 字段：path_plan（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     p = sim["path_plan"]
     return _concat(pb_uint(1, p["intention"]), pb_uint(2, p["start_x"]),
                    pb_uint(3, p["start_y"]), pb_packed_int32(4, p["offset_x"]),
@@ -455,7 +675,13 @@ def msg_robot_path_plan_info(sim: dict) -> bytes:
 
 
 def msg_map_click_info(click: dict) -> bytes:
-    """2.2.17 地图标记同步（触发式，由 MapClickCmd 原样回推）。"""
+    """@brief 2.2.17 地图标记同步（触发式，由 MapClickCmd 原样回推）。
+
+    @param click 地图打点信息 dict；类型注解 dict；用于 `return _concat(pb_uint(1, click["is_send_all"]), pb_byte`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_bytes / pb_float / pb_uint。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(pb_uint(1, click["is_send_all"]), pb_bytes(2, click["robot_id"]),
                    pb_uint(3, click["mode"]), pb_uint(4, click["enemy_id"]),
                    pb_uint(5, click["ascii"]), pb_uint(6, click["type"]),
@@ -463,7 +689,14 @@ def msg_map_click_info(click: dict) -> bytes:
 
 
 def msg_radar_info_to_client(sim: dict) -> bytes:
-    """2.2.19 雷达位置（触发式）：12 个嵌套 RadarSingleRobotInfo。"""
+    """@brief 2.2.19 雷达位置（触发式）：12 个嵌套 RadarSingleRobotInfo。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `for x, y, highlight in sim["radar"]:`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_message / pb_uint。
+    @note 读取 sim 字段：radar（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     parts = []
     for x, y, highlight in sim["radar"]:
         sub = _concat(pb_uint(1, x), pb_uint(2, y), pb_uint(3, highlight))
@@ -472,41 +705,84 @@ def msg_radar_info_to_client(sim: dict) -> bytes:
 
 
 def msg_custom_byte_block(sim: dict) -> bytes:
-    """2.2.20 机器人自定义数据流（50Hz，对应 0x0310，上限 300 字节）。"""
+    """@brief 2.2.20 机器人自定义数据流（50Hz，对应 0x0310，上限 300 字节）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `counter = sim["custom_byte_counter"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_bytes。
+    @note 读取 sim 字段：custom_byte_counter（含义见 _new_sim()）。
+    @note 50Hz 高频自定义数据流，可用 --no-custom-byte 关闭，避免调试视频时占用带宽。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     counter = sim["custom_byte_counter"]
     payload = bytes([counter & 0xFF]) + b"MOCK-CUSTOM-BLOCK" + bytes([(counter >> 8) & 0xFF])
     return _concat(pb_bytes(1, payload))
 
 
 def msg_robot_performance_selection_sync(sim: dict) -> bytes:
-    """2.2.24 性能体系状态同步（1Hz）。"""
+    """@brief 2.2.24 性能体系状态同步（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `p = sim["performance"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：performance（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     p = sim["performance"]
     return _concat(pb_uint(1, p["shooter"]), pb_uint(2, p["chassis"]),
                    pb_uint(3, p["sentry_control"]))
 
 
 def msg_rune_status_sync(sim: dict) -> bytes:
-    """2.2.27 能量机关状态（1Hz）。"""
+    """@brief 2.2.27 能量机关状态（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `r = sim["rune"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_float / pb_uint。
+    @note 读取 sim 字段：rune（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     r = sim["rune"]
     return _concat(pb_uint(1, r["status"]), pb_uint(2, r["arms"]),
                    pb_float(3, r["avg_rings"]))
 
 
 def msg_sentry_status_sync(sim: dict) -> bytes:
-    """2.2.28 哨兵姿态（1Hz）。"""
+    """@brief 2.2.28 哨兵姿态（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `t = sim["sentry"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：sentry（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     t = sim["sentry"]
     return _concat(pb_uint(1, t["posture"]), pb_uint(2, 1 if t["weakened"] else 0),
                    pb_uint(3, 1 if t["powered"] else 0))
 
 
 def msg_dart_select_target_status_sync(sim: dict) -> bytes:
-    """2.2.30 飞镖目标选择状态（1Hz）。"""
+    """@brief 2.2.30 飞镖目标选择状态（1Hz）。
+
+    @param sim 全局模拟状态 dict，字段定义见 _new_sim()；类型注解 dict；用于 `d = sim["dart"]`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 读取 sim 字段：dart（含义见 _new_sim()）。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     d = sim["dart"]
     return _concat(pb_uint(1, d["target"]), pb_uint(2, d["open"]))
 
 
 def msg_sentry_ctrl_result(command_id: int, result_code: int) -> bytes:
-    """2.2.32 哨兵控制指令回执（触发式）。"""
+    """@brief 2.2.32 哨兵控制指令回执（触发式）。
+
+    @param command_id 上行指令编号，用于回执配对；类型注解 int；用于 `return _concat(pb_uint(1, command_id), pb_uint(2, result`
+    @param result_code 回执结果码，0 表示成功；类型注解 int；用于 `return _concat(pb_uint(1, command_id), pb_uint(2, result`
+    @return bytes
+    @note 编码/解析调用链：_concat / pb_uint。
+    @note 手写的 protobuf 编码器：字段号必须与 proto/messages.proto 一致，改动后跑 python tools/mock_rm_server.py --selftest 验证。
+    """
     return _concat(pb_uint(1, command_id), pb_uint(2, result_code))
 
 
@@ -516,7 +792,13 @@ def msg_sentry_ctrl_result(command_id: int, result_code: int) -> bytes:
 
 
 def _read_exact(sock: socket.socket, size: int) -> bytes:
-    """从 socket 精确读取 size 字节；对端关闭则抛 ConnectionError。"""
+    """@brief 从 socket 精确读取 size 字节；对端关闭则抛 ConnectionError。
+
+    @param sock 已建立连接的 socket；类型注解 socket.socket；用于 `chunk = sock.recv(size - len(buf))`
+    @param size 必须精确读满的字节数；类型注解 int；用于 `while len(buf) < size:`
+    @return bytes
+    @note socket.recv 不保证一次收满，必须循环拼到 size 字节；连接断开返回空字节时抛错。
+    """
     buf = bytearray()
     while len(buf) < size:
         chunk = sock.recv(size - len(buf))
@@ -527,7 +809,13 @@ def _read_exact(sock: socket.socket, size: int) -> bytes:
 
 
 def _read_remaining_length(sock: socket.socket) -> int:
-    """读取 MQTT 可变长度字段（每字节 7 位，最高位为续读标志）。"""
+    """@brief 读取 MQTT 可变长度字段（每字节 7 位，最高位为续读标志）。
+
+    @param sock 已建立连接的 socket；类型注解 socket.socket；用于 `byte = _read_exact(sock, 1)[0]`
+    @return int
+    @note 编码/解析调用链：_read_exact。
+    @note MQTT 剩余长度是 1~4 字节变长整数，最高位表示后续还有字节。
+    """
     multiplier = 1
     value = 0
     while True:
@@ -541,7 +829,12 @@ def _read_remaining_length(sock: socket.socket) -> int:
 
 
 def _encode_remaining_length(length: int) -> bytes:
-    """把长度编码成 MQTT 可变长度字段。"""
+    """@brief 把长度编码成 MQTT 可变长度字段。
+
+    @param length MQTT 固定头之后的剩余长度；类型注解 int；用于 `byte = length % 128`
+    @return bytes
+    @note 与 _read_remaining_length 互为逆运算，乘数按 128 递进。
+    """
     out = bytearray()
     while True:
         byte = length % 128
@@ -557,6 +850,13 @@ class MiniBroker:
     """够用就好的 MQTT broker：接受连接、回 CONNACK/SUBACK/PINGRESP、并向订阅者推送 PUBLISH。"""
 
     def __init__(self, host: str, port: int, on_uplink=None):
+        """@brief 初始化 broker：保存监听地址，准备客户端列表/锁/停止事件，并登记上行指令回调。
+
+        @param host broker 监听地址；类型注解 str；用于 `self.host = host`
+        @param port broker 监听端口；类型注解 int；用于 `self.port = port`
+        @param on_uplink 收到客户端 PUBLISH 时触发的回调（Scenario.handle_uplink）；用于 `self.on_uplink = on_uplink`
+        @note 只在本文件内实现一个最小 MQTT 3.1.1 broker，不引入 paho / mosquitto。
+        """
         self.host = host
         self.port = port
         self._clients = []          # 所有已连接客户端 socket
@@ -569,12 +869,21 @@ class MiniBroker:
     # ---- 对外接口 ----
 
     def start(self):
-        """启动监听线程（daemon，主线程退出即结束）。"""
+        """@brief 启动监听线程（daemon，主线程退出即结束）。
+
+        @note 实现要点：`thread = threading.Thread(target=self._accept_loop, daemon=True)`。
+        """
         thread = threading.Thread(target=self._accept_loop, daemon=True)
         thread.start()
 
     def publish(self, topic: str, payload: bytes):
-        """向所有已连接客户端推送一条 QoS0 PUBLISH。"""
+        """@brief 向所有已连接客户端推送一条 QoS0 PUBLISH。
+
+        @param topic MQTT 话题名，取值即 proto/messages.proto 里的消息类型名；类型注解 str；用于 `topic_bytes = topic.encode("utf-8")`
+        @param payload 消息体字节串（protobuf 序列化结果或私有二进制包）；类型注解 bytes；用于 `body = struct.pack(">H", len(topic_bytes)) + topic_bytes`
+        @note 编码/解析调用链：_encode_remaining_length。
+        @note 对已订阅的客户端逐个发 PUBLISH；topic 名直接作为协议消息类型。
+        """
         topic_bytes = topic.encode("utf-8")
         # MQTT 的 topic 长度是 2 字节大端（不是 varint），这里容易写错。
         body = struct.pack(">H", len(topic_bytes)) + topic_bytes + payload
@@ -588,13 +897,20 @@ class MiniBroker:
                 self._drop(client)
 
     def stop(self):
-        """停止 broker 并关闭所有连接。"""
+        """@brief 停止 broker 并关闭所有连接。
+
+        @note 实现要点：`self._stop.set()`。
+        """
         self._stop.set()
 
     # ---- 内部实现 ----
 
     def _drop(self, client: socket.socket):
-        """把断开的客户端从列表里移除。"""
+        """@brief 把断开的客户端从列表里移除。
+
+        @param client 单个已 accept 的客户端 socket；类型注解 socket.socket；用于 `if client in self._clients:`
+        @note 实现要点：`with self._lock:`。
+        """
         with self._lock:
             if client in self._clients:
                 self._clients.remove(client)
@@ -604,7 +920,10 @@ class MiniBroker:
             pass
 
     def _accept_loop(self):
-        """接受连接；每个连接起一个线程处理 MQTT 控制包。"""
+        """@brief 接受连接；每个连接起一个线程处理 MQTT 控制包。
+
+        @note 实现要点：`server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)`。
+        """
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Windows 上 SO_REUSEADDR 会允许两个进程同时监听同一端口（先来的连接被谁接走不确定），
         # 必须改用 SO_EXCLUSIVEADDRUSE，端口占用时直接报错，避免"起了两个 broker 互相抢客户端"。
@@ -632,7 +951,12 @@ class MiniBroker:
         server.close()
 
     def _serve(self, client: socket.socket):
-        """处理单个客户端的控制包，直到断开。"""
+        """@brief 处理单个客户端的控制包，直到断开。
+
+        @param client 单个已 accept 的客户端 socket；类型注解 socket.socket；用于 `header = _read_exact(client, 1)[0]`
+        @note 编码/解析调用链：_encode_remaining_length / _read_exact / _read_remaining_length。
+        @note 按固定头首字节区分 CONNECT / SUBSCRIBE / PUBLISH / PINGREQ / DISCONNECT；收到 PUBLISH 时回调 on_uplink 让 Scenario 改比赛状态。
+        """
         try:
             while not self._stop.is_set():
                 header = _read_exact(client, 1)[0]
@@ -686,7 +1010,12 @@ class MiniBroker:
 
 
 def _new_sim(robot_id: int) -> dict:
-    """初始化一份假比赛状态（默认值贴近 2027 规则：基地 10000、前哨 1000）。"""
+    """@brief 初始化一份假比赛状态（默认值贴近 2027 规则：基地 10000、前哨 1000）。
+
+    @param robot_id 本机登录的机器人编号；类型注解 int；用于 `is_red = robot_id < 100`
+    @return dict
+    @note 整个模拟裁判系统的初始状态都集中在这里，改初始值比在各 msg_* 里改更可靠。
+    """
     is_red = robot_id < 100
     return {
         "robot_id": robot_id,
@@ -761,6 +1090,13 @@ class Scenario:
     """按固定频率下发假数据，并响应键盘指令。"""
 
     def __init__(self, broker: MiniBroker, robot_id: int, send_custom_byte: bool = True):
+        """@brief 初始化场景：按 robot_id 建比赛状态快照，并准备跨线程待发队列的互斥锁。
+
+        @param broker MiniBroker 实例，所有下行消息经它 publish；类型注解 MiniBroker；用于 `self.broker = broker`
+        @param robot_id 本机登录的机器人编号；类型注解 int；用于 `self.sim = _new_sim(robot_id)`
+        @param send_custom_byte 是否启用 50Hz CustomByteBlock 数据流；类型注解 bool；用于 `self.send_custom_byte = send_custom_byte`
+        @note 实现要点：`self.broker = broker`。
+        """
         self.broker = broker
         self.sim = _new_sim(robot_id)
         self._stop = threading.Event()
@@ -772,7 +1108,13 @@ class Scenario:
     # ---- 主循环 ----
 
     def run(self):
-        """主循环：按协议频率分档下发 —— 50Hz / 10Hz / 5Hz / 1Hz + 触发式队列。"""
+        """@brief 主循环：按协议频率分档下发 —— 50Hz / 10Hz / 5Hz / 1Hz + 触发式队列。
+
+        @note 编码/解析调用链：msg_custom_byte_block / msg_robot_dynamic。
+        @note 读取 sim 字段：custom_byte_counter（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：CustomByteBlock / RobotDynamicStatus。
+        @note 四档频率 50Hz / 10Hz / 5Hz / 1Hz 用各自独立时间戳判断，避免某一档阻塞时拖垮其它档；每轮末尾 sleep(0.01) 让出 CPU。
+        """
         tick = 0
         last_1hz = time.time()
         last_5hz = time.time()
@@ -804,12 +1146,21 @@ class Scenario:
             time.sleep(0.01)
 
     def _queue(self, topic: str, payload: bytes):
-        """把触发式消息放进待发队列（由主循环统一发送，避免多线程直接碰 socket）。"""
+        """@brief 把触发式消息放进待发队列（由主循环统一发送，避免多线程直接碰 socket）。
+
+        @param topic MQTT 话题名，取值即 proto/messages.proto 里的消息类型名；类型注解 str；用于 `self.sim["pending_messages"].append((topic, payload))`
+        @param payload 消息体字节串（protobuf 序列化结果或私有二进制包）；类型注解 bytes；用于 `self.sim["pending_messages"].append((topic, payload))`
+        @note 读取 sim 字段：pending_messages（含义见 _new_sim()）。
+        @note 键盘线程与 MQTT 线程都会产生触发式消息，统一入队后由主循环 _flush_pending 发送，避免多线程直接碰同一个 socket。
+        """
         with self._queue_lock:
             self.sim["pending_messages"].append((topic, payload))
 
     def _flush_pending(self):
-        """发送本帧累积的触发式消息。"""
+        """@brief 发送本帧累积的触发式消息。
+
+        @note 读取 sim 字段：pending_messages（含义见 _new_sim()）。
+        """
         with self._queue_lock:
             pending = self.sim["pending_messages"]
             self.sim["pending_messages"] = []
@@ -817,7 +1168,11 @@ class Scenario:
             self.broker.publish(topic, payload)
 
     def _publish_game_status(self):
-        """5Hz：GameStatus。"""
+        """@brief 5Hz：GameStatus。
+
+        @note 编码/解析调用链：msg_game_status。
+        @note 读取 sim 字段：blue_score, countdown, red_score（含义见 _new_sim()）。
+        """
         sim = self.sim
         stage = 4 if sim["countdown"] > 0 else 5
         self.broker.publish("GameStatus",
@@ -825,7 +1180,14 @@ class Scenario:
                                             sim["red_score"], sim["blue_score"]))
 
     def _publish_1hz(self, tick: int):
-        """1Hz：下发协议里所有定频下行消息（补齐原版缺的 14 条）。"""
+        """@brief 1Hz：下发协议里所有定频下行消息（补齐原版缺的 14 条）。
+
+        @param tick 1Hz 节拍计数，从 0 起每整秒加一；类型注解 int；用于 `if tick % 5 == 0:`
+        @note 编码/解析调用链：msg_buff / msg_dart_select_target_status_sync / msg_global_logistics / msg_global_special_mechanism / msg_global_unit_status / msg_radar_info_to_client / msg_robot_injury_stat / msg_robot_module / msg_robot_path_plan_info。
+        @note 读取 sim 字段：buffs（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：DartSelectTargetStatusSync / GlobalLogisticsStatus / GlobalSpecialMechanism / GlobalUnitStatus / RobotInjuryStat / RobotModuleStatus / RobotPathPlanInfo / RobotPerformanceSelectionSync。
+        @note 补齐原版缺失的定频下行消息；新增协议消息时在这里加一行 publish 即可。
+        """
         sim = self.sim
         publish = self.broker.publish
         publish("GlobalUnitStatus", msg_global_unit_status(sim))
@@ -854,7 +1216,14 @@ class Scenario:
             self.trigger_event(9, "2,4")
 
     def _advance_state(self, tick: int):
-        """每秒推进一次比赛状态（数值/倒计时/装配/复活/Buff/机关/位置）。"""
+        """@brief 每秒推进一次比赛状态（数值/倒计时/装配/复活/Buff/机关/位置）。
+
+        @param tick 1Hz 节拍计数，从 0 起每整秒加一；类型注解 int；用于 `sim["heat"] = 0.0 if tick % 6 == 0 else min(400.0, sim["`
+        @note 编码/解析调用链：msg_event。
+        @note 读取 sim 字段：ammo, assembly, buffs, core_move, core_putin, core_remain_all, core_remain_step, core_rotate, core_state, countdown（含义见 _new_sim()）。
+                等
+        @note 每秒推进一次本地模拟：冷却、热量回落、Buff 倒计时、装配流程等，属于本地规则，不是协议规定的字段。
+        """
         sim = self.sim
         if sim["countdown"] > 0:
             sim["countdown"] -= 1
@@ -909,7 +1278,15 @@ class Scenario:
     # ---- 上行指令闭环：模拟裁判系统接收指令并改变比赛状态 ----
 
     def handle_uplink(self, topic: str, payload: bytes):
-        """裁判系统侧入口：解析一条客户端上行 PUBLISH，改变状态并回推下行/回执。"""
+        """@brief 裁判系统侧入口：解析一条客户端上行 PUBLISH，改变状态并回推下行/回执。
+
+        @param topic MQTT 话题名，取值即 proto/messages.proto 里的消息类型名；类型注解 str；用于 `print("[uplink] %s 解析失败: %s" % (topic, exc))`
+        @param payload 消息体字节串（protobuf 序列化结果或私有二进制包）；类型注解 bytes；用于 `fields = parse_fields(payload)`
+        @note 编码/解析调用链：parse_fields。
+        @note 读取 sim 字段：uplink_log（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：AssemblyCommand / CommonCommand / MapClickCmd / RobotPerformanceSelectionCommand / RuneActivateCommand / SentryCtrlCommand。
+        @note 按 topic 分派到各 _on_* 处理器，实现 Package 1 的指令闭环；上行指令同时记入 uplink_log，按 l 键可查看。
+        """
         sim = self.sim
         try:
             fields = parse_fields(payload)
@@ -938,7 +1315,10 @@ class Scenario:
             print("[uplink] %s 处理出错: %s" % (topic, exc))
 
     def _reply_state(self, *topics):
-        """指令生效后立刻回推一批下行消息，让客户端马上看到结果。"""
+        """@brief 指令生效后立刻回推一批下行消息，让客户端马上看到结果。
+
+        @note 涉及 MQTT 话题：DartSelectTargetStatusSync / GlobalLogisticsStatus / GlobalUnitStatus / RobotDynamicStatus / RobotModuleStatus / RobotPerformanceSelectionSync / RobotRespawnStatus / RobotStaticStatus。
+        """
         builders = {
             "GlobalLogisticsStatus": msg_global_logistics,
             "GlobalUnitStatus": msg_global_unit_status,
@@ -956,15 +1336,31 @@ class Scenario:
             self._queue(topic, builders[topic](self.sim))
 
     def _on_keyboard_mouse(self, fields):
-        """75Hz 键鼠：裁判系统只做转发，这里仅统计，不改变比赛状态。"""
+        """@brief 75Hz 键鼠：裁判系统只做转发，这里仅统计，不改变比赛状态。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射
+        @note 读取 sim 字段：_km_count（含义见 _new_sim()）。
+        """
         self.sim["_km_count"] = self.sim.get("_km_count", 0) + 1
 
     def _on_custom_control(self, fields):
-        """75Hz 自定义数据：仅统计长度。"""
+        """@brief 75Hz 自定义数据：仅统计长度。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `self.sim["_cc_bytes"] = self.sim.get("_cc_bytes", 0) + l`
+        @note 编码/解析调用链：field_b。
+        @note 读取 sim 字段：_cc_bytes（含义见 _new_sim()）。
+        """
         self.sim["_cc_bytes"] = self.sim.get("_cc_bytes", 0) + len(field_b(fields, 1))
 
     def _on_map_click(self, fields):
-        """MapClickCmd -> 原样回推 MapClickInfo（协议 2.2.17）。"""
+        """@brief MapClickCmd -> 原样回推 MapClickInfo（协议 2.2.17）。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `"is_send_all": field_u(fields, 1),`
+        @note 编码/解析调用链：field_b / field_f / field_u / msg_map_click_info。
+        @note 读取 sim 字段：last_map_click（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：MapClickInfo。
+        @note 解析 MapClickCmd 后原样回推 MapClickInfo，客户端据此在小地图上落点。
+        """
         click = {
             "is_send_all": field_u(fields, 1),
             "robot_id": field_b(fields, 2, b"\x00" * 7),
@@ -981,7 +1377,14 @@ class Scenario:
               % (click["mode"], click["map_x"], click["map_y"]))
 
     def _on_assembly(self, fields):
-        """AssemblyCommand：0 开始兑换 / 1 确认装配 / 2 取消装配。"""
+        """@brief AssemblyCommand：0 开始兑换 / 1 确认装配 / 2 取消装配。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `operation = field_u(fields, 1)`
+        @note 编码/解析调用链：field_u / msg_event。
+        @note 读取 sim 字段：assembly, core_move, core_putin, core_remain_all, core_remain_step, core_rotate, core_state, modular_42mm, tech_level（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：GlobalLogisticsStatus / RobotModuleStatus / TechCoreMotionStateSync。
+        @note 装配流程会连推 TechCoreMotionStateSync 与 Event15/16，客户端装配覆盖层依赖这条链。
+        """
         operation = field_u(fields, 1)
         difficulty = field_u(fields, 2)
         asm = self.sim["assembly"]
@@ -1012,7 +1415,13 @@ class Scenario:
         self._reply_state("TechCoreMotionStateSync", "RobotModuleStatus", "GlobalLogisticsStatus")
 
     def _on_performance(self, fields):
-        """RobotPerformanceSelectionCommand -> 同步性能体系。"""
+        """@brief RobotPerformanceSelectionCommand -> 同步性能体系。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `p["shooter"] = field_u(fields, 1, p["shooter"])`
+        @note 编码/解析调用链：field_u。
+        @note 读取 sim 字段：performance（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：RobotPerformanceSelectionSync / RobotStaticStatus。
+        """
         p = self.sim["performance"]
         p["shooter"] = field_u(fields, 1, p["shooter"])
         p["chassis"] = field_u(fields, 2, p["chassis"])
@@ -1022,7 +1431,14 @@ class Scenario:
               % (p["shooter"], p["chassis"], p["sentry_control"]))
 
     def _on_common(self, fields):
-        """CommonCommand：兑换发弹量 / 复活 / 远程补弹 / 远程回血。"""
+        """@brief CommonCommand：兑换发弹量 / 复活 / 远程补弹 / 远程回血。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `cmd = field_u(fields, 1)`
+        @note 编码/解析调用链：field_u。
+        @note 读取 sim 字段：ammo, economy, health, max_health, respawn, robot_bullets（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：GlobalLogisticsStatus / GlobalUnitStatus / RobotDynamicStatus / RobotRespawnStatus。
+        @note 兑换发弹量会同时扣 economy、加 ammo 并回推 GlobalLogisticsStatus；其余常用指令（加血、复活等）也在这里改 sim。
+        """
         cmd = field_u(fields, 1)
         param = field_u(fields, 2)
         sim = self.sim
@@ -1077,14 +1493,27 @@ class Scenario:
                           "RobotRespawnStatus")
 
     def _on_rune(self, fields):
-        """RuneActivateCommand -> 能量机关进入激活中。"""
+        """@brief RuneActivateCommand -> 能量机关进入激活中。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `if field_u(fields, 1) == 1:`
+        @note 编码/解析调用链：field_u。
+        @note 读取 sim 字段：rune（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：RuneStatusSync。
+        """
         if field_u(fields, 1) == 1:
             self.sim["rune"].update({"status": 2, "arms": 0, "avg_rings": 0.0})
             self._reply_state("RuneStatusSync")
             print("[uplink] 能量机关开始激活")
 
     def _on_dart(self, fields):
-        """DartCommand：切换目标/闸门；确认发射 -> 飞镖命中事件 + 扣血。"""
+        """@brief DartCommand：切换目标/闸门；确认发射 -> 飞镖命中事件 + 扣血。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `target = field_u(fields, 1, 1)`
+        @note 编码/解析调用链：field_u。
+        @note 读取 sim 字段：_is_red, base_enemy, dart, robot_health（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：DartSelectTargetStatusSync / GlobalUnitStatus。
+        @note 确认发射后产生 Event9 并扣对方基地/机器人血量，再回推 DartSelectTargetStatusSync。
+        """
         target = field_u(fields, 1, 1)
         open_flag = field_u(fields, 2)
         launch = field_u(fields, 3)
@@ -1109,7 +1538,14 @@ class Scenario:
         self._reply_state("DartSelectTargetStatusSync", "GlobalUnitStatus")
 
     def _on_sentry_ctrl(self, fields):
-        """SentryCtrlCommand -> 改变哨兵姿态并回 SentryCtrlResult。"""
+        """@brief SentryCtrlCommand -> 改变哨兵姿态并回 SentryCtrlResult。
+
+        @param fields parse_fields() 得到的 {字段号: 值} 映射；用于 `cmd = field_u(fields, 1)`
+        @note 编码/解析调用链：field_u / msg_sentry_ctrl_result。
+        @note 读取 sim 字段：ammo, health, max_health, sentry（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：RobotDynamicStatus / SentryCtrlResult / SentryStatusSync。
+        @note 改哨兵姿态后必然回一条 SentryCtrlResult 回执，客户端据此关闭等待态。
+        """
         cmd = field_u(fields, 1)
         t = self.sim["sentry"]
         posture_map = {7: 1, 8: 2, 9: 3, 10: 1, 11: 2, 12: 3}
@@ -1128,7 +1564,12 @@ class Scenario:
     # ---- 交互动作 ----
 
     def damage_base(self, amount: int, ally: bool):
-        """基地扣血：用于观察 2027 的 λ 降采样角标与血条比例。"""
+        """@brief 基地扣血：用于观察 2027 的 λ 降采样角标与血条比例。
+
+        @param amount 变化量（血量或控制度）；类型注解 int；用于 `self.sim[key] = max(0, self.sim[key] - amount)`
+        @param ally True 表示作用于己方，False 表示对方；类型注解 bool；用于 `key = "base_ally" if ally else "base_enemy"`
+        @note 读取 sim 字段：base_ally（含义见 _new_sim()）。
+        """
         key = "base_ally" if ally else "base_enemy"
         status_key = "base_ally_status" if ally else "base_enemy_status"
         self.sim[key] = max(0, self.sim[key] - amount)
@@ -1140,32 +1581,57 @@ class Scenario:
               f"（己方 λ={1 - lost_ally / 20000:.2f}）")
 
     def trigger_event(self, event_id: int, param: str = ""):
-        """发一条 Event。"""
+        """@brief 发一条 Event。
+
+        @param event_id 事件编号（1~16）；类型注解 int；用于 `self.broker.publish("Event", msg_event(event_id, param))`
+        @param param 事件附带参数；类型注解 str；用于 `self.broker.publish("Event", msg_event(event_id, param))`
+        @note 编码/解析调用链：msg_event。
+        """
         self.broker.publish("Event", msg_event(event_id, param))
         print(f"[sim] Event {event_id} param={param!r}")
 
     def cycle_outpost_status(self):
-        """轮换前哨阵地控制状态，观察角标从绿到红。"""
+        """@brief 轮换前哨阵地控制状态，观察角标从绿到红。
+
+        @note 读取 sim 字段：outpost_b_status, outpost_r_status（含义见 _new_sim()）。
+        """
         self.sim["outpost_r_status"] = self.sim["outpost_r_status"] % 4 + 1
         self.sim["outpost_b_status"] = self.sim["outpost_b_status"] % 4 + 1
         print(f"[sim] 阵地控制状态 R={self.sim['outpost_r_status']} B={self.sim['outpost_b_status']}")
 
     def penalty(self, penalty_type: int, effect_sec: int):
-        """发一条判罚，观察顶部横幅与倒计时。"""
+        """@brief 发一条判罚，观察顶部横幅与倒计时。
+
+        @param penalty_type 判罚类型（黄牌 / 红牌 / 超热量）；类型注解 int；用于 `msg_penalty(penalty_type, effect_sec, self.sim["penalty_`
+        @param effect_sec 判罚持续秒数；类型注解 int；用于 `msg_penalty(penalty_type, effect_sec, self.sim["penalty_`
+        @note 编码/解析调用链：msg_penalty。
+        @note 读取 sim 字段：penalty_count（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：PenaltyInfo。
+        """
         self.sim["penalty_count"] += 1
         self.broker.publish("PenaltyInfo",
                             msg_penalty(penalty_type, effect_sec, self.sim["penalty_count"]))
         print(f"[sim] 判罚 type={penalty_type} {effect_sec}s 累计={self.sim['penalty_count']}")
 
     def add_cp(self, amount: int):
-        """手动加控制度。"""
+        """@brief 手动加控制度。
+
+        @param amount 变化量（血量或控制度）；类型注解 int；用于 `self.sim["cp_ally"] += amount`
+        @note 读取 sim 字段：cp_ally（含义见 _new_sim()）。
+        """
         self.sim["cp_ally"] += amount
         print(f"[sim] 己方控制度 -> {self.sim['cp_ally']}")
 
     # ---- 新增的模拟动作（覆盖全量下行与上行闭环）----
 
     def add_buff(self, buff_type: int = 1):
-        """给本机加一个 Buff，并立即触发一次 Buff 消息。"""
+        """@brief 给本机加一个 Buff，并立即触发一次 Buff 消息。
+
+        @param buff_type Buff 类型，6 表示「可兑换允许发弹量」（补给区）；类型注解 int；用于 `buff = (self.sim["robot_id"], buff_type, 50, 30, 30)`
+        @note 编码/解析调用链：msg_buff。
+        @note 读取 sim 字段：buffs, robot_id（含义见 _new_sim()）。
+        @note 按 u 加攻击 Buff(type=1)，按 g 加补给区 Buff(type=6)；客户端兑换按钮只认 type=6。
+        """
         buff = (self.sim["robot_id"], buff_type, 50, 30, 30)
         self.sim["buffs"] = [b for b in self.sim["buffs"] if b[1] != buff_type]
         self.sim["buffs"].append(buff)
@@ -1173,7 +1639,11 @@ class Scenario:
         print("[sim] Buff type=%u level=50 持续30s" % buff_type)
 
     def toggle_respawn(self):
-        """切换"战亡待复活"状态，验证复活读条与远程复活指令。"""
+        """@brief 切换"战亡待复活"状态，验证复活读条与远程复活指令。
+
+        @note 读取 sim 字段：health, max_health, respawn（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：RobotDynamicStatus / RobotRespawnStatus。
+        """
         r = self.sim["respawn"]
         r["pending"] = not r["pending"]
         r["progress"] = 0
@@ -1182,37 +1652,62 @@ class Scenario:
         print("[sim] 待复活=%s" % r["pending"])
 
     def trigger_mechanism(self, mechanism_id: int = 1):
-        """触发一个全局特殊机制（堡垒占领计时）。"""
+        """@brief 触发一个全局特殊机制（堡垒占领计时）。
+
+        @param mechanism_id 全局特殊机制编号；类型注解 int；用于 `self.sim["mechanisms"] = [(mid, sec) for mid, sec in sel`
+        @note 编码/解析调用链：msg_global_special_mechanism。
+        @note 读取 sim 字段：mechanisms（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：GlobalSpecialMechanism。
+        """
         self.sim["mechanisms"] = [(mid, sec) for mid, sec in self.sim["mechanisms"] if mid != mechanism_id]
         self.sim["mechanisms"].append((mechanism_id, 30))
         self._queue("GlobalSpecialMechanism", msg_global_special_mechanism(self.sim))
         print("[sim] 全局特殊机制 %u 启动 30s" % mechanism_id)
 
     def activate_rune(self):
-        """触发能量机关激活流程。"""
+        """@brief 触发能量机关激活流程。
+
+        @note 编码/解析调用链：parse_fields / pb_uint。
+        """
         self._on_rune(parse_fields(pb_uint(1, 1)))
 
     def cycle_sentry_posture(self):
-        """轮换哨兵姿态 进攻->防御->移动。"""
+        """@brief 轮换哨兵姿态 进攻->防御->移动。
+
+        @note 读取 sim 字段：sentry（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：SentryStatusSync。
+        """
         t = self.sim["sentry"]
         t["posture"] = t["posture"] % 3 + 1
         self._reply_state("SentryStatusSync")
         print("[sim] 哨兵姿态 -> %u" % t["posture"])
 
     def cycle_dart_gate(self):
-        """轮换飞镖闸门 关闭(0)->已开启(2)。"""
+        """@brief 轮换飞镖闸门 关闭(0)->已开启(2)。
+
+        @note 读取 sim 字段：dart（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：DartSelectTargetStatusSync。
+        """
         d = self.sim["dart"]
         d["open"] = 2 if d["open"] != 2 else 0
         self._reply_state("DartSelectTargetStatusSync")
         print("[sim] 飞镖闸门 -> %u" % d["open"])
 
     def send_map_click(self):
-        """主动下发一条地图标记（MapClickInfo）。"""
+        """@brief 主动下发一条地图标记（MapClickInfo）。
+
+        @note 编码/解析调用链：msg_map_click_info。
+        @note 读取 sim 字段：last_map_click（含义见 _new_sim()）。
+        @note 涉及 MQTT 话题：MapClickInfo。
+        """
         self._queue("MapClickInfo", msg_map_click_info(self.sim["last_map_click"]))
         print("[sim] 地图标记已下发")
 
     def cycle_event(self):
-        """轮换 Event 1~16，便于逐个观察事件提示层的文案与配色。"""
+        """@brief 轮换 Event 1~16，便于逐个观察事件提示层的文案与配色。
+
+        @note 读取 sim 字段：_event_cursor（含义见 _new_sim()）。
+        """
         eid = self.sim.get("_event_cursor", 0) % 16 + 1
         self.sim["_event_cursor"] = eid
         params = {1: "1,101", 2: "11", 3: "10,9.6", 4: "2", 5: "2", 6: "3",
@@ -1220,7 +1715,11 @@ class Scenario:
         self.trigger_event(eid, params.get(eid, ""))
 
     def show_status(self):
-        """打印当前模拟裁判系统的关键状态。"""
+        """@brief 打印当前模拟裁判系统的关键状态。
+
+        @note 读取 sim 字段：_is_red, ammo, assembly, base_ally, base_enemy, core_state, countdown, cp_ally, cp_enemy, damage_ally（含义见 _new_sim()）。
+                等
+        """
         sim = self.sim
         print("--- 模拟裁判系统状态 ---")
         print("  机器人=%s 阵营=%s 阶段倒计时=%ss" %
@@ -1237,7 +1736,10 @@ class Scenario:
         print("  上行指令累计=%s 条" % len(sim["uplink_log"]))
 
     def show_uplink_log(self):
-        """打印最近收到的上行指令。"""
+        """@brief 打印最近收到的上行指令。
+
+        @note 读取 sim 字段：uplink_log（含义见 _new_sim()）。
+        """
         log = self.sim["uplink_log"]
         if not log:
             print("[sim] 尚未收到任何上行指令（启动 RoboGo 并点按钮，或按数字键 1~9 模拟）")
@@ -1247,7 +1749,13 @@ class Scenario:
             print("  %s  %-36s %d bytes" % (ts, topic, size))
 
     def simulate_uplink(self, index: int):
-        """手动模拟一条上行指令：没有客户端时也能验证裁判系统的响应闭环。"""
+        """@brief 手动模拟一条上行指令：没有客户端时也能验证裁判系统的响应闭环。
+
+        @param index 1~9 的指令序号，对应 _keyboard_loop 里的手动模拟键；类型注解 int；用于 `item = samples.get(index)`
+        @note 编码/解析调用链：_concat / pb_bytes / pb_float / pb_uint。
+        @note 涉及 MQTT 话题：AssemblyCommand / CommonCommand / MapClickCmd / RobotPerformanceSelectionCommand / RuneActivateCommand / SentryCtrlCommand。
+        @note 1~9 键无需启动客户端即可验证上行指令闭环，调试协议时优先用它。
+        """
         sim = self.sim
         samples = {
             1: ("KeyboardMouseControl", _concat(pb_uint(1, 0), pb_uint(6, 0))),
@@ -1270,12 +1778,19 @@ class Scenario:
         self.handle_uplink(topic, payload)
 
     def stop(self):
-        """停止场景循环。"""
+        """@brief 停止场景循环。
+
+        @note 实现要点：`self._stop.set()`。
+        """
         self._stop.set()
 
 
 def _keyboard_loop(scenario: Scenario):
-    """读标准输入，把按键映射成模拟动作。"""
+    """@brief 读标准输入，把按键映射成模拟动作。
+
+    @param scenario Scenario 实例，键盘线程通过它改比赛状态；类型注解 Scenario；用于 `scenario.damage_base(1000, ally=True)`
+    @note 在运行本工具的终端里读 stdin，与 MQTT/主循环分属不同线程，故所有状态改动都走 _queue / sim。
+    """
     print(__doc__)
     for line in sys.stdin:
         key = line.strip()[:1].lower()
@@ -1335,7 +1850,16 @@ def _keyboard_loop(scenario: Scenario):
 
 
 def _selftest(host: str, port: int) -> int:
-    """不依赖 RoboGo，验证 broker 能完成 CONNECT/SUBSCRIBE 并成功推送 PUBLISH。"""
+    """@brief 不依赖 RoboGo，验证 broker 能完成 CONNECT/SUBSCRIBE 并成功推送 PUBLISH。
+
+    @param host broker 监听地址；类型注解 str；用于 `broker = MiniBroker(host, port)`
+    @param port broker 监听端口；类型注解 int；用于 `broker = MiniBroker(host, port)`
+    @return int
+    @note 编码/解析调用链：_concat / _encode_remaining_length / _read_exact / _read_remaining_length / msg_buff / msg_custom_byte_block / msg_dart_select_target_status_sync / msg_event / msg_game_status。
+    @note 读取 sim 字段：ammo, economy, modular_42mm, pending_messages（含义见 _new_sim()）。
+    @note 涉及 MQTT 话题：AssemblyCommand / CommonCommand / CustomByteBlock / DartSelectTargetStatusSync / GlobalLogisticsStatus / GlobalSpecialMechanism / GlobalUnitStatus / MapClickInfo。
+    @note --selftest 依次验证 MQTT 握手、订阅、全量下行编码与九类上行指令闭环，改协议字段后必须跑一次。
+    """
     broker = MiniBroker(host, port)
     broker.start()
     time.sleep(0.3)
@@ -1447,6 +1971,11 @@ def _selftest(host: str, port: int) -> int:
 
 
 def main() -> int:
+    """@brief 解析命令行参数，启动 broker 与场景，按需进入自检或交互模拟循环。
+
+    @return int
+    @note 解析 --robot-id / --port / --no-custom-byte / --selftest，随后起 broker 与 Scenario。
+    """
     # 日志重定向到文件时也逐行刷新，方便实时观察上行指令与模拟动作。
     try:
         sys.stdout.reconfigure(line_buffering=True)
@@ -1481,3 +2010,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

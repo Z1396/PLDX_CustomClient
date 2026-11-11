@@ -43,18 +43,24 @@ public:  // 公有接口：外部通过这些方法压栈
     ScopedStyle &operator=(ScopedStyle &&other) noexcept;  // 移动赋值：先弹出自身已压样式，再接管对方计数
     ~ScopedStyle();  // 析构：按计数自动 Pop，提前 return 也不会泄漏样式栈
 
-    // 功能：压入一个颜色样式（如 ImGuiCol_Text / ImGuiCol_Border），并累加颜色计数。
-    // 参数 index：ImGui 颜色枚举项；color：要覆盖的 RGBA 颜色。
+    /**
+     * @brief 压入一个颜色样式（如 ImGuiCol_Text / ImGuiCol_Border），并累加颜色计数。参数 index：ImGui 颜色枚举项；color：要覆盖的 RGBA
+     *        颜色。
+     */
     void PushColor(ImGuiCol index, const ImVec4 &color);
-    // 功能：压入一个标量样式变量（如圆角、边框宽度），并累加变量计数。
-    // 参数 index：ImGui 样式枚举项；value：目标数值。
+    /**
+     * @brief 压入一个标量样式变量（如圆角、边框宽度），并累加变量计数。参数 index：ImGui 样式枚举项；value：目标数值。
+     */
     void PushVar(ImGuiStyleVar index, float value);
-    // 功能：压入一个二维样式变量（如内边距 ImVec2），并累加变量计数。
-    // 参数 index：ImGui 样式枚举项；value：目标二维数值。
+    /**
+     * @brief 压入一个二维样式变量（如内边距 ImVec2），并累加变量计数。参数 index：ImGui 样式枚举项；value：目标二维数值。
+     */
     void PushVar(ImGuiStyleVar index, const ImVec2 &value);
 
 private:  // 私有实现细节
-    // 功能：按记录的计数把已压入的样式全部弹出并清零计数（析构与移动赋值时调用），防止样式栈泄漏。
+    /**
+     * @brief 按记录的计数把已压入的样式全部弹出并清零计数（析构与移动赋值时调用），防止样式栈泄漏。
+     */
     void Reset();
 
     int color_count_ = 0; // 已压入的颜色数量，析构时按此计数 Pop

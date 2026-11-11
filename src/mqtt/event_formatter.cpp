@@ -1,3 +1,17 @@
+// 1) FormatEventText：把协议 2.2.x 的 Event(event_id + param) 翻成中文战况文案；
+// 2) PushEventToast：按事件重要度决定是否入队顶部提示，并维护队列长度与过期。
+// 数据流：由 MQTT handler 在解析出 Event 消息后调用；FormatEventText 只读 Event 返回
+// std::string，PushEventToast 会写 State::event_toasts（UI 层再只读消费）。
+// 设计要点：
+// · 事件 ID 1~16 逐个 switch，每个分支都对 param 做格式兜底：参数缺逗号、取值未知时
+// 一律把原始值拼进文案（如「未知事件: ID=99, 参数=xyz」），绝不静默丢弃——
+// 赛场出现新协议扩展时要能靠日志补全处理；
+// · robot_id → 中文名统一查 app/robot_registry::GetRobotName，不在本文件硬编码编号；
+// · 提示定级 level 0 普通 / 1 重要 / 2 危急，-1 表示只进日志不弹提示；
+// 队列先剔除超过 6 秒的旧项（与渲染端淡出时长一致），再追加，最后裁到最多 6 条；
+// · 时间统一用 steady_clock，不受系统时间调整影响。
+// 依赖：messages.pb.h、app/robot_registry.h、logging/logging.h。
+// 注意：本文件是唯一写 event_toasts 的地方；渲染端（header_panel.cpp）只读。
 // Event 消息文案翻译与顶部提示入队实现。
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include <google/protobuf/message.h>
@@ -15,6 +29,8 @@ using RoboGo::app::robot_registry::GetRobotName;
 namespace {
 
     // 把形如 "a,b" 的参数按首个逗号拆成两段；找不到逗号返回空。
+    // 思路：只按第一个逗号分割，第二段允许再含逗号，保持原始参数不被二次解释。
+    // 返回值：pair(first, second) 或 nullopt，调用方必须判 has_value() 再做兜底文案。
     std::optional<std::pair<std::string, std::string>> SplitByComma(const std::string &param) {
         const size_t comma_pos = param.find(',');
         if (comma_pos == std::string::npos) {
@@ -25,6 +41,13 @@ namespace {
 
 }  // namespace
 
+/**
+ * @brief 把 Event(event_id + param) 翻成中文战况文案。
+ * @param event 已反序列化的 protobuf 消息（只读）。
+ * @note 思路：按 1~16 逐个 switch；带参数的分支统一走 SplitByComma 或字符串比对，参数格式不符、取值未知、ID 未识别时一律把原始值拼进文案，保证赛场出现新协议扩展时能靠日志定位，
+ *        而不是静默丢信息。
+ * @return 可直接写进日志/事件流的 std::string。
+ */
 std::string FormatEventText(const Event &event) {
     std::string text;
     switch (event.event_id()) {
@@ -175,6 +198,12 @@ std::string FormatEventText(const Event &event) {
     return text;
 }
 
+/**
+ * @brief 按事件重要度决定是否把提示压入 State::event_toasts。
+ * @param state 会被写入 event_toasts；event_id —— 用于定级；text —— 已翻好的文案。
+ * @note 思路：level=-1 表示纯日志事件（能量机关等）直接返回；0 普通 / 1 重要 / 2 危急。入队前先 remove_if 掉超过 6 秒的旧项（与渲染端淡出时长一致），
+ *        追加后若超过 6 条则丢最旧，防止长时间运行队列无限增长。
+ */
 void PushEventToast(State &state, uint32_t event_id, const std::string &text) {
     int level = -1;  // -1 表示不提示（纯日志事件）
     switch (event_id) {

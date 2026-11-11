@@ -1,17 +1,13 @@
-// ============================================================================
-// 文件：src/io/video_stream_receiver.cpp
-// 层级：业务功能层 - 网络 IO
-// 职责：实现 VideoStreamReceiver 的构造、stop() 与接收主协程 receive_loop()。
-//       receive_loop() 在共用的 Boost.Asio io_context 上以 detached 协程持续接收图传 UDP 包，
-//       按 network_capture 格式记录原始负载后回调 on_receive_packet（交给 FFmpeg 解码 Worker）。
+// 实现 VideoStreamReceiver 的构造、stop() 与接收主协程 receive_loop()。
+// receive_loop() 在共用的 Boost.Asio io_context 上以 detached 协程持续接收图传 UDP 包，
+// 按 network_capture 格式记录原始负载后回调 on_receive_packet（交给 FFmpeg 解码 Worker）。
 // 异步模型：与 MQTT 共用同一 IO 线程；收包为 async_receive_from awaitable，停止时关闭 socket
-//       使挂起的异步等待立即出错返回，循环据此退出。
+// 使挂起的异步等待立即出错返回，循环据此退出。
 // 容错策略（2027 赛场要求"图传断了 UI 仍可用"）：
-//   1) 打开/绑定全程用 error_code，端口被占用也不抛异常、不影响客户端启动；
-//   2) 收包出错不退出协程，而是关闭 socket、退避 200ms 后重绑，网线抖动/图传发送端重启都能自愈；
-//   3) 从未绑定成功时每 500ms 重试一次，等占用端口的进程退出后自动接上。
+// 1) 打开/绑定全程用 error_code，端口被占用也不抛异常、不影响客户端启动；
+// 2) 收包出错不退出协程，而是关闭 socket、退避 200ms 后重绑，网线抖动/图传发送端重启都能自愈；
+// 3) 从未绑定成功时每 500ms 重试一次，等占用端口的进程退出后自动接上。
 // 依赖：Boost.Asio（UDP + 协程）、spdlog、RoboGo::logging（网络抓包）。
-// ============================================================================
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include <boost/asio.hpp>
 #include <readerwriterqueue.h>
@@ -30,9 +26,10 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         constexpr std::size_t kReceiveBufferBytes = 20 * 1024 * 1024;
     }
 
-    // 功能：构造视频流接收器并启动后台接收协程。
-    // 思路：先用 error_code 版本打开并绑定 UDP socket（失败只记日志，绝不抛异常），
-    //       再启动 detached 的 receive_loop 持续收包；绑定失败时由循环内部周期重试。
+    /**
+     * @brief 构造视频流接收器并启动后台接收协程。
+     * @note 思路：先用 error_code 版本打开并绑定 UDP socket（失败只记日志，绝不抛异常），再启动 detached 的 receive_loop 持续收包；绑定失败时由循环内部周期重试。
+     */
     VideoStreamReceiver::VideoStreamReceiver(boost::asio::io_context &io_context,  // 共用的 Asio 执行上下文，接收协程也跑在这里
                                              const boost::asio::ip::udp::endpoint &endpoint,  // 要绑定的本地地址(IP:端口)
                                              const std::function<void(const uint8_t *data, size_t size)> &on_receive_packet)  // 每个数据报的消费回调
@@ -49,8 +46,10 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         boost::asio::co_spawn(io_context, receive_loop(), boost::asio::detached);  // detached：协程自管理生命周期，不阻塞构造函数
     }
 
-    // 功能：以 error_code 方式打开并绑定 UDP socket（可重复调用）。
-    // 返回：true 表示已绑定成功，可以开始收包。
+    /**
+     * @brief 以 error_code 方式打开并绑定 UDP socket（可重复调用）。
+     * @return true 表示已绑定成功，可以开始收包。
+     */
     bool VideoStreamReceiver::OpenAndBind() {
         boost::system::error_code error_code;  // 复用错误码，避免异常
         if (socket.is_open()) {  // 复用前先关掉旧句柄（重绑路径）
@@ -62,6 +61,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             return false;  // 交给上层重试
         }
         // 调大接收缓冲区；失败不致命（系统上限可能更低），仅提示实际请求值
+        // set_option 是非同步阻塞的，不会阻塞当前协程;作用是设置 socket 的接收缓冲区大小
         socket.set_option(boost::asio::socket_base::receive_buffer_size(kReceiveBufferBytes), error_code);
         if (error_code) {  // 缓冲区设置失败不阻断收包
             SPDLOG_WARN("设置视频流接收缓冲区失败 message={} 请求值={}", error_code.message(), kReceiveBufferBytes);
@@ -82,8 +82,10 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         return true;  // 绑定成功
     }
 
-    // 功能：停止接收器。
-    // 思路：置 is_running=false 并通过关闭 socket 使正在进行的 async_receive_from 立即返回错误，从而退出循环。
+    /**
+     * @brief 停止接收器。
+     * @note 思路：置 is_running=false 并通过关闭 socket 使正在进行的 async_receive_from 立即返回错误，从而退出循环。
+     */
     void VideoStreamReceiver::stop() {  // 可从主线程调用：只做原子写 + 关闭文件描述符，不阻塞等待协程
         SPDLOG_INFO("收到视频流接收器停止请求");  // 记录停止动作，便于排查"画面突然静止"的原因
         is_running.store(false, std::memory_order_relaxed);  // relaxed 足够：此标志仅用于本协程的循环条件，不承担跨变量同步职责
@@ -94,9 +96,11 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         }
     }
 
-    // 功能：UDP 接收主协程：循环接收图传数据包并投递给解码管线；出错时自愈重绑。
-    // 思路：用固定 64KB 缓冲接收每个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；
-    //       收包异常时区分"主动停止"与"运行异常"，后者关闭 socket、退避后重绑并继续，不退出协程。
+    /**
+     * @brief UDP 接收主协程：循环接收图传数据包并投递给解码管线；出错时自愈重绑。
+     * @note 思路：用固定 64KB 缓冲接收每个 UDP 包，记录原始负载（rx）后回调 on_receive_packet；收包异常时区分"主动停止"与"运行异常"，后者关闭 socket、
+     *        退避后重绑并继续，不退出协程。
+     */
     boost::asio::awaitable<void> VideoStreamReceiver::receive_loop() {  // co_spawn 时进入，直到 stop() 才返回
         // UDP 单包最大 64KB（以太网 MTU 常见上限的保守值）
         // 注意：该缓冲在循环内复用，每次迭代覆盖写入；on_receive_packet 必须在本次回调内完成拷贝/解析，
@@ -113,15 +117,24 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
                     continue;  // 回到循环顶部再试
                 }
             }
-
-            // 关键：这里用 as_tuple 而不是 use_awaitable。
-            // 图传发送端重启、网线抖动、ICMP 端口不可达都可能让收包返回错误；
-            // use_awaitable 会抛 system_error，而本项目已确认"异常 + 协程栈展开"在 Windows 上会触发访问冲突
-            //（MQTT 层踩过同样的坑，见 mqtt_client.cpp 的说明）。改成错误码返回后，断流可以平滑走到重绑。
+            /*`async_receive_from` 本来就是回调风格函数。
+            它的回调签名是：
+            void callback(boost::system::error_code ec, std::size_t bytes_transferred);
+            asio 收到数据之后，调用你的回调，塞两个东西给你：
+            - `ec`：错误码
+            - `bytes_transferred`：实际收到多少字节
+             */
             auto [recv_ec, length] = co_await socket.async_receive_from(  // co_await 挂起当前协程，数据到达后由 IO 线程恢复
                     boost::asio::buffer(buffer),  // 接收缓冲区视图：把 vector 首地址+容量交给 Asio
                     sender_endpoint,  // 出参：Asio 回填发送方地址
-                    boost::asio::as_tuple(boost::asio::use_awaitable));  // 不抛异常，错误码作为返回值
+                    /*# 2. `as_tuple(use_awaitable)` 做的事情
+                    前面讲过：
+                    `use_awaitable`：把回调接口改成可以 `co_await` 的协程版本
+                    `as_tuple(...)`：把回调的**一堆参数打包成一个 std::tuple 返回，不抛异常**
+                    这个回调有两个参数：`ec`、`len`
+                    所以打包出来的 tuple 类型就是：
+                     */
+                    boost::asio::as_tuple(boost::asio::use_awaitable));   // 不抛异常，错误码作为返回值
 
             if (recv_ec) {  // 收包失败：对端关闭 / 端口不可达 / socket 被 stop() 关闭
                 if (!is_running.load(std::memory_order_relaxed)) {  // stop() 触发的关闭属预期
@@ -145,6 +158,15 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             RoboGo::logging::log_network_payload("udp-video",  // 通道名：标记这是 UDP 图传流量
                                                  "rx",  // 方向：rx 表示接收到的数据
                                                  "video-stream",  // 伪话题名：UDP 无 topic，用固定串占位
+                                                 /*`span` 就是一个轻量的视图，不拷贝数据，只记录：起始地址 + 长度。
+                                                - 拿你的 `buffer`（一般是 `std::vector<uint8_t>`）构造一个 span
+                                                - `const uint8_t`：代表这块内存只读，不能通过这个 span 去改里面的数据
+                                                > 它不是复制 buffer，只是 “指向这块内存”。
+
+                                                 2. `.first(length)`
+                                                `span.first(N)`：截取这个 span 的前面 N 个字节，返回一个新的 span 视图。
+                                                只取前 `length` 字节，同样不拷贝内存。
+                                                  */
                                                  std::span<const uint8_t>(buffer).first(length),  // 从整块缓冲区构造带边界的 span，再取本次实收的 length 字节
                                                  sender);  // 发送方地址，便于多路流溯源
             // 把数据指针与长度交给解码管线
@@ -155,3 +177,4 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
     }
 
 }  // namespace RoboGo::io
+

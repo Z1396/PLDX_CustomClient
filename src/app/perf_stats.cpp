@@ -22,8 +22,10 @@ std::atomic<bool> g_visible{false};         // 面板可见性
 std::atomic<int> g_video_width{0};          // 图传帧宽度
 std::atomic<int> g_video_height{0};         // 图传帧高度
 
-// 功能：把一个新采样值按滑动平均并入原子变量。
-// 说明：先用 relaxed 读旧值做平均，再存回；这是单写多读的统计量，允许极小概率的竞态。
+/**
+ * @brief 把一个新采样值按滑动平均并入原子变量。
+ * @note 说明：先用 relaxed 读旧值做平均，再存回；这是单写多读的统计量，允许极小概率的竞态。
+ */
 void Blend(std::atomic<double> &target, const double sample) {
     if (sample < 0.0) {  // 非法采样（时钟异常）
         return;  // 直接丢弃
@@ -52,11 +54,21 @@ void RecordUpload(const double milliseconds) { Blend(g_upload_ms, milliseconds);
 void RecordUi(const double milliseconds) { Blend(g_ui_ms, milliseconds); }
 void RecordFrame(const double milliseconds) { Blend(g_frame_ms, milliseconds); }
 
+/**
+ * @brief 更新性能统计原子量
+ * @note 所有指标存在原子量里，跨线程读写无需加锁；耗时类指标走指数滑动平均（kSmoothing=0.15）。
+ * @note 性能浮层由 F12 唤出，统计口径见 app/perf_stats.h 的 Metrics。
+ */
 void RecordVideoSize(const int width, const int height) {
     g_video_width.store(width, std::memory_order_relaxed);
     g_video_height.store(height, std::memory_order_relaxed);
 }
 
+/**
+ * @brief 更新性能统计原子量
+ * @note 所有指标存在原子量里，跨线程读写无需加锁；耗时类指标走指数滑动平均（kSmoothing=0.15）。
+ * @note 性能浮层由 F12 唤出，统计口径见 app/perf_stats.h 的 Metrics。
+ */
 void RecordQueues(const int udp_queue_depth) {
     g_udp_queue.store(udp_queue_depth, std::memory_order_relaxed);  // 队列深度只关心瞬时值，不做平滑
 
@@ -84,12 +96,22 @@ void RecordQueues(const int udp_queue_depth) {
 
 void AddDroppedFrame() { g_dropped.fetch_add(1, std::memory_order_relaxed); }  // 递增计数即可，读取端只看总量
 
+/**
+ * @brief 更新性能统计原子量
+ * @note 所有指标存在原子量里，跨线程读写无需加锁；耗时类指标走指数滑动平均（kSmoothing=0.15）。
+ * @note 性能浮层由 F12 唤出，统计口径见 app/perf_stats.h 的 Metrics。
+ */
 void ToggleVisible() {
     g_visible.store(!g_visible.load(std::memory_order_relaxed), std::memory_order_relaxed);  // 翻转显示状态
 }
 
 bool IsVisible() { return g_visible.load(std::memory_order_relaxed); }
 
+/**
+ * @brief 更新性能统计原子量
+ * @note 所有指标存在原子量里，跨线程读写无需加锁；耗时类指标走指数滑动平均（kSmoothing=0.15）。
+ * @note 性能浮层由 F12 唤出，统计口径见 app/perf_stats.h 的 Metrics。
+ */
 Metrics Snapshot() {
     Metrics metrics;  // 组装快照
     metrics.decode_ms = g_decode_ms.load(std::memory_order_relaxed);
@@ -122,3 +144,4 @@ ScopedTimer::~ScopedTimer() {
 }
 
 }  // namespace RoboGo::app::perf
+

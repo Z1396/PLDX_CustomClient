@@ -29,6 +29,13 @@ struct TopicEntry {
 // 22 个分支里 16 个是同一个模式；抽成模板后每个处理函数只剩 2 行，新增 topic 也不会再抄错。
 template<typename Message>
 bool ParseInto(std::string_view topic, const std::string &payload, Message &message) {
+    /*# `message.ParseFromString(payload)`
+    这是 **Google Protobuf（Protocol Buffers）** 的反序列化 API（C++ / Python 版本），RM 电控 / 视觉通信最常用腾讯云
+    > 作用：**把二进制字节流 payload 解析填充到这个 message 对象里**（二进制 → proto 对象）
+    ### 对应关系
+    - `SerializeToString()`：序列化，对象 → 二进制字节串（发出去）
+    - `ParseFromString(payload)`：反序列化，二进制字节串 → 填充对象（收到包解析）
+     */
     if (!message.ParseFromString(payload)) {
         SPDLOG_ERROR("MQTT消息解析失败 topic={} bytes={}", topic, payload.size());
         return false;
@@ -47,3 +54,4 @@ std::span<const TopicEntry> AllTopics();
 void DispatchMqttMessage(State &state, const std::string &topic, const std::string &payload);
 
 }  // namespace RoboGo::mqtt
+

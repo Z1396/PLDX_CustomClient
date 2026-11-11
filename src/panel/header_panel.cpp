@@ -1,10 +1,29 @@
 // header_panel.cpp：主 HUD 顶部区（状态条 + 双方队伍条）与判罚/事件浮层的实现。
 //
+// 每帧绘制四块互不重叠的内容：
+// 1) ShowHeaderPanel：居中状态胶囊（比分 / 倒计时 / 阶段 / 金币 / 自瞄·小陀螺）
+// + 左右各 300px 的队伍条（基地、前哨、2×2 单位块）；
+// 2) ShowPenaltyBanner：判罚横幅（按类型配色 + 本地倒计时）；
+// 3) ShowEventToasts：最近重要事件的堆叠提示（6 秒淡出、最多 6 条）；
+// 4) GetPenaltyTypeName：判罚类型码 → 中文，供日志/横幅复用。
+// 数据流：只读 State。状态胶囊取 GameStatus / GlobalLogisticsStatus；
+// 队伍条取 GlobalUnitStatus + RobotStaticStatus + State::red_robots/blue_robots；
+// 浮层取 State::penalty_info / event_toasts（都由 MQTT handler 写入）。
+// 设计要点：
+// · 全部 ImDrawList 自绘且窗口带 NoInputs，不与下方本车卡、日志面板抢交互；
+// · 只显示 1/3/4/7 四台有血量的单位，2027 协议里 2/6/8/9 无血量故不占位；
+// · 敌方栏做整体镜像（队头靠右、建筑标签靠右、数值靠左），保证两侧视觉对称；
+// · 己方/对方建筑血量按 WeAreRed 换算到红/蓝槽位，前哨站字段本身是绝对红蓝，不参与交换；
+// · 浮层用 steady_clock 算本地剩余时间，不受系统时间调整影响，也不依赖服务器持续推送。
+// 依赖：ImGui（imgui_internal.h 提供 GetScale）、messages.pb.h、ui/theme.h、
+// ui/hud_primitives.h、ui/format_utils.h、app/match_display.h、app/robot_registry.h、
+// app/team_util.h。
+// 注意：本文件不接收任何输入，所有按钮态都来自 State 里已解析好的字段。
 // 2027-11-06 按「主界面定稿」实装：
-//   · 顶部由横跨全屏的 9 条细血条，改为居中状态胶囊 + 左右各 300px 的队伍条；
-//   · 队伍条为「基地 / 前哨 + 2×2 大数值单位块」，只显示 1/3/4/7 四台有血量的单位；
-//   · 2 保留位、6 空中、8 飞镖、9 雷达在 2027 协议里没有血量，不再占位；
-//   · 兵种名、弹药行、角标等重复/无用文字全部去掉。
+// · 顶部由横跨全屏的 9 条细血条，改为居中状态胶囊 + 左右各 300px 的队伍条；
+// · 队伍条为「基地 / 前哨 + 2×2 大数值单位块」，只显示 1/3/4/7 四台有血量的单位；
+// · 2 保留位、6 空中、8 飞镖、9 雷达在 2027 协议里没有血量，不再占位；
+// · 兵种名、弹药行、角标等重复/无用文字全部去掉。
 // 全部使用 ImDrawList 直接绘制（不接收交互），由主窗口在每帧开头调用。
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include "imgui.h"
@@ -41,11 +60,19 @@ static_assert(kHudRobotIds.size() == kHudRobotLabels.size());
 constexpr uint32_t kOutpostMaxHealth = 1000;
 constexpr uint32_t kBaseMaxHealth = 10000;
 
+/**
+ * @brief 取主 HUD 统一色板（转发 hud_primitives.h 的 MakeColors）。
+ * @return Colors 值类型，供本文件所有 Draw* 共享，避免各处重复取色。
+ */
 Colors MakeHudColors() {
     return RoboGo::ui::hud::MakeColors();
 }
 
 // 比赛阶段文案：技术暂停优先；结算阶段带结果码时拼成「结算 · 红方胜利」。
+// 思路：优先级为「未连接 → 技术暂停中 → StageName(阶段)」；结算阶段(stage==5)且带
+//       game_result 时追加「· 红方胜利/蓝方胜利/平局」，未知结果码则只显示阶段名。
+// 参数：state —— 只读全局状态。
+// 返回值：可直接交给 AddText 的 std::string。
 std::string ResolveStageText(const State &state) {
     if (!state.game_status.has_value()) {
         return "未连接";
@@ -72,6 +99,10 @@ std::string ResolveStageText(const State &state) {
 
 // 顶部胶囊：红方比分 / 倒计时 + 阶段 / 蓝方比分 / 金币 / 自瞄与小陀螺。
 // 全部是裁判系统真实字段，没有装饰性假数据。
+// 思路：按 52/142/52/92/132 五段划分宽度，依次是红方比分、倒计时+阶段、蓝方比分、
+//       金币、自瞄/小陀螺两个状态 chip；段间用 1px 竖线分隔。所有数值缺数据时按 0，
+//       阶段 0 强制把倒计时归零，避免显示上一局残留时间。
+// 参数：viewport_size —— 主视口尺寸，用于水平居中；colors —— 统一色板。
 void DrawTopBar(const State &state, ImDrawList *draw_list, const ImVec2 &viewport_size,
                 const Colors &colors) {
     const float s = ImGui::GetScale();
@@ -160,6 +191,7 @@ void DrawTopBar(const State &state, ImDrawList *draw_list, const ImVec2 &viewpor
 // 前哨站 / 基地血量，已按我方阵营换算到红/蓝槽位。
 // base_health / enemy_base_* 是「己方 / 对方」相对语义，必须按阵营交换；
 // outpost_R_* / outpost_B_* 是绝对红/蓝前哨，不能交换。
+// 思路：把「相对语义」的协议字段在读取时一次性转成绝对红蓝，后续绘制不再判断阵营。
 struct BuildingHealth {
     uint32_t red_outpost = 0;
     uint32_t red_base = 0;
@@ -167,6 +199,13 @@ struct BuildingHealth {
     uint32_t blue_base = 0;
 };
 
+/**
+ * @brief 从 GlobalUnitStatus 读出四个建筑血量并按己方阵营归位。
+ * @param we_are_red 由 team_util::WeAreRed(state) 得到。
+ * @note 思路：base_health / enemy_base_health 是「己方/对方」相对语义，必须按 we_are_red 交换；outpost_r_health / outpost_b_health
+ *        是绝对红蓝前哨，直接取值即可。缺少 GlobalUnitStatus 或 RobotStaticStatus 时返回全 0（界面显示 0 而不崩）。
+ * @return BuildingHealth 值类型。
+ */
 BuildingHealth ReadBuildingHealth(const State &state, bool we_are_red) {
     BuildingHealth health;
     if (!state.global_unit_status.has_value() || !state.robot_static_status.has_value()) {
@@ -187,6 +226,10 @@ BuildingHealth ReadBuildingHealth(const State &state, bool we_are_red) {
 
 // 一侧队伍条：队头 + 基地/前哨两行 + 2×2 大数值单位块。
 // mirror=true 时整体镜像（右侧蓝方：队头靠右、建筑标签靠右、数值靠左）。
+// 思路：mirror=true 为右侧蓝方做整体镜像；单位块遍历 kHudRobotIds(1/3/4/7)，
+//       从 robots[id-1] 取血量。本车用红色描边+顶部亮线，阵亡弱化，低血(<40%)琥珀，
+//       底部细血条按 RatioOf 填充。存活计数同样用 health>0 判定。
+// 参数：left/top/width —— 该栏矩形；self_id/we_are_red —— 本车编号与己方阵营。
 void DrawTeamBlock(const State &state, const BuildingHealth &health, ImDrawList *draw_list,
                    const Colors &colors, float left, float top, float width,
                    bool red_side, bool mirror, int self_id, bool we_are_red) {
@@ -343,8 +386,13 @@ void DrawTeamBlock(const State &state, const BuildingHealth &health, ImDrawList 
 
 }  // namespace
 
-// 功能：绘制主 HUD 顶部区（状态胶囊 + 左右队伍条）。
-// 思路：整窗覆盖全视口但不接收输入，所有元素按定稿的绝对坐标自绘，避免与下方日志/本车卡抢布局。
+/**
+ * @brief 绘制主 HUD 顶部区（状态胶囊 + 左右队伍条）。
+ * @param state 只读全局状态。
+ * @note 思路：整窗覆盖全视口但不接收输入，所有元素按定稿的绝对坐标自绘，避免与下方日志/本车卡抢布局。
+ * @note 思路：开一个覆盖全视口且带 NoInputs 的透明窗口，全部用 ImDrawList 按绝对坐标自绘，不与下方日志面板/本车卡抢布局与交互；队伍条与胶囊同为 top=18*s，
+ *        视觉上连成一条带。
+ */
 void ShowHeaderPanel(const State &state) {
     const ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration
                                           | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove
@@ -381,7 +429,11 @@ void ShowHeaderPanel(const State &state) {
     ImGui::End();
 }
 
-// 功能：把判罚类型码翻译成中文（2027 协议 2.2.15 PenaltyInfo.penalty_type）。
+/**
+ * @brief 把判罚类型码翻译成中文（2027 协议 2.2.15 PenaltyInfo.penalty_type）。
+ * @note 思路：1~6 为已知类型，其余返回 nullptr 让调用方拼「未知判罚(N)」，不在这里吞掉新类型，便于赛场发现协议扩展。
+ * @return 静态字符串或 nullptr。
+ */
 const char *GetPenaltyTypeName(uint32_t penalty_type) {
     switch (penalty_type) {
         case 1: return "黄牌";
@@ -394,7 +446,12 @@ const char *GetPenaltyTypeName(uint32_t penalty_type) {
     }
 }
 
-// 功能：绘制判罚横幅——顶部居中的一条无交互提示，显示判罚类型与本地倒计时。
+/**
+ * @brief 绘制判罚横幅——顶部居中的一条无交互提示，显示判罚类型与本地倒计时。
+ * @note 思路：剩余秒数 = effect_sec - (now - penalty_received_time)，用 steady_clock 计算，不依赖服务器持续推送；<=0 或
+ *        effect_sec==0 时直接不画。类型 3(红牌) 用红底白字，1/2(黄牌) 用黄底黑字，其余橙底白字。文案由 ImFormatStringToTempBuffer 生成，
+ *        避免每帧分配 std::string。
+ */
 void ShowPenaltyBanner(const State &state) {
     if (!state.penalty_info.has_value()) {
         return;
@@ -464,7 +521,11 @@ void ShowPenaltyBanner(const State &state) {
     ImGui::End();
 }
 
-// 功能：绘制顶部事件提示层——把最近的重要 Event 以短暂浮层的形式堆叠显示。
+/**
+ * @brief 绘制顶部事件提示层——把最近的重要 Event 以短暂浮层的形式堆叠显示。
+ * @note 思路：倒序遍历 event_toasts，跳过超过 6 秒的旧项；3.5 秒后按剩余时间线性淡出；最多显示 6 条，按 level 取背景色并把 alpha 同时应用到背景与文字。
+ *        窗口高度按可见条数预分配，但内层仍按实际 slot 绘制，避免过期项留下空洞。
+ */
 void ShowEventToasts(const State &state) {
     if (state.event_toasts.empty()) {
         return;

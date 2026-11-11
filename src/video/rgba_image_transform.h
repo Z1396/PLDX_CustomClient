@@ -15,9 +15,11 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外声明，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video { // 进入视频模块命名空间
 
-// 功能：对 RGBA 像素缓冲做 180° 旋转（首尾对称交换像素），enabled 为 false 时原样返回。
-// 参数：rgba 为宽高连续的 RGBA 数据（会被原地修改）；width/height 为图像尺寸；enabled 控制是否实际旋转。
-// 返回：成功 true，参数非法或尺寸溢出返回 false。
+/**
+ * @brief 对 RGBA 像素缓冲做 180° 旋转（首尾对称交换像素），enabled 为 false 时原样返回。
+ * @note 参数：rgba 为宽高连续的 RGBA 数据（会被原地修改）；width/height 为图像尺寸；enabled 控制是否实际旋转。
+ * @return 成功 true，参数非法或尺寸溢出返回 false。
+ */
 bool ApplyRgba180Rotation(std::vector<uint8_t> &rgba, // 待原地翻转的 RGBA 像素缓冲（长度须为 width*height*4）
                           int width,                   // 图像宽度（像素），为负时视为非法
                           int height,                  // 图像高度（像素），为负时视为非法

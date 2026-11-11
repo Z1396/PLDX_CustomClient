@@ -8,7 +8,14 @@
 
 namespace RoboGo::mqtt {
 
-// 2.2.8 机器人受伤统计（1Hz）：各类扣血明细与击杀者。
+/**
+ * @brief 2.2.8 机器人受伤统计（1Hz）：各类扣血明细与击杀者。；解析成功后写入 State::robot_injury_stat 快照
+ * @param state 全局状态，写入 robot_injury_stat。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotInjuryStat(State &state, std::string_view topic, const std::string &payload) {
     RobotInjuryStat message;
     if (ParseInto(topic, payload, message)) {
@@ -16,7 +23,14 @@ void HandleRobotInjuryStat(State &state, std::string_view topic, const std::stri
     }
 }
 
-// 2.2.9 复活状态（1Hz）：是否待复活、读条进度、金币复活条件。
+/**
+ * @brief 2.2.9 复活状态（1Hz）：是否待复活、读条进度、金币复活条件。；解析成功后写入 State::robot_respawn_status 快照
+ * @param state 全局状态，写入 robot_respawn_status。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotRespawnStatus(State &state, std::string_view topic, const std::string &payload) {
     RobotRespawnStatus message;
     if (ParseInto(topic, payload, message)) {
@@ -24,24 +38,47 @@ void HandleRobotRespawnStatus(State &state, std::string_view topic, const std::s
     }
 }
 
-// 2.2.10 机器人静态属性（1Hz）：robot_id / 兵种 / 等级 / 最大血量热量等。
-// robot_id 决定本机红蓝阵营，是判断敌我的依据。
+/**
+ * @brief 2.2.10 机器人静态属性（1Hz）：robot_id / 兵种 / 等级 / 最大血量热量等。 robot_id 决定本机红蓝阵营，是判断敌我的依据。；解析成功后写入 State::robot_static_status
+ *        快照
+ * @param state 全局状态，写入 robot_static_status。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotStaticStatus(State &state, std::string_view topic, const std::string &payload) {
     RobotStaticStatus message;
     if (ParseInto(topic, payload, message)) {
+        // robot_id 决定本机红蓝阵营，是判断敌我与敌方血量映射的前提。
         state.robot_static_status = std::move(message);
     }
 }
 
-// 2.2.11 机器人实时数据（10Hz）：血量 / 热量 / 缓冲能量 / 弹量等，是 HUD 实时数值的直接来源。
+/**
+ * @brief 2.2.11 机器人实时数据（10Hz）：血量 / 热量 / 缓冲能量 / 弹量等，是 HUD 实时数值的直接来源。；解析成功后写入 State::robot_dynamic_status 快照
+ * @param state 全局状态，写入 robot_dynamic_status。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotDynamicStatus(State &state, std::string_view topic, const std::string &payload) {
     RobotDynamicStatus message;
     if (ParseInto(topic, payload, message)) {
+        // 10Hz 推送，是准星热量环、本车卡血量/弹量的直接数据源。
         state.robot_dynamic_status = std::move(message);
     }
 }
 
-// 2.2.12 模块运行状态（1Hz）：11 个模块的在线状态。
+/**
+ * @brief 2.2.12 模块运行状态（1Hz）：11 个模块的在线状态。；解析成功后写入 State::robot_module_status 快照
+ * @param state 全局状态，写入 robot_module_status。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotModuleStatus(State &state, std::string_view topic, const std::string &payload) {
     RobotModuleStatus message;
     if (ParseInto(topic, payload, message)) {
@@ -49,16 +86,32 @@ void HandleRobotModuleStatus(State &state, std::string_view topic, const std::st
     }
 }
 
-// 2.2.13 机器人坐标与朝向（1Hz）：世界坐标 X/Y/Z 与 yaw 角。
+/**
+ * @brief 2.2.13 机器人坐标与朝向（1Hz）：世界坐标 X/Y/Z 与 yaw 角。 坐标系口径未在协议里写清（与雷达站是否同一原点、单位是否 dm），真机必须实测后才能用于打点换算。；解析成功后写入
+ *        State::robot_position 快照
+ * @param state 全局状态，写入 robot_position。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotPosition(State &state, std::string_view topic, const std::string &payload) {
     // TODO 文档没有把坐标系说清楚，需要实际测试。猜测也许与雷达站是一样的？
     RobotPosition message;
     if (ParseInto(topic, payload, message)) {
+        // 解析成功才覆盖快照；失败时 ParseInto 已打 ERROR，State 保留上一次值。
         state.robot_position = std::move(message);
     }
 }
 
-// 2.2.16 哨兵轨迹规划（触发式）：意图 + 49 点相对位移。
+/**
+ * @brief 2.2.16 哨兵轨迹规划（触发式）：意图 + 49 点相对位移。；解析成功后写入 State::robot_path_plan_info 快照
+ * @param state 全局状态，写入 robot_path_plan_info。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志。
+ * @param payload protobuf 序列化的原始字节串。
+ * @note 由主线程经 DispatchMqttMessage 查表回调；IO 协程只负责入队，解析与写 State 都在主线程，State 无需加锁。
+ * @note ParseInto 失败时直接返回并保留上一次快照，界面不会闪回初始值。
+ */
 void HandleRobotPathPlanInfo(State &state, std::string_view topic, const std::string &payload) {
     RobotPathPlanInfo message;
     if (ParseInto(topic, payload, message)) {
@@ -67,3 +120,6 @@ void HandleRobotPathPlanInfo(State &state, std::string_view topic, const std::st
 }
 
 }  // namespace RoboGo::mqtt
+
+
+

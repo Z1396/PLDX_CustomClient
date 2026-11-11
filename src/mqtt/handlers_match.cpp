@@ -13,6 +13,14 @@
 namespace RoboGo::mqtt {
 
 // 2.2.3 比赛全局状态（1Hz）：局号、比分、阶段、阶段剩余秒数、胜负。
+/**
+ * @brief 解析并覆盖比赛全局状态快照，供顶部胶囊与阶段提示读取。
+ * @param state 全局状态，写入 game_status。
+ * @param topic 话题名，仅用于 ParseInto 的解析日志；值恒为 "GameStatus"。
+ * @param payload protobuf 序列化的 GameStatus 原始字节。
+ * @note 由分发表 DispatchMqttMessage 在主线程回调，1Hz 到达；解析失败保留上一次快照，界面不闪回初始值。
+ * @note 2027 移除空中支援后，原「进入比赛阶段重置反制次数」的上升沿逻辑已一并删除。
+ */
 void HandleGameStatus(State &state, std::string_view topic, const std::string &payload) {
     GameStatus game_status;
     if (!ParseInto(topic, payload, game_status)) {
@@ -29,6 +37,7 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     if (!ParseInto(topic, payload, global_unit_status)) {
         return;
     }
+    // 不能 move：后面还要从这份消息里读 robot_health() / robot_bullets() 派生双方面板数据。
     state.global_unit_status = global_unit_status;
 
     // 同一份数据驱动左右双方血量/弹量面板，也是 CustomControl 敌方血量透传的数据源。
@@ -46,6 +55,8 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     // 【2027 规范】robot_health 顺序：己方 1,3,4,7 + 对方 1,3,4,7（每方 4 台，已去掉 2 号工程）。
     // 本地数组槽位：0=重装(1) 1=保留(2) 2=步兵(3) 3=步兵(4) 4=废弃步兵(5) 5=空中(6) 6=哨兵(7) 7=飞镖(8) 8=雷达(9)。
     // 旧协议（每方 5 台，顺序 1,2,3,4,7）对应槽位 0,1,2,3,6，这里自适应兼容两种长度。
+            // 2027 每方 4 台（1/3/4/7），旧协议每方 5 台（含 2 号工程）；
+    // 用 kRobotTypeToSlot 把「兵种编号」翻到本地数组槽位，两种长度都能兼容。
     const int client_indices_2027[] = {
             RoboGo::app::robot_registry::kRobotTypeToSlot[1],
             RoboGo::app::robot_registry::kRobotTypeToSlot[3],
@@ -56,6 +67,7 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     const int health_count = std::min<int>(half_robot_health_size, half_robot_health_size == 4 ? 4 : 5);
     const int enemy_offset = half_robot_health_size;
 
+    // 协议约定：数组前半段己方、后半段对方；同一份数据同时驱动左右两侧血量块。
     for (int i = 0; i < health_count; i++) {
         // 协议约定：前半段为己方，后半段为对方。
         const int self_index = i;
@@ -70,6 +82,7 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
         }
     }
 
+    // 处理弹量
     const auto &robot_bullets = global_unit_status.robot_bullets();
     const auto robot_bullets_size = robot_bullets.size();
     const auto half_robot_bullets_size = robot_bullets_size / 2;
@@ -111,6 +124,15 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
 }
 
 // 2.2.5 全局后勤信息（1Hz）：剩余经济、累计经济、科技等级、加密等级。
+/**
+ * @brief 解析并覆盖全局后勤快照，供开局面板显示经济、科技与加密等级。
+ * @param state 全局状态，写入 global_logistics_status。
+ * @param topic 话题名，仅用于解析日志；值恒为 "GlobalLogisticsStatus"。
+ * @param payload protobuf 序列化的 GlobalLogisticsStatus 原始字节。
+ * @note 该消息只有经济/科技/加密三类字段，**不含「是否在补给区」**；兑换允许发弹量按钮的
+ *       唯一解锁依据是 Buff type=6，不能从这里推断。
+ * @note 1Hz 推送；ParseInto 失败直接返回并保留旧值，避免按钮状态抖动。
+ */
 void HandleGlobalLogisticsStatus(State &state, std::string_view topic, const std::string &payload) {
     GlobalLogisticsStatus global_logistics_status;
     if (ParseInto(topic, payload, global_logistics_status)) {
@@ -133,9 +155,12 @@ void HandleEvent(State &state, std::string_view topic, const std::string &payloa
     if (!ParseInto(topic, payload, event)) {
         return;
     }
+    //FormatEventText表示格式化事件文本，用于系统日志和顶部提示
     const std::string text = FormatEventText(event);
     AppendSystemLog(state, 0, text);                       // 事件日志统一 INFO 级
     PushEventToast(state, event.event_id(), text);          // 按事件号决定是否弹提示
 }
 
 }  // namespace RoboGo::mqtt
+
+

@@ -80,14 +80,18 @@ ScopedTitledPanel::ScopedTitledPanel(const char *panel_id, float panel_width, co
     DrawPanelTitle(title, color);                                   // 再绘制彩色标题
 }   // 结束 ScopedTitledPanel 构造（先开子窗口再画标题）
 
-// 功能：构造仅修改文字颜色的 ScopedStyle。
+/**
+ * @brief 构造仅修改文字颜色的 ScopedStyle。
+ */
 ScopedStyle MakeTextColorStyle(const ImVec4 &color) {
     ScopedStyle style;                                              // 默认构造空样式栈
     style.PushColor(ImGuiCol_Text, color);                          // 仅压入文字颜色
     return style;                                                   // 返回（析构时自动弹栈）
 }
 
-// 功能：构造输入框样式（统一主题：surface2 + 8px 圆角）。
+/**
+ * @brief 构造输入框样式（统一主题：surface2 + 8px 圆角）。
+ */
 ScopedStyle MakeInputStyle() {
     ScopedStyle style;                                              // 默认构造空样式栈
     namespace ui = RoboGo::ui;
@@ -99,12 +103,11 @@ ScopedStyle MakeInputStyle() {
     return style;                                                   // 返回（析构时自动弹栈）
 }
 
-// 功能：按 ButtonStyle 的层级构造按钮样式。
-// 【2027 UI 改版】颜色不再由每个调用点各自定义，收敛成四类：
-//   Secondary(默认) 幽灵按钮：半透明中性面 + 0.5px 低对比描边 + 主文字色；
-//   Selected        选中态：沿用传入色相但降饱和压暗，保留红/蓝队伍语义；
-//   Primary         一屏唯一的实心主操作（低饱和青绿）；
-//   Danger          退出登录等破坏性操作（低饱和红）。
+/**
+ * @brief 按 ButtonStyle 的层级构造按钮样式。【2027 UI 改版】颜色不再由每个调用点各自定义，收敛成四类：Secondary(默认) 幽灵按钮：半透明中性面 + 0.5px
+ *        低对比描边 + 主文字色；Selected        选中态：沿用传入色相但降饱和压暗，保留红/蓝队伍语义；Primary         一屏唯一的实心主操作（低饱和青绿）
+ *        ；Danger          退出登录等破坏性操作（低饱和红）。
+ */
 ScopedStyle MakeButtonStyle(const ButtonStyle &button_style) {
     ScopedStyle style;                                              // 默认构造空样式栈
     namespace ui = RoboGo::ui;
@@ -151,7 +154,9 @@ ScopedStyle MakeButtonStyle(const ButtonStyle &button_style) {
     return style;                                                   // 返回（析构时自动弹栈）
 }
 
-// 功能：构造鼠标灵敏度滑块样式（统一主题的低饱和警示色 + 8px 圆角）。
+/**
+ * @brief 构造鼠标灵敏度滑块样式（统一主题的低饱和警示色 + 8px 圆角）。
+ */
 ScopedStyle MakeMouseSensitivitySliderStyle() {
     ScopedStyle style;                                              // 默认构造空样式栈
     namespace ui = RoboGo::ui;
@@ -162,7 +167,9 @@ ScopedStyle MakeMouseSensitivitySliderStyle() {
     return style;                                                   // 返回（析构时自动弹栈）
 }
 
-// 功能：构造窗口样式（背景色 + 圆角 + 内边距）。
+/**
+ * @brief 构造窗口样式（背景色 + 圆角 + 内边距）。
+ */
 ScopedStyle MakeWindowStyle(const ImVec4 &background_color, float rounding, const ImVec2 &padding) {
     ScopedStyle style;                                              // 默认构造空样式栈
     style.PushColor(ImGuiCol_WindowBg, background_color);            // 窗口背景色
@@ -171,9 +178,9 @@ ScopedStyle MakeWindowStyle(const ImVec4 &background_color, float rounding, cons
     return style;                                                   // 返回（析构时自动弹栈）
 }
 
-// 功能：绘制一段面板标题（柔和文字 + 低对比分隔线 + 间距）。
-// 2027 UI 改版：调用点仍传红/绿/黄/橙等分区色，这里统一降饱和提亮，
-// 避免同一屏出现五六种高饱和彩色标题打架。
+/**
+ * @brief 绘制一段面板标题（柔和文字 + 低对比分隔线 + 间距）。2027 UI 改版：调用点仍传红/绿/黄/橙等分区色，这里统一降饱和提亮，避免同一屏出现五六种高饱和彩色标题打架。
+ */
 void DrawPanelTitle(const char *title, const ImVec4 &color) {
     const ImVec4 soft = ImVec4(0.45f * color.x + 0.34f, 0.45f * color.y + 0.34f,
                                0.45f * color.z + 0.34f, 1.0f);
@@ -183,13 +190,17 @@ void DrawPanelTitle(const char *title, const ImVec4 &color) {
     ImGui::Spacing();                                               // 间距
 }
 
-// 功能：计算一行中每个子面板的宽度（按可见数量均分内容宽度，并为间隔预留 5px）。
+/**
+ * @brief 计算一行中每个子面板的宽度（按可见数量均分内容宽度，并为间隔预留 5px）。
+ */
 float GetPanelWidth(int panel_count) {
     // 均分内容宽度：每项宽度 = 总宽/数量 + (数量-1)*5，5px 为面板间预留间隔。
     return panel_count > 0 ? ImGui::GetContentRegionAvail().x / static_cast<float>(panel_count) + static_cast<float>(panel_count - 1) * 5.0f : 0.0f;
 }
 
-// 功能：在排布下一个面板时，非首个则切换到同一行（SameLine），首个则仅标记已放置。
+/**
+ * @brief 在排布下一个面板时，非首个则切换到同一行（SameLine），首个则仅标记已放置。
+ */
 void PlaceNextPanel(bool &is_first) {
     if (is_first) {                                                 // 首个面板：仅标记已放置
         is_first = false;   // 标记本行已放置首个面板
@@ -198,18 +209,24 @@ void PlaceNextPanel(bool &is_first) {
     }
 }
 
-// 功能：估算一行内容的像素高度（frame_row_count 个标准行高 + 一条分隔线），用于固定高子窗口，避免内容被裁切或空出过多。
+/**
+ * @brief 估算一行内容的像素高度（frame_row_count 个标准行高 + 一条分隔线），用于固定高子窗口，避免内容被裁切或空出过多。
+ */
 float EstimateRowHeight(float frame_row_count) {
     return ImGui::GetFrameHeightWithSpacing() * frame_row_count + ImGui::GetStyle().SeparatorSize;  // 行数乘「行高+行间距」再加分隔线高度
 }
 
-// 功能：取当前主题下单行「行高+行间距」的像素高度（ImGui 标准控件行高，随字号/缩放变化）。
+/**
+ * @brief 取当前主题下单行「行高+行间距」的像素高度（ImGui 标准控件行高，随字号/缩放变化）。
+ */
 float EstimateLineHeight() {
     return ImGui::GetFrameHeightWithSpacing();  // 单行标准高度
 }
 
-// 功能：把若干子面板横向排成一行（均分宽度，隐藏不可见项）。
-// 思路：先统计可见数量；为 0 则整行不渲染；否则开一个行高固定的子窗口，按宽度逐个 PlaceNextPanel 后调用其渲染回调。
+/**
+ * @brief 把若干子面板横向排成一行（均分宽度，隐藏不可见项）。
+ * @note 思路：先统计可见数量；为 0 则整行不渲染；否则开一个行高固定的子窗口，按宽度逐个 PlaceNextPanel 后调用其渲染回调。
+ */
 void ShowPanelRow(const char *name, float frame_row_count, std::initializer_list<PanelRowItem> panels) {
     int panel_count = 0;                                            // 可见面板计数
     for (const auto &panel : panels) {                              // 遍历所有候选面板

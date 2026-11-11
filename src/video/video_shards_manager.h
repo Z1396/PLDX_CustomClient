@@ -44,30 +44,46 @@ namespace RoboGo::video {
         std::function<void(const std::vector<uint8_t> &frame)> frame_callback; // 完整帧就绪时回调
 
     public: // 公开区：析构、回调注册、UDP 线程入队接口与解码线程单次处理接口
-        // 功能：析构时清理帧序列状态并排空残留队列，释放所有分片内存。
+        /**
+         * @brief 析构时清理帧序列状态并排空残留队列，释放所有分片内存。
+         */
         ~VideoShardsManager();
 
-        // 功能：注册完整帧就绪后的回调（在构造后、解码线程启动前设置）。
+        /**
+         * @brief 注册完整帧就绪后的回调（在构造后、解码线程启动前设置）。
+         */
         void set_frame_callback(const std::function<void(const std::vector<uint8_t> &frame)> &frame_callback);
 
-        // 功能：UDP 接收线程调用，把原始分片数据拷贝后入队，交由解码线程处理。
+        /**
+         * @brief UDP 接收线程调用，把原始分片数据拷贝后入队，交由解码线程处理。
+         */
         void on_receive_shard(const uint8_t *data, size_t size);
 
-        // 功能：解码线程循环调用，阻塞取一包并解析、重组、必要时回调完整帧。
-        // 返回：true 表示可继续；false 表示收到 wake() 的唤醒哨兵，调用方应退出循环。
+        /**
+         * @brief 解码线程循环调用，阻塞取一包并解析、重组、必要时回调完整帧。
+         * @return true 表示可继续；false 表示收到 wake() 的唤醒哨兵，调用方应退出循环。
+         */
         bool handle_once();
 
-        // 功能：唤醒阻塞在取包上的处理线程（投递哨兵包），用于停止时快速退出。
+        /**
+         * @brief 唤醒阻塞在取包上的处理线程（投递哨兵包），用于停止时快速退出。
+         */
         void wake();
 
     private: // 私有工具区：流状态重置、队列排空与单槽位分片释放，仅供内部实现复用
-        // 功能：重置整个流的帧序列状态、缓存窗口与完整帧缓冲。
+        /**
+         * @brief 重置整个流的帧序列状态、缓存窗口与完整帧缓冲。
+         */
         void reset_stream_state();
 
-        // 功能：排空数据包队列并释放其中所有分片的内存。
+        /**
+         * @brief 排空数据包队列并释放其中所有分片的内存。
+         */
         void drain_packet_queue();
 
-        // 功能：释放单个帧槽位内所有分片内存并清零元数据，使其可复用。
+        /**
+         * @brief 释放单个帧槽位内所有分片内存并清零元数据，使其可复用。
+         */
         static void reset_frame_shards(FrameShards &frame_shards);
     }; // 结束 class VideoShardsManager：对外只暴露收包与单次处理，重组细节全部内部封装
 

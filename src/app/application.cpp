@@ -13,6 +13,10 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 // [/pch-split]
 #include "application.h"  // 本编译单元的主头文件(声明 ParseLaunchOptions / RunApplication)
 
+#include <expected>  // std::expected / std::unexpected（C++23）
+#include "app/number_parser.h"  // 无异常整数解析（from_chars + std::expected）
+#include "resource/resources.h"  // 内嵌图片解码结果与错误原因
+
 #include "config.h"  // 应用级配置：MQTT 服务端地址的持久化读写
 #include "custom_control_publisher.h"  // CustomControl 周期下发（敌方血量透传给电控）
 #include "keyboard_mouse_state_manager.h"  // 键鼠状态采集与管理(供 update_keyboard_mouse_state 使用)
@@ -34,7 +38,9 @@ using RoboGo::app::VideoFrame;      // 视频帧结构体，包含视频数据�
 
 constexpr bool kDefaultInvertUdpVideo = false; // UDP 视频是否默认做 180 度旋转
 
-// 功能：去掉字符串首尾的 ASCII 空白（命令行/配置文件输入都可能带空格）。
+/**
+ * @brief 去掉字符串首尾的 ASCII 空白（命令行/配置文件输入都可能带空格）。
+ */
 std::string TrimAscii(std::string_view text) {
     const auto is_space = [](char character) {  // 只认空格/制表/回车/换行，避免 locale 依赖
         return character == ' ' || character == '\t' || character == '\r' || character == '\n';
@@ -50,9 +56,11 @@ std::string TrimAscii(std::string_view text) {
     return std::string(text.substr(begin, end - begin));  // 返回裁剪后的副本
 }
 
-// 功能：返回默认的 MQTT 服务器地址。
-// 思路：优先用上次成功登录后保存到用户配置里的地址；没有配置时用 2027 赛季的裁判系统地址。
-//       联调本地 mock 时，在登录面板把地址改成 127.0.0.1:3333 即可，登录成功后会覆盖配置。
+/**
+ * @brief 返回默认的 MQTT 服务器地址。
+ * @note 思路：优先用上次成功登录后保存到用户配置里的地址；没有配置时用 2027 赛季的裁判系统地址。联调本地 mock 时，在登录面板把地址改成 127.0.0.1:3333 即可，
+ *        登录成功后会覆盖配置。
+ */
 std::string DefaultMqttServer() {  // 返回 std::string 而非 string_view：调用方要存进 LaunchOptions 持有
     const std::string configured = RoboGo::app::LoadConfiguredMqttServer();  // 读取持久化配置（可能为空）
     if (!configured.empty()) {  // 有历史配置
@@ -63,10 +71,12 @@ std::string DefaultMqttServer() {  // 返回 std::string 而非 string_view：�
     return "tcp://192.168.12.1:3333";  // 2027 赛季裁判系统固定地址（自定义终端 IP 为 192.168.12.2）
 }
 
-// 功能：从原始 MQTT 服务器字符串与视频端口字符串中解析出可用的网络端点。
-// 思路：兼容 "tcp://host:port" / "host:port" / "host"（端口缺省 3333）三种写法；
-//       原先只认带 tcp:// 的形式，写成 "192.168.12.1:3333" 会静默回落到 127.0.0.1，现场极难排查。
-// 参数 options：启动选项(读入 mqtt_server/video_port，写出 mqtt_host/mqtt_port/parsed_video_port)。
+/**
+ * @brief 从原始 MQTT 服务器字符串与视频端口字符串中解析出可用的网络端点。
+ * @note 思路：兼容 "tcp://host:port" / "host:port" / "host"（端口缺省 3333）三种写法；原先只认带 tcp:// 的形式，写成 "192.168.12.1:3333"
+ *        会静默回落到 127.0.0.1，现场极难排查。参数 options：启动选项(读入 mqtt_server/video_port，写出 mqtt_host/mqtt_port/parsed_video_port)
+ *        。
+ */
 void ParseNetworkEndpoints(LaunchOptions &options) {
     options.mqtt_host = "192.168.12.1";  // 主机默认值（2027 裁判系统）
     options.mqtt_port = "3333";  // 端口默认值
@@ -92,29 +102,50 @@ void ParseNetworkEndpoints(LaunchOptions &options) {
         }
     }
 
-    // 视频端口：非法输入不再让程序抛异常退出，回落默认 3334。
-    try {  // std::stoi 在非法输入时会抛 invalid_argument/out_of_range
-        options.parsed_video_port = std::stoi(options.video_port);  // 视频端口字符串转整数
-    } catch (const std::exception &) {  // 非数字/溢出
-        options.parsed_video_port = 3334;  // 使用协议默认端口（解析结果稍后由启动日志打印）
+    // 视频端口：from_chars 不抛异常；非法、溢出、越界一律回落默认 3334。
+    const auto parsed_port = RoboGo::app::ParseInteger<int>(options.video_port);
+    options.parsed_video_port =
+            (parsed_port.has_value() && *parsed_port > 0 && *parsed_port <= 65535)
+                    ? *parsed_port
+                    : 3334;  // 使用协议默认端口（解析结果稍后由启动日志打印）
+}
+
+// 视频帧转换失败的具体原因：调用方据此区分「上游空帧」「格式不支持」与「真正的转换故障」。
+enum class VideoConvertError {
+    NullFrame,
+    UnsupportedPixelFormat,
+    SwsContextFailed,
+    IncompleteConversion,
+    RotationFailed,
+};
+
+[[nodiscard]] const char *ToString(const VideoConvertError error) noexcept {
+    switch (error) {
+        case VideoConvertError::NullFrame:              return "null frame";
+        case VideoConvertError::UnsupportedPixelFormat: return "unsupported pixel format";
+        case VideoConvertError::SwsContextFailed:       return "sws context creation failed";
+        case VideoConvertError::IncompleteConversion:   return "incomplete conversion";
+        case VideoConvertError::RotationFailed:         return "rotation failed";
     }
-    if (options.parsed_video_port <= 0 || options.parsed_video_port > 65535) {  // 端口越界
-        options.parsed_video_port = 3334;  // 使用协议默认端口
-    }
+    return "unknown";
 }
 
 // AvFrameRgbaConverter —— 将 FFmpeg 解码得到的 AVFrame(YUV) 转换为 RGBA 像素缓冲，
 // 并按需做 180 度旋转；内部复用 sws 缩放/色彩转换上下文以避免每帧重建。
 class AvFrameRgbaConverter {  // 只在 IO 线程的帧回调里使用，故内部不加锁(单个原子开关除外)
 public:  // 对外只暴露"转换"与"翻转开关"
-    // 功能：构造转换器并设定初始是否做 180 度旋转。
-    // 思路：保存翻转开关，sws 上下文延迟到首次 convert 时按帧尺寸惰性创建并复用。
-    // 参数 invert_udp_video(原子bool)：是否对 UDP 视频做 180 度旋转。
+    /**
+     * @brief 构造转换器并设定初始是否做 180 度旋转。
+     * @note 思路：保存翻转开关，sws 上下文延迟到首次 convert 时按帧尺寸惰性创建并复用。参数 invert_udp_video(原子bool)：是否对 UDP 视频做 180
+     *        度旋转。
+     */
     explicit AvFrameRgbaConverter(const bool invert_udp_video)  // explicit：避免 bool 被隐式转换为转换器
         : invert_udp_video_(invert_udp_video) {  // 直接初始化原子成员(原子的拷贝构造被删除，只能用初始化列表)
     }  // 构造函数结束(空函数体：sws 上下文留待首次 convert 创建)
 
-    // 功能：析构时释放 sws 上下文，防止内存泄漏。
+    /**
+     * @brief 析构时释放 sws 上下文，防止内存泄漏。
+     */
     ~AvFrameRgbaConverter() {  // 与 sws_getCachedContext 配对释放
         // SwsContext sws_context_：FFmpeg libswscale 库的核心上下文结构体，
         // 本质上是不透明句柄，封装了图像缩放、像素格式转换与色彩空间转换所需的全部参数和状态。
@@ -125,9 +156,10 @@ public:  // 对外只暴露"转换"与"翻转开关"
         }
     }
 
-    // 功能：从池中取一个可写的帧缓冲（尺寸不符才重新分配，同尺寸直接复用，不清零）。
-    // 为什么要池：原来每帧都构造新的 VideoFrame，`resize(宽*高*4)` 会把 8.29MB 全部填 0，
-    // 而紧接着 sws_scale 又整帧覆盖它——实测这次清零要 0.71ms/帧（本机 1920x1080）。
+    /**
+     * @brief 从池中取一个可写的帧缓冲（尺寸不符才重新分配，同尺寸直接复用，不清零）。为什么要池：原来每帧都构造新的 VideoFrame，`resize(宽*高*4)` 会把 8.29MB
+     *        全部填 0，而紧接着 sws_scale 又整帧覆盖它——实测这次清零要 0.71ms/帧（本机 1920x1080）。
+     */
     [[nodiscard]] VideoFrame AcquireFrame(const int width, const int height) {
         std::vector<uint8_t> buffer;  // 待复用的像素缓冲
         {
@@ -149,8 +181,10 @@ public:  // 对外只暴露"转换"与"翻转开关"
         return video_frame;  // 交给调用方写入
     }
 
-    // 功能：把用完的帧缓冲归还池中（纹理上传完成后调用）。
-    // 说明：池容量有上限，超出部分直接随帧销毁，避免异常情况下把显存/内存一直攥着。
+    /**
+     * @brief 把用完的帧缓冲归还池中（纹理上传完成后调用）。
+     * @note 说明：池容量有上限，超出部分直接随帧销毁，避免异常情况下把显存/内存一直攥着。
+     */
     void ReleaseFrame(VideoFrame &&frame) {
         std::lock_guard<std::mutex> lock(frame_pool_mutex_);  // 与 AcquireFrame 共用同一把锁
         if (frame_pool_.size() >= kMaxPooledFrames) {  // 池已满
@@ -159,21 +193,21 @@ public:  // 对外只暴露"转换"与"翻转开关"
         frame_pool_.push_back(std::move(frame.buffer));  // 缓冲归池
     }
 
-    // 功能：把一帧 YUV AVFrame 转换为 RGBA 的 VideoFrame。
-    // 思路：校验入参 -> 准备 sws 上下文 -> 分配 RGBA 缓冲 -> sws_scale 转换 -> 按需 180 度旋转。
-    // 返回：成功返回像素数据，失败/格式不支持返回 std::nullopt。
-    // AVFrame（libavutil）：存放【解码之后、未压缩的原始画面/音频】的容器，即 YUV 帧载体，与 AVPacket 成对。
-    //   AVPacket：压缩数据（H.264 码流包，输入给解码器）
-    //   AVFrame：解码出来的裸数据（YUV/RGB，解码器输出）
-    std::optional<VideoFrame> convert(const AVFrame *frame) {  // 用 optional 表达"可能失败"，避免异常穿越 FFmpeg 回调
+    /**
+     * @brief 把一帧 YUV AVFrame 转换为 RGBA 的 VideoFrame。
+     * @note 思路：校验入参 -> 准备 sws 上下文 -> 分配 RGBA 缓冲 -> sws_scale 转换 -> 按需 180 度旋转。
+     * @return 成功返回像素数据，失败返回带具体原因的 unexpected。AVFrame（libavutil）：存放【解码之后、未压缩的原始画面/音频】的容器，即 YUV 帧载体，与 AVPacket
+     *        成对。AVPacket：压缩数据（H.264 码流包，输入给解码器）AVFrame：解码出来的裸数据（YUV/RGB，解码器输出）
+     */
+    std::expected<VideoFrame, VideoConvertError> convert(const AVFrame *frame) {  // 失败带原因，且不抛异常穿越 FFmpeg 回调
         RoboGo::app::perf::ScopedTimer convert_timer(&RoboGo::app::perf::RecordConvert);  // 统计本帧 YUV->RGBA 耗时（析构时上报，提前 return 也会记）
         if (frame == nullptr) { // 空帧直接拒绝
-            return std::nullopt;  // 上游解码失败时可能给出空指针
+            return std::unexpected(VideoConvertError::NullFrame);  // 上游解码失败时可能给出空指针
         }
 
         // 仅支持 NV12（semi-planar 半平面,） / YUV420P（I420，planar 三平面） 两种常见图传像素格式，其它格式视为不可处理。
         if (frame->format != AV_PIX_FMT_NV12 && frame->format != AV_PIX_FMT_YUV420P) {  // 两种 4:2:0 布局，覆盖绝大多数图传编码输出
-            return std::nullopt;  // 不支持则直接放弃该帧
+            return std::unexpected(VideoConvertError::UnsupportedPixelFormat);  // 不支持则直接放弃该帧
         }
 
         // SwsContext 是 FFmpeg swscale 模块的图像转换上下文句柄，专门做像素格式转换、缩放、裁剪。
@@ -186,7 +220,7 @@ public:  // 对外只暴露"转换"与"翻转开关"
                 frame->width, frame->height, AV_PIX_FMT_RGBA,  // 目标：同宽同高，RGBA 交错格式(每像素 4 字节)
                 SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);  // 快速双线性：质量够用且开销低；后三个为滤镜参数(不使用)
         if (sws_context_ == nullptr) { // 上下文创建失败(如内存不足)
-            return std::nullopt;  // 放弃该帧，下帧会再次尝试创建
+            return std::unexpected(VideoConvertError::SwsContextFailed);  // 放弃该帧，下帧会再次尝试创建
         }
 
         VideoFrame video_frame = AcquireFrame(frame->width, frame->height);  // 从池中取缓冲（同尺寸不清零、不重新分配）
@@ -199,24 +233,28 @@ public:  // 对外只暴露"转换"与"翻转开关"
                                             dest_data, dest_linesize);  // 目标平面指针与 stride
         // 行数不符说明转换异常
         if (scaled_height != frame->height) {  // 正常情况下应等于输入高度
-            return std::nullopt;  // 转换不完整则丢弃该帧
+            return std::unexpected(VideoConvertError::IncompleteConversion);  // 转换不完整则丢弃该帧
         }
         // 按开关决定是否对 RGBA 缓冲做 180 度旋转(图传画面方向修正)。
         if (!RoboGo::video::ApplyRgba180Rotation(video_frame.buffer,  // 就地旋转 RGBA 缓冲
                                                  video_frame.width,  // 宽(像素)
                                                  video_frame.height,  // 高(像素)
                                                  invert_udp_video_.load(std::memory_order_relaxed))) {  // relaxed：仅读一个开关，无跨变量同步需求
-            return std::nullopt;  // 旋转失败(如尺寸与缓冲不匹配)同样丢弃
+            return std::unexpected(VideoConvertError::RotationFailed);  // 旋转失败(如尺寸与缓冲不匹配)同样丢弃
         }
         return video_frame; // 返回转换完成的帧
     }
 
-    // 功能：运行时切换是否做 180 度旋转。
+    /**
+     * @brief 运行时切换是否做 180 度旋转。
+     */
     void SetInvertUdpVideo(const bool enabled) {  // UI 线程调用，IO 线程读取
         invert_udp_video_.store(enabled, std::memory_order_relaxed); // 原子写入，relaxed 足够(仅传递开关)
     }
 
-    // 功能：查询当前是否启用 180 度旋转。
+    /**
+     * @brief 查询当前是否启用 180 度旋转。
+     */
     [[nodiscard]] bool IsInvertUdpVideoEnabled() const {  // nodiscard：返回值有意义，不应被忽略
         return invert_udp_video_.load(std::memory_order_relaxed); // 原子读取当前开关值
     }
@@ -239,10 +277,11 @@ constexpr std::size_t kMaxQueuedVideoFrames = 4;
 // IO 线程(Asio)、MQTT 客户端、UDP 视频流管理器、自定义字节块解码 worker，
 // 以及它们与主线程之间的无锁队列；主线程通过本类取出消息与最新视频帧。
 class BackgroundServices {  // 生命周期与 RunApplication 中的作用域块绑定，退出时析构即停服
-public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* 接口
-    // 功能：构造后台服务，按启动选项初始化各组件并启动 IO 线程。
-    // 思路：成员初始化列表中依次构造转换器、解码 worker、MQTT 客户端、视频流管理器，
-    // 最后创建一个专用线程运行 Asio io_context。
+public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages / TakeLatestVideoFrame 等接口
+    /**
+     * @brief 构造后台服务，按启动选项初始化各组件并启动 IO 线程。
+     * @note 思路：成员初始化列表中依次构造转换器、解码 worker、MQTT 客户端、视频流管理器，最后创建一个专用线程运行 Asio io_context。
+     */
     explicit BackgroundServices(const LaunchOptions &options)  // explicit：防止 LaunchOptions 被隐式转换
         :   udp_frame_converter_(options.invert_udp_video), // AvFrameRgbaConverterUDP udp_frame_converter_帧转换器(带初始旋转开关)
         
@@ -250,25 +289,23 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
             mqtt_client_(io_context_,  // 共用本类的 io_context
                         options.mqtt_host,  // 解析后的 broker 主机
                         options.mqtt_port,  // 解析后的 broker 端口
-                        [this](const std::string &topic, const std::string &payload) {  // 下行报文回调(在 IO 线程执行)
-                            message_queue_.emplace(topic, payload); // (topic, payload) 原样入队
-                        }),
-
+                        [this](const std::string &topic, const std::string &payload) {     // 下行报文回调(在 IO 线程执行)
+                            message_queue_.emplace(topic, payload); }),                    // (topic, payload) 原样入队
+                        
             // UDP 视频流管理器：绑定 0.0.0.0:video_port 接收图传；每解出一帧调用回调。
             video_stream_manager_(io_context_,  // 同一个执行器，避免多线程竞争
                                     boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), options.parsed_video_port),  // 监听所有网卡的指定端口
                                     [this](const AVFrame *frame)  // 每解出一帧(裸 AVFrame)调用一次(IO 线程)
             {  // 回调体
-                const auto video_frame = udp_frame_converter_.convert(frame); // YUV -> RGBA(+旋转)
+                auto video_frame = udp_frame_converter_.convert(frame); // YUV -> RGBA(+旋转)
                 if (video_frame.has_value()) {  // 转换成功
-                    PushUdpVideoFrame(std::move(*video_frame)); // 移动入队（原来传左值，每帧多一次 8MB 拷贝）
-                } else if (frame == nullptr) {  // 空帧指针
-                    SPDLOG_ERROR("收到空视频帧指针，已丢弃"); // 空帧
-                } else {  // 有帧但转换失败
-                    SPDLOG_ERROR("UDP 视频帧转换或方向处理失败 format={} width={} height={}",  // 记录格式与尺寸，便于定位不支持的编码
-                                frame->format,  // 像素格式枚举值
-                                frame->width,  // 帧宽
-                                frame->height); // 格式/转换失败
+                    PushUdpVideoFrame(std::move(*video_frame)); // 非 const 才能真移动，避免每帧 8MB 拷贝
+                } else {  // 失败原因随日志带出，现场可区分空帧 / 格式不支持 / 转换故障
+                    SPDLOG_ERROR("UDP 视频帧转换失败 reason={} format={} width={} height={}",
+                                ToString(video_frame.error()),
+                                frame != nullptr ? frame->format : -1,
+                                frame != nullptr ? frame->width : 0,
+                                frame != nullptr ? frame->height : 0);
                 }
             }),
 
@@ -287,7 +324,9 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
                 }
             }  // 构造函数结束(全部工作在初始化列表中完成)
 
-    // 功能：析构时确保后台服务全部停止、线程回收。
+    /**
+     * @brief 析构时确保后台服务全部停止、线程回收。
+     */
     ~BackgroundServices() {  // 保证异常/提前 return 时也能停服，不残留线程
         Stop();  // 确保后台服务停止
     }
@@ -296,40 +335,51 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
     BackgroundServices(const BackgroundServices &) = delete;  // 删除拷贝构造
     BackgroundServices &operator=(const BackgroundServices &) = delete;  // 删除拷贝赋值
 
-    // 功能：暴露 MQTT 客户端引用，供主循环发送消息。
+    /**
+     * @brief 暴露 MQTT 客户端引用，供主循环发送消息。
+     */
     RoboGo::io::MqttClient &mqtt_client() {  // 返回引用，避免拷贝且允许外部调用 publish()
         return mqtt_client_;  // 成员长期存活于本对象
     }
 
-    // 功能：设置 UDP 视频是否 180 度旋转。
+    /**
+     * @brief 设置 UDP 视频是否 180 度旋转。
+     */
     void SetUdpVideoInverted(const bool enabled) {  // 转调转换器内部的原子开关
         udp_frame_converter_.SetInvertUdpVideo(enabled);  // IO 线程下一帧起生效
     }
 
-    // 功能：查询 UDP 视频是否 180 度旋转。
+    /**
+     * @brief 查询 UDP 视频是否 180 度旋转。
+     */
     [[nodiscard]] bool IsUdpVideoInverted() const {  // const：查询不改状态
         return udp_frame_converter_.IsInvertUdpVideoEnabled();  // 读取原子开关
     }
 
-    // 功能：在主线程中消费所有已到达的 MQTT 消息。
-    // 思路：循环从无锁队列取出消息交给 HandleMqttMessage 分发；
-    //       若消息携带自定义字节块数据，则转交解码 worker。
+    /**
+     * @brief 在主线程中消费所有已到达的 MQTT 消息。
+     * @note 思路：循环从无锁队列取出消息交给 HandleMqttMessage 分发；若消息携带自定义字节块数据，则转交解码 worker。
+     */
     void ProcessMessages(State &state) {  // 每帧调用一次，必须取空以免积压
         std::pair<std::string, std::string> message;  // 复用的出参，避免每条消息都构造新对象
         while (message_queue_.try_dequeue(message)) { // 直到队列取空
-            HandleMqttMessage(state,               // 状态引用，避免拷贝
+            HandleMqttMessage(state,                        // 状态引用，避免拷贝
                             mqtt_client_,             // 客户端引用，避免拷贝
                             message.first,             // 话题，避免拷贝
                             message.second);           // 消息，引用，避免拷贝
         }
     }
 
-    // 功能：取出最新的 UDP 视频帧(丢弃积压旧帧，只保留最后一帧)。
+    /**
+     * @brief 取出最新的 UDP 视频帧(丢弃积压旧帧，只保留最后一帧)。
+     */
     std::optional<VideoFrame> TakeLatestVideoFrame() {  // 无新帧时返回 nullopt
         return TakeLatestFrame(video_frame_queue_);  // 复用统一的"取最新"逻辑
     }
 
-    // 功能：把一帧 UDP 视频放进队列；队列已满时丢掉最旧的一帧并把它的缓冲还回池。
+    /**
+     * @brief 把一帧 UDP 视频放进队列；队列已满时丢掉最旧的一帧并把它的缓冲还回池。
+     */
     void PushUdpVideoFrame(VideoFrame frame) {
         while (video_frame_queue_.size_approx() >= kMaxQueuedVideoFrames) {  // 到上限
             VideoFrame discarded;  // 承载被丢弃的旧帧
@@ -342,16 +392,20 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
         video_frame_queue_.emplace(std::move(frame));  // 入队新帧
     }
 
-    // 功能：把用完的 UDP 帧缓冲还给池（上传完成后调用）。
+    /**
+     * @brief 把用完的 UDP 帧缓冲还给池（上传完成后调用）。
+     */
     void ReleaseUdpVideoFrame(VideoFrame &&frame) { udp_frame_converter_.ReleaseFrame(std::move(frame)); }
 
-    // 功能：查询 UDP 视频队列当前积压（供性能面板显示）。
+    /**
+     * @brief 查询 UDP 视频队列当前积压（供性能面板显示）。
+     */
     [[nodiscard]] int UdpVideoQueueDepth() const { return video_frame_queue_.size_approx(); }
 
-    // 功能：合成视频源——按 60fps 往 UDP 队列灌入渐变画面。
-    // 为什么需要：没有图传/没有机器人时，解码、帧池、上传、渲染这几段代码根本走不到，
-    // 改了视频链路却无法验证。加一个开关就能纯本地把整条管线跑起来。
-    // 画面设计：横向彩虹渐变 + 纵向亮度渐变 + 每帧轻微色相偏移，肉眼即可判断是否在动、有没有撕裂。
+    /**
+     * @brief 合成视频源——按 60fps 往 UDP 队列灌入渐变画面。为什么需要：没有图传/没有机器人时，解码、帧池、上传、渲染这几段代码根本走不到，改了视频链路却无法验证。加一个开关就能纯本地把整条管线跑起来。
+     *        画面设计：横向彩虹渐变 + 纵向亮度渐变 + 每帧轻微色相偏移，肉眼即可判断是否在动、有没有撕裂。
+     */
     void RunVideoTestSource() {
         constexpr int width = 1920;  // 与真实图传一致的分辨率
         constexpr int height = 1080;
@@ -376,8 +430,10 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
         }
     }
 
-    // 功能：按顺序停止各服务并回收 IO 线程。
-    // 思路：置停止标志 -> 停 MQTT/视频流 -> stop io_context -> join IO 线程 -> 停解码 worker。
+    /**
+     * @brief 按顺序停止各服务并回收 IO 线程。
+     * @note 思路：置停止标志 -> 停 MQTT/视频流 -> stop io_context -> join IO 线程 -> 停解码 worker。
+     */
     void Stop() {  // 幂等：析构与显式调用都可安全触发
         if (stopped_) { // 保证只执行一次
             return;  // 已停过则直接返回
@@ -396,7 +452,9 @@ public:  // 构造初始化各组件，之后由主循环调用 Process*/Take* �
     }
 
 private:  // 内部工具与成员
-    // 功能：从队列中取出最后一帧(排空队列，仅保留最新)。
+    /**
+     * @brief 从队列中取出最后一帧(排空队列，仅保留最新)。
+     */
     static std::optional<VideoFrame> TakeLatestFrame(moodycamel::ReaderWriterQueue<VideoFrame> &queue) {  // static：不依赖实例状态
         std::optional<VideoFrame> latest_frame;  // 为空表示队列本来就空
         VideoFrame video_frame;  // 复用的中转对象
@@ -420,9 +478,10 @@ private:  // 内部工具与成员
     bool stopped_ = false; // 是否已停止
 };
 
-// 功能：取出最新的 UDP 视频帧并上传为 GPU 纹理，同时记录最近出帧时间。
-// 思路：2027 起只剩 UDP 一路图传（CustomByteBlock 解码链路已移除，其产物本就未上屏），
-//       故只需处理 UDP 帧；成功上传则刷新时间戳，供超时回退逻辑判断画面是否仍在刷新。
+/**
+ * @brief 取出最新的 UDP 视频帧并上传为 GPU 纹理，同时记录最近出帧时间。
+ * @note 思路：2027 起只剩 UDP 一路图传（CustomByteBlock 解码链路已移除，其产物本就未上屏），故只需处理 UDP 帧；成功上传则刷新时间戳，供超时回退逻辑判断画面是否仍在刷新。
+ */
 void UploadLatestVideoFrames(RoboGo::platform::PlatformBackend &platform_backend,  // 负责实际上传纹理到 GPU
                              BackgroundServices &background_services,  // 帧来源
                              std::chrono::steady_clock::time_point &last_udp_frame_time) {  // 出参：最近一次 UDP 出帧时刻
@@ -439,8 +498,10 @@ void UploadLatestVideoFrames(RoboGo::platform::PlatformBackend &platform_backend
     }
 }
 
-// 功能：判断某一路视频当前是否可正常显示。
-// 思路：纹理已就绪、曾收到过帧、且距最近一帧未超过超时阈值，三者同时满足才算"就绪"。
+/**
+ * @brief 判断某一路视频当前是否可正常显示。
+ * @note 思路：纹理已就绪、曾收到过帧、且距最近一帧未超过超时阈值，三者同时满足才算"就绪"。
+ */
 [[nodiscard]] bool IsVideoDisplayReady(const TextureView &video_texture,  // 纹理句柄与尺寸快照
                                        const std::chrono::steady_clock::time_point last_frame_time,  // 最近出帧时刻(可能为 min() 表示从未收到)
                                        const std::chrono::steady_clock::duration fallback_timeout,  // 无帧多久后判定不可用
@@ -450,7 +511,9 @@ void UploadLatestVideoFrames(RoboGo::platform::PlatformBackend &platform_backend
            && (now - last_frame_time) <= fallback_timeout; // 未超过无帧超时
 }
 
-// 功能：切换 UDP 视频的 180 度旋转开关，并记录日志。
+/**
+ * @brief 切换 UDP 视频的 180 度旋转开关，并记录日志。
+ */
 void ToggleUdpVideoInversion(State &state, BackgroundServices &background_services) {  // 键鼠快捷键与界面按钮共用
     const bool udp_video_inverted = !background_services.IsUdpVideoInverted(); // 取反当前开关
     background_services.SetUdpVideoInverted(udp_video_inverted); // 应用新开关
@@ -465,9 +528,10 @@ void ToggleUdpVideoInversion(State &state, BackgroundServices &background_servic
 
 namespace RoboGo::app {  // 进入应用层命名空间
 
-// 功能：解析命令行参数，生成结构化的启动选项。
-// 思路：先填入默认值(默认 MQTT 地址、默认视频端口、默认旋转)，再识别
-//       --mqtt_server 与 --video_port 两个参数覆盖默认值，最后解析网络端点。
+/**
+ * @brief 解析命令行参数，生成结构化的启动选项。
+ * @note 思路：先填入默认值(默认 MQTT 地址、默认视频端口、默认旋转)，再识别--mqtt_server 与 --video_port 两个参数覆盖默认值，最后解析网络端点。
+ */
 LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只读入参，返回按值构造的选项
     LaunchOptions options;  // 初始化选项结构体
     options.mqtt_server = DefaultMqttServer(); // 默认 MQTT 服务器地址（配置优先，其次 192.168.12.1）
@@ -510,11 +574,11 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只
     return options; // 返回最终选项
 }
 
-// 功能：应用主入口，初始化平台后端与后台服务后进入主渲染循环。
-// 思路：初始化后端 -> 注册游戏输入捕获回调 -> 加载小地图纹理 -> 建立后台服务 ->
-//       每帧：消费消息/更新状态/上报控制/上传视频纹理 -> 绘制界面 -> 提交渲染；
-//       退出循环后清理图形与网络资源。
-// 返回：0 表示正常退出，1 表示平台初始化失败。
+/**
+ * @brief 应用主入口，初始化平台后端与后台服务后进入主渲染循环。
+ * @note 思路：初始化后端 -> 注册游戏输入捕获回调 -> 加载小地图纹理 -> 建立后台服务 ->每帧：消费消息/更新状态/上报控制/上传视频纹理 -> 绘制界面 -> 提交渲染；退出循环后清理图形与网络资源。
+ * @return 0 表示正常退出，1 表示平台初始化失败。
+ */
 int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOptions &options) {  // 主线程：整个渲染循环都在此函数内
     const auto main_start = std::chrono::steady_clock::now(); // 记录启动时刻(用于统计耗时)
     SPDLOG_INFO("程序启动");  // 第一条日志，便于在日志里定位一次启动
@@ -542,9 +606,10 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     State state = CreateInitialState(); // 创建全局界面/数据状态
 
     // 加载内嵌小地图 PNG 并上传为纹理；失败时回退为纯色背景(不致命)。
-    auto mini_map_image = RoboGo::resource::LoadEmbeddedMapImage();  // 返回 optional<VideoFrame>：内嵌资源解码结果
+    auto mini_map_image = RoboGo::resource::LoadEmbeddedMapImage();  // expected<DecodedImage, ImageDecodeError>
     if (!mini_map_image.has_value()) {  // 资源缺失/解码失败
-        SPDLOG_WARN("未能加载内嵌小地图，将回退为纯色小地图背景");  // 仅告警，不影响主流程
+        SPDLOG_WARN("未能加载内嵌小地图，将回退为纯色小地图背景 reason={}",
+                    RoboGo::resource::ToString(mini_map_image.error()));  // 仅告警，不影响主流程
     } else if
     // 小地图加载成功：尝试上传纹理
     // 尝试上传小地图纹理
@@ -559,7 +624,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
     // 只是显示增强，加载失败不影响主流程（小地图退化为纯底图）。
     auto terrain_image = RoboGo::resource::LoadEmbeddedMapTerrainImage();  // 解码内嵌叠加层
     if (!terrain_image.has_value()) {  // 资源缺失/解码失败
-        SPDLOG_WARN("未能加载地形分层叠加层，小地图只显示底图");  // 仅告警
+        SPDLOG_WARN("未能加载地形分层叠加层，小地图只显示底图 reason={}",
+                    RoboGo::resource::ToString(terrain_image.error()));  // 仅告警
     } else if (platform_backend.UploadTexture(TextureSlot::MiniMapTerrain, *terrain_image)) {  // 上传纹理
         SPDLOG_INFO("地形分层纹理已上传 width={} height={}", terrain_image->width, terrain_image->height);  // 记录尺寸
     } else {  // 上传失败
@@ -631,8 +697,8 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
             // 如果让它活到循环末尾，就会把 ImGui::Render 和 Present 的垂直同步等待也算进来（实测会虚高到 16.6ms）。
             bool toggle_udp_video_inversion_requested = false;  // 界面是否请求切换视频方向
             {
-            RoboGo::app::perf::ScopedTimer ui_timer(&RoboGo::app::perf::RecordUi);  // 统计界面构建耗时
-            toggle_udp_video_inversion_requested = ShowMainWindow(  // 返回 true 表示界面按钮点了"切换方向"
+                RoboGo::app::perf::ScopedTimer ui_timer(&RoboGo::app::perf::RecordUi);  // 统计界面构建耗时
+                toggle_udp_video_inversion_requested = ShowMainWindow(  // 返回 true 表示界面按钮点了"切换方向"
                     state,  // 全局状态
                     background_services.mqtt_client(),  // 供界面直接发送消息
                     udp_video_texture.texture_ref,  // UDP 纹理句柄

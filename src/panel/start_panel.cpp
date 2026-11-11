@@ -6,6 +6,7 @@
 // [/pch-split]
 #include "start_panel.h"
 #include "app/config.h"   // 应用级配置：登录成功后把 MQTT 地址持久化，下次启动免手输
+#include "app/number_parser.h"   // 无异常整数解析（from_chars + std::expected）
 #include "keyboard_mouse_state_manager.h"   // 标记模式开关（is_marker_mode/enter_marker_mode 等）的声明
 #include "logging/logging.h"   // spdlog 日志宏（SPDLOG_INFO/DEBUG/WARN/ERROR）
 #include "io/command_sender.h"   // 指令下发统一出口（发布模板 + 各指令构造器）
@@ -66,18 +67,18 @@ constexpr uint32_t kAmmoExchangeBuffType = 6;
 // 本地下发性能选择后，忽略远端同步的时长，避免界面抖动。
 constexpr auto kPerformanceSelectionRemoteSyncIgnoreDuration = std::chrono::seconds(5);
 
-// 功能：通用的 protobuf 控制消息发布器。
-// 思路：序列化消息后通过 MQTT 发布；序列化失败记错误日志。
-// 注意：这里**不再**顺手调用 enter_game_mode()。原实现让"点任意指令按钮"都等于进入比赛模式，
-//       后果是开局面板被准星 HUD 取代、鼠标被平台层捕获，操作手会突然发现"界面没了、鼠标也没了"，
-//       而且会在准备阶段就开始向机器人发键鼠包。进入比赛只保留显式的"进入比赛"按钮。
+/**
+ * @brief 通用的 protobuf 控制消息发布器。
+ * @note 思路：序列化消息后通过 MQTT 发布；序列化失败记错误日志。
+ * @note 注意：这里**不再**顺手调用 enter_game_mode()。原实现让"点任意指令按钮"都等于进入比赛模式，后果是开局面板被准星 HUD 取代、鼠标被平台层捕获，操作手会突然发现"界面没了、
+ *        鼠标也没了"，而且会在准备阶段就开始向机器人发键鼠包。进入比赛只保留显式的"进入比赛"按钮。
+ */
 
-// 功能：获取当前已登录机器人的 robot_id，未登录返回 0。
-// 本进程登录时使用的 robot_id。
-// 为什么要这个：原来只看 state.robot_static_status（服务器下发的消息），
-// 而那条消息要等 MQTT 连上并推送后才有——开局那一刻拿不到身份，
-// 装配浮层、哨兵面板这类"按身份决定可见性"的功能就会在最需要的时候失效。
-// 登录动作本身就知道身份，这里存一份，作为服务器消息到达前的兜底。
+/**
+ * @brief 获取当前已登录机器人的 robot_id，未登录返回 0。本进程登录时使用的 robot_id。为什么要这个：原来只看 state.robot_static_status（服务器下发的消息）
+ *        ，而那条消息要等 MQTT 连上并推送后才有——开局那一刻拿不到身份，装配浮层、哨兵面板这类"按身份决定可见性"的功能就会在最需要的时候失效。登录动作本身就知道身份，这里存一份，
+ *        作为服务器消息到达前的兜底。
+ */
 static uint32_t logged_in_robot_id = 0;
 
 uint32_t GetCurrentRobotId(const State &state) {
@@ -88,27 +89,42 @@ uint32_t GetCurrentRobotId(const State &state) {
     return logged_in_robot_id;   // 兜底：登录时选的身份（未登录为 0）
 }
 
-// 功能：判断 robot_id 是否属于给定候选集合之一（可变参数折叠）。
+/**
+ * @brief 判断 robot_id 是否属于给定候选集合之一（可变参数折叠）。
+ */
 template<typename... Ids>
 bool IsOneOf(uint32_t robot_id, Ids... ids) {   // 可变参数模板：接受任意个候选 robot_id
     // 折叠表达式：robot_id 是否等于任一候选 id。
     return ((robot_id == static_cast<uint32_t>(ids)) || ...);
 }
 
-// 功能：判断当前机器人当前是否处于指定类型的激活 Buff 中（用于按钮可用性判断）。
+/**
+ * @brief 判断当前机器人当前是否处于指定类型的激活 Buff 中（用于按钮可用性判断）。
+ * @note 注意：现场 Buff 的 robot_id 存在三种写法，必须都认，否则会出现「官方选手端能买、自定义终端一直灰」的假阴性：1) 与登录 ID 完全一致（3 / 103）；2)
+ *        红蓝编号混用（登录 103，Buff 发 3，或反过来）；3) 区域型 Buff 用 0 表示「不绑定具体机器人」。
+ */
 bool HasActiveBuff(const State &state, uint32_t buff_type) {
-    uint32_t current_robot_id = GetCurrentRobotId(state);             // 取当前 robot_id
-    if (current_robot_id == 0) {                                      // 未登录（无 id）
-        return false;                                                 // 无法判断，视为不在 Buff
-    }   // 结束未登录判断（id 为 0 时无法判断 Buff 归属）
+    const uint32_t current_robot_id = GetCurrentRobotId(state);       // 取当前 robot_id
+    const auto belongs_to_us = [current_robot_id](uint32_t buff_robot_id) {
+        if (buff_robot_id == 0) {                                     // 区域型 Buff：不绑定具体机器人
+            return true;
+        }
+        if (current_robot_id == 0) {                                  // 未登录时无法判断归属
+            return false;
+        }
+        return buff_robot_id == current_robot_id                      // 精确匹配
+               || (buff_robot_id % 100) == (current_robot_id % 100);  // 红蓝编号混用兜底
+    };
     // 遍历当前生效的 Buff 列表，是否存在"属于我方且该类型"的激活 Buff。
-    return std::ranges::any_of(state.active_buffs, [current_robot_id, buff_type](const BuffWithTimestamp &buff_entry) {
-        return buff_entry.buff.robot_id() == current_robot_id && buff_entry.buff.buff_type() == buff_type;   // 命中条件：Buff 归属当前机器人且类型匹配
+    return std::ranges::any_of(state.active_buffs, [buff_type, &belongs_to_us](const BuffWithTimestamp &buff_entry) {
+        return buff_entry.buff.buff_type() == buff_type && belongs_to_us(buff_entry.buff.robot_id());
     });
 }
 
-// 功能：带标签的纯数字输入框，并同步解析出整数值与合法性标志。
-// 思路：先渲染标签与输入框，再用 strtoll 解析整串；末尾指针指向 '\0' 表示整串均为数字则合法。
+/**
+ * @brief 带标签的纯数字输入框，并同步解析出整数值与合法性标志。
+ * @note 思路：先渲染标签与输入框，再用 strtoll 解析整串；末尾指针指向 '\0' 表示整串均为数字则合法。
+ */
 void IntegerInputText(const char *label, std::string *str, bool *is_valid, long long *value) {
     ImGui::AlignTextToFramePadding();                                // 文本垂直对齐到输入框内边距，视觉更整齐
     ImGui::Text("%s", label);                                        // 渲染标签文字
@@ -119,8 +135,10 @@ void IntegerInputText(const char *label, std::string *str, bool *is_valid, long 
     *is_valid = *endPtr == '\0';                                     // 尾指针指向 '\0' 表示整串全是数字，合法
 }
 
-// 功能：渲染带禁用状态与悬停提示的按钮。
-// 思路：当 disable_reason 非空时禁用按钮；悬停时若有禁用原因则显示原因，否则显示有效提示文案；返回是否被点击。
+/**
+ * @brief 渲染带禁用状态与悬停提示的按钮。
+ * @note 思路：当 disable_reason 非空时禁用按钮；悬停时若有禁用原因则显示原因，否则显示有效提示文案；返回是否被点击。
+ */
 bool ButtonWithTooltip(const char *label, const std::string &valid_tooltip, const char *disable_reason) {
     ImGui::BeginDisabled(disable_reason != nullptr);                  // 存在禁用原因时禁用按钮（置灰不可点）
     bool is_clicked = ImGui::Button(label);                          // 渲染按钮并记录本次点击
@@ -296,22 +314,28 @@ const ButtonStyle kLogoutButtonStyle = { // 破坏性操作：低饱和红
         ButtonVariant::Danger,
 };
 
-// 功能：构造一个"因某原因被禁用"的按钮反馈。
+/**
+ * @brief 构造一个"因某原因被禁用"的按钮反馈。
+ */
 ButtonFeedback MakeDisabledFeedback(const char *reason) {
     ButtonFeedback feedback;                                         // 默认构造（valid_tooltip 为空）
     feedback.disabled_reason = reason;                               // 记录禁用原因
     return feedback;                                                 // 返回仅含禁用原因的反馈
 }
 
-// 功能：构造一个提示"将消耗 N 金币"的有效按钮反馈。
+/**
+ * @brief 构造一个提示"将消耗 N 金币"的有效按钮反馈。
+ */
 ButtonFeedback MakePriceFeedback(uint32_t price) {
     ButtonFeedback feedback;                                         // 默认构造（disabled_reason 为空=可用）
     feedback.valid_tooltip = "将消耗" + std::to_string(price) + "金币"; // 拼接"将消耗 N 金币"提示文案
     return feedback;                                                 // 返回含有效提示的反馈
 }
 
-// 功能：根据当前经济判断是否买得起指定价格的指令，返回相应反馈。
-// 思路：无经济信息则禁用；剩余经济不足则禁用；否则给出消耗金币提示。
+/**
+ * @brief 根据当前经济判断是否买得起指定价格的指令，返回相应反馈。
+ * @note 思路：无经济信息则禁用；剩余经济不足则禁用；否则给出消耗金币提示。
+ */
 ButtonFeedback GetEconomyFeedback(const State &state, uint32_t price) {
     if (!state.global_logistics_status.has_value()) {                // 尚未收到全局后勤（经济）状态
         return MakeDisabledFeedback("无法获取当前经济");             // 无数据则禁用
@@ -322,11 +346,13 @@ ButtonFeedback GetEconomyFeedback(const State &state, uint32_t price) {
     return MakePriceFeedback(price);                                 // 买得起：返回消耗金币提示
 }
 
-// 功能：计算"兑换允许发弹量"按钮的可用性反馈。
-// 思路：必须在补给区 Buff 内、输入合法；重装按 10 金币/发计价，其他机器人要求发量为 10 的倍数再计价。
+/**
+ * @brief 计算"兑换允许发弹量"按钮的可用性反馈。
+ * @note 思路：必须在补给区 Buff 内、输入合法；重装按 10 金币/发计价，其他机器人要求发量为 10 的倍数再计价。
+ */
 ButtonFeedback GetAmmoExchangeFeedback(const State &state, bool is_valid_ammo, long long ammo, bool is_hero) {
     if (!HasActiveBuff(state, kAmmoExchangeBuffType)) {              // 必须处于补给区 Buff 内
-        return MakeDisabledFeedback("不在补给区内");                 // 不在补给区则禁用
+        return MakeDisabledFeedback("不在补给区内（未收到可兑换 Buff）");  // 不在补给区则禁用
     }
     if (!is_valid_ammo) {                                           // 输入的发弹量含非法字符
         return MakeDisabledFeedback("输入含非法字符");         // 非法输入则禁用
@@ -340,8 +366,10 @@ ButtonFeedback GetAmmoExchangeFeedback(const State &state, bool is_valid_ammo, l
     return GetEconomyFeedback(state, static_cast<uint32_t>(ammo));  // 普通机器人按 1 金币/发计价
 }
 
-// 功能：计算"远程兑换"按钮的可用性反馈。
-// 思路：输入合法前提下，英雄要求发量为 10 倍数且按 15 金币/发计价，其他机器人要求 100 倍数并按 1.5 倍计价。
+/**
+ * @brief 计算"远程兑换"按钮的可用性反馈。
+ * @note 思路：输入合法前提下，英雄要求发量为 10 倍数且按 15 金币/发计价，其他机器人要求 100 倍数并按 1.5 倍计价。
+ */
 ButtonFeedback GetRemoteAmmoExchangeFeedback(const State &state, bool is_valid_ammo, long long ammo, bool is_hero) {
     if (!is_valid_ammo) {                                           // 输入的发弹量含非法字符
         return MakeDisabledFeedback("输入含非法字符");         // 非法输入则禁用
@@ -358,8 +386,10 @@ ButtonFeedback GetRemoteAmmoExchangeFeedback(const State &state, bool is_valid_a
     return GetEconomyFeedback(state, static_cast<uint32_t>(ammo * 1.5)); // 普通机器人按 1.5 倍计价
 }
 
-// 功能：计算"远程回血"按钮的可用性反馈。
-// 思路：依据剩余比赛时间动态计算回血价格（越接近结束越便宜），再走经济判断。
+/**
+ * @brief 计算"远程回血"按钮的可用性反馈。
+ * @note 思路：依据剩余比赛时间动态计算回血价格（越接近结束越便宜），再走经济判断。
+ */
 ButtonFeedback GetRecoverFeedback(const State &state) {
     if (!state.game_status.has_value()) {                           // 尚未收到比赛状态
         return MakeDisabledFeedback("无法获取比赛状态");            // 无数据则禁用
@@ -369,8 +399,10 @@ ButtonFeedback GetRecoverFeedback(const State &state) {
     return GetEconomyFeedback(state, price);                         // 走经济判断返回反馈
 }
 
-// 功能：计算"确认复活"按钮的可用性反馈。
-// 思路：需处于复活待定状态、读条已完成且可免费复活才允许。
+/**
+ * @brief 计算"确认复活"按钮的可用性反馈。
+ * @note 思路：需处于复活待定状态、读条已完成且可免费复活才允许。
+ */
 ButtonFeedback GetConfirmReviveFeedback(const State &state) {
     if (!state.robot_respawn_status.has_value()) {                   // 尚未收到复活状态
         return MakeDisabledFeedback("无法获取复活状态");            // 无数据则禁用
@@ -389,8 +421,10 @@ ButtonFeedback GetConfirmReviveFeedback(const State &state) {
     return {};                                                       // 满足条件：可用（无提示）
 }
 
-// 功能：计算"兑换立即复活"按钮的可用性反馈。
-// 思路：需可花金币复活，再按复活所需金币走经济判断。
+/**
+ * @brief 计算"兑换立即复活"按钮的可用性反馈。
+ * @note 思路：需可花金币复活，再按复活所需金币走经济判断。
+ */
 ButtonFeedback GetInstantReviveFeedback(const State &state) {
     if (!state.robot_respawn_status.has_value()) {                   // 尚未收到复活状态
         return MakeDisabledFeedback("无法获取复活状态");            // 无数据则禁用
@@ -403,8 +437,10 @@ ButtonFeedback GetInstantReviveFeedback(const State &state) {
     return GetEconomyFeedback(state, price);                         // 走经济判断返回反馈
 }
 
-// 功能：计算"确认发射（飞镖）"按钮的可用性反馈。
-// 思路：需能获取飞镖状态，且闸门已开启（open==2）。
+/**
+ * @brief 计算"确认发射（飞镖）"按钮的可用性反馈。
+ * @note 思路：需能获取飞镖状态，且闸门已开启（open==2）。
+ */
 ButtonFeedback GetDartLaunchFeedback(const State &state) {
     if (!state.dart_select_target_status_sync.has_value()) {         // 尚未收到飞镖同步状态
         return MakeDisabledFeedback("无法获取飞镖状态");            // 无数据则禁用
@@ -422,20 +458,25 @@ ButtonFeedback GetDartLaunchFeedback(const State &state) {
 
 // 思路：需当前发射机构处于"可解除锁定"状态（shooter_status==2）才允许。
 
-// 功能：构造"进入比赛/登录"主按钮样式。
-// 2027 UI 改版：绿色高饱和实心 + 2px 亮绿描边改为主题 Primary（低饱和青绿 + 0.5px 中性描边），
-// 颜色与形状统一由 MakeButtonStyle 按 ButtonVariant::Primary 提供，这里不再额外压栈。
+/**
+ * @brief 构造"进入比赛/登录"主按钮样式。2027 UI 改版：绿色高饱和实心 + 2px 亮绿描边改为主题 Primary（低饱和青绿 + 0.5px 中性描边），颜色与形状统一由
+ *        MakeButtonStyle 按 ButtonVariant::Primary 提供，这里不再额外压栈。
+ */
 ScopedStyle MakeEnterGameButtonStyle() {
     return MakeButtonStyle(kEnterGameButtonStyle);   // 返回样式对象（析构时自动弹栈）
 }
 
-// 功能：构造开局面板窗口样式（三级表面中的 surface1 + 12px 圆角 + 18px 内边距）。
+/**
+ * @brief 构造开局面板窗口样式（三级表面中的 surface1 + 12px 圆角 + 18px 内边距）。
+ */
 ScopedStyle MakeStartPanelWindowStyle() {
     return MakeWindowStyle(RoboGo::ui::V(RoboGo::ui::WithAlpha(RoboGo::ui::kSurface1, 235)),
                            RoboGo::ui::kRadiusCard, ImVec2(18.0f, 18.0f));
 }
 
-// 功能：把 MQTT 连接状态枚举翻译为中文文案。
+/**
+ * @brief 把 MQTT 连接状态枚举翻译为中文文案。
+ */
 const char *GetLoginConnectionStateText(RoboGo::io::MqttClient::ConnectionState connection_state) {
     switch (connection_state) {   // 按 MQTT 连接状态分支
         case RoboGo::io::MqttClient::ConnectionState::Idle:   // 空闲：从未发起连接
@@ -451,7 +492,9 @@ const char *GetLoginConnectionStateText(RoboGo::io::MqttClient::ConnectionState 
     }
 }
 
-// 功能：根据连接状态返回对应的提示颜色（灰/黄/绿/红）。
+/**
+ * @brief 根据连接状态返回对应的提示颜色（灰/黄/绿/红）。
+ */
 ImVec4 GetLoginConnectionStateColor(RoboGo::io::MqttClient::ConnectionState connection_state) {
     switch (connection_state) {   // 按连接状态选择提示色
         case RoboGo::io::MqttClient::ConnectionState::Idle:   // 空闲：中性灰
@@ -467,8 +510,10 @@ ImVec4 GetLoginConnectionStateColor(RoboGo::io::MqttClient::ConnectionState conn
     }
 }
 
-// 功能：去除字符串首尾的 ASCII 空白字符（空格/制表/回车/换行）。
-// 思路：双指针分别从两端向中间收缩，跳过空白后取子串。
+/**
+ * @brief 去除字符串首尾的 ASCII 空白字符（空格/制表/回车/换行）。
+ * @note 思路：双指针分别从两端向中间收缩，跳过空白后取子串。
+ */
 std::string TrimAsciiWhitespace(std::string_view text) {
     auto is_space = [](char ch) {                                   // 判定 ASCII 空白字符
         return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';   // 空白判定：空格/制表/回车/换行
@@ -485,8 +530,10 @@ std::string TrimAsciiWhitespace(std::string_view text) {
     return std::string(text.substr(start, end - start));            // 截取去空白后的子串
 }
 
-// 功能：解析用户输入的 MQTT 服务端地址（支持 "host:port" / "tcp://host:port" / IPv6 "[host]:port"），拆分出 host 与 port。
-// 思路：先去除空白、剥离可选 "tcp://" 前缀；按首 '[' 判定 IPv6，否则按冒号位置拆分；port 缺省填 3333 并校验数字范围 1-65535。
+/**
+ * @brief 解析用户输入的 MQTT 服务端地址（支持 "host:port" / "tcp://host:port" / IPv6 "[host]:port"），拆分出 host 与 port。
+ * @note 思路：先去除空白、剥离可选 "tcp://" 前缀；按首 '[' 判定 IPv6，否则按冒号位置拆分；port 缺省填 3333 并校验数字范围 1-65535。
+ */
 bool ParseMqttServerEndpoint(const std::string &input, std::string &host, std::string &port, std::string &error_message) {
     std::string normalized = TrimAsciiWhitespace(input);              // 先去除首尾空白
     if (normalized.empty()) {                                         // 去除后仍为空
@@ -558,13 +605,17 @@ bool ParseMqttServerEndpoint(const std::string &input, std::string &host, std::s
     return true;   // 解析成功
 }
 
-// 功能：返回全局唯一的队伍/机器人选择状态（静态单例）。
+/**
+ * @brief 返回全局唯一的队伍/机器人选择状态（静态单例）。
+ */
 TeamRobotSelectionState &GetTeamRobotSelectionState() {
     static TeamRobotSelectionState selection_state;                  // 全局唯一选择状态（静态单例）
     return selection_state;                                          // 返回引用，使各子面板共享同一状态
 }
 
-// 功能：返回全局唯一的 MQTT 地址输入状态；首次访问时从已配置的服务端端点预填输入框。
+/**
+ * @brief 返回全局唯一的 MQTT 地址输入状态；首次访问时从已配置的服务端端点预填输入框。
+ */
 MqttServerAddressState &GetMqttServerAddressState(RoboGo::io::MqttClient &mqtt_client) {
     static MqttServerAddressState mqtt_server_state;                  // 全局唯一地址状态（静态单例）
     if (!mqtt_server_state.initialized) {                             // 首次访问：尝试预填默认值
@@ -577,19 +628,25 @@ MqttServerAddressState &GetMqttServerAddressState(RoboGo::io::MqttClient &mqtt_c
     return mqtt_server_state;                                         // 返回全局状态引用
 }
 
-// 功能：返回全局唯一的弹药兑换面板状态。
+/**
+ * @brief 返回全局唯一的弹药兑换面板状态。
+ */
 AmmoPanelState &GetAmmoPanelState() {
     static AmmoPanelState ammo_panel_state;                          // 全局唯一弹药面板状态
     return ammo_panel_state;                                         // 返回引用
 }
 
-// 功能：返回全局唯一的装配面板状态。
+/**
+ * @brief 返回全局唯一的装配面板状态。
+ */
 AssemblyPanelState &GetAssemblyPanelState() {
     static AssemblyPanelState assembly_panel_state;                  // 全局唯一装配面板状态
     return assembly_panel_state;                                     // 返回引用
 }
 
-// 功能：返回全局唯一的飞镖面板状态，并实时用远端同步的目标/闸门状态覆盖本地。
+/**
+ * @brief 返回全局唯一的飞镖面板状态，并实时用远端同步的目标/闸门状态覆盖本地。
+ */
 DartPanelState &GetDartPanelState(const State &state) {
     static DartPanelState dart_panel_state;                           // 全局唯一飞镖面板状态
     if (state.dart_select_target_status_sync.has_value()) {           // 收到远端飞镖同步
@@ -606,8 +663,10 @@ DartPanelState &GetDartPanelState(const State &state) {
     return dart_panel_state;                                          // 返回（可能已同步的）状态引用
 }
 
-// 功能：返回全局唯一的性能选择面板状态，并在收到远端同步时更新本地选项。
-// 思路：用 last_handled_remote_sync 去重已处理消息；若落在"本地下发后忽略窗口"内则跳过，避免刚下发又被远端覆盖。
+/**
+ * @brief 返回全局唯一的性能选择面板状态，并在收到远端同步时更新本地选项。
+ * @note 思路：用 last_handled_remote_sync 去重已处理消息；若落在"本地下发后忽略窗口"内则跳过，避免刚下发又被远端覆盖。
+ */
 PerformancePanelState &GetPerformancePanelState(const State &state) {
     static PerformancePanelState performance_panel_state;             // 全局唯一性能面板状态
     // 仅在收到"比上次更新"的远端同步时处理（用 last_handled 去重重复消息）。
@@ -633,8 +692,10 @@ using RoboGo::io::SendCommonCommand;
 using RoboGo::io::SendDartCommand;
 using RoboGo::io::SendSentryCtrlCommand;
 
-// 功能：发送机器人性能选择指令，并标记一段"忽略远端同步"窗口。
-// 思路：先把 ignore_remote_sync_until 设为当前+5s，再把本地发射机构/底盘/哨兵选项下发到 "RobotPerformanceSelectionCommand"。
+/**
+ * @brief 发送机器人性能选择指令，并标记一段"忽略远端同步"窗口。
+ * @note 思路：先把 ignore_remote_sync_until 设为当前+5s，再把本地发射机构/底盘/哨兵选项下发到 "RobotPerformanceSelectionCommand"。
+ */
 void SendPerformanceSelection(RoboGo::io::MqttClient &mqtt_client, PerformancePanelState &performance_state) {
     // 先标记一段"忽略远端同步"窗口，避免下发后立刻被旧的远端同步覆盖本地选择。
     performance_state.ignore_remote_sync_until = std::chrono::steady_clock::now() + kPerformanceSelectionRemoteSyncIgnoreDuration;
@@ -645,8 +706,10 @@ void SendPerformanceSelection(RoboGo::io::MqttClient &mqtt_client, PerformancePa
     RoboGo::io::PublishCommand(mqtt_client, "RobotPerformanceSelectionCommand", performance_command); // 发布（不进入比赛）
 }
 
-// 功能：渲染"标签 + 两个单选按钮"的一行，返回是否发生改变。
-// 思路：用 SameLine 把两个 RadioButton 对齐到指定 x 偏移；选中则更新 selected_value 并标记 changed。
+/**
+ * @brief 渲染"标签 + 两个单选按钮"的一行，返回是否发生改变。
+ * @note 思路：用 SameLine 把两个 RadioButton 对齐到指定 x 偏移；选中则更新 selected_value 并标记 changed。
+ */
 bool ShowLabeledRadioPair(const char *label,
                           float first_option_x,   // 参数：第一个选项按钮相对行首的 X 偏移
                           float second_option_x,   // 参数：第二个选项按钮相对行首的 X 偏移
@@ -670,21 +733,27 @@ bool ShowLabeledRadioPair(const char *label,
     return changed;                                                   // 返回是否改变（供调用方下发）
 }
 
-// 功能：渲染一个带选中态高亮的紧凑选项按钮。
-// 思路：选中时套用 selected_style（颜色突出），否则用默认紧凑样式；返回是否被点击。
+/**
+ * @brief 渲染一个带选中态高亮的紧凑选项按钮。
+ * @note 思路：选中时套用 selected_style（颜色突出），否则用默认紧凑样式；返回是否被点击。
+ */
 bool ShowCompactSelectionButton(const char *label, bool is_selected, const ButtonStyle &selected_style, const ImVec2 &size) {
     ScopedStyle style = MakeButtonStyle(is_selected ? selected_style : kCompactOptionButtonStyle); // 选中用高亮样式，否则默认紧凑样式
     return ImGui::Button(label, size);                                       // 渲染按钮并返回是否被点击
 }
 
-// 功能：根据所选队伍返回机器人按钮对应的高亮样式（红队/蓝队色）。
+/**
+ * @brief 根据所选队伍返回机器人按钮对应的高亮样式（红队/蓝队色）。
+ */
 const ButtonStyle &GetSelectedRobotButtonStyle(const TeamRobotSelectionState &selection_state) {
     // 根据所选队伍返回对应的机器人高亮样式（红队红 / 蓝队蓝）。
     return selection_state.selected_team == 0 ? kSelectedRedRobotButtonStyle : kSelectedBlueRobotButtonStyle;
 }
 
-// 功能：处理"登录"按钮：校验地址合法性后把服务端端点与客户 ID 写入 MQTT 客户端。
-// 思路：先解析地址；失败则将错误原因回填到输入框状态并返回；成功则设置端点与 client_id 为当前 robot_id。
+/**
+ * @brief 处理"登录"按钮：校验地址合法性后把服务端端点与客户 ID 写入 MQTT 客户端。
+ * @note 思路：先解析地址；失败则将错误原因回填到输入框状态并返回；成功则设置端点与 client_id 为当前 robot_id。
+ */
 bool SubmitLoginSelection(RoboGo::io::MqttClient &mqtt_client) {
     MqttServerAddressState &mqtt_server_state = GetMqttServerAddressState(mqtt_client); // 取全局地址输入状态
     std::string mqtt_host;                                             // 解析出的主机
@@ -718,8 +787,10 @@ bool SubmitLoginSelection(RoboGo::io::MqttClient &mqtt_client) {
     return true;                                                      // 登录参数已写入，返回成功
 }
 
-// 功能：根据连接状态计算登录/队伍选择子面板所需高度（已登录时仅显示退出按钮，更矮）。
-// 思路：按各文本行/按钮高度与间距累加；已连接分支走精简布局。
+/**
+ * @brief 根据连接状态计算登录/队伍选择子面板所需高度（已登录时仅显示退出按钮，更矮）。
+ * @note 思路：按各文本行/按钮高度与间距累加；已连接分支走精简布局。
+ */
 float GetLoginPanelHeight(RoboGo::io::MqttClient::ConnectionState connection_state) {
     const ImGuiStyle &style = ImGui::GetStyle();                      // 取全局 ImGui 样式（含间距/内边距）
     const float scale = ImGui::GetScale();                            // DPI 缩放比例
@@ -754,7 +825,9 @@ float GetLoginPanelHeight(RoboGo::io::MqttClient::ConnectionState connection_sta
     return content_height + style.WindowPadding.y * 2.0f + kLoginPanelBottomPadding * scale; // 加上内边距与底部留白
 }
 
-// 功能：渲染"连接状态"一行（带颜色）。
+/**
+ * @brief 渲染"连接状态"一行（带颜色）。
+ */
 void ShowLoginStatus(RoboGo::io::MqttClient::ConnectionState connection_state) {
     ImGui::AlignTextToFramePadding();                                // 文本对齐到控件内边距
     ImGui::TextDisabled("连接状态");                                 // 渲染"连接状态"标签（灰色）
@@ -763,7 +836,9 @@ void ShowLoginStatus(RoboGo::io::MqttClient::ConnectionState connection_state) {
     ImGui::TextUnformatted(GetLoginConnectionStateText(connection_state)); // 显示状态中文文案
 }
 
-// 功能：渲染队伍选择（红队/蓝队两个并排按钮），点击更新选中队伍。
+/**
+ * @brief 渲染队伍选择（红队/蓝队两个并排按钮），点击更新选中队伍。
+ */
 void ShowLoginTeamSelection(TeamRobotSelectionState &selection_state) {
     const float button_gap = ImGui::GetStyle().ItemSpacing.x;        // 相邻控件水平间距
     const float button_width = (ImGui::GetContentRegionAvail().x - button_gap) * 0.5f; // 两按钮均分可用宽度
@@ -787,7 +862,9 @@ void ShowLoginTeamSelection(TeamRobotSelectionState &selection_state) {
     }
 }
 
-// 功能：渲染可选身份按钮（一行等宽排列），点击更新选中身份。
+/**
+ * @brief 渲染可选身份按钮（一行等宽排列），点击更新选中身份。
+ */
 void ShowLoginRobotSelection(TeamRobotSelectionState &selection_state) {
     const int robot_count = static_cast<int>(kLoginRobotNames.size());   // 可选身份数量（重装 / 3 / 4 / 指挥手）
     const float button_gap = ImGui::GetStyle().ItemSpacing.x;        // 相邻控件水平间距
@@ -812,10 +889,11 @@ void ShowLoginRobotSelection(TeamRobotSelectionState &selection_state) {
     }
 }
 
-// 功能：渲染 MQTT 服务端地址输入框，并在解析错误/连接失败时给出提示。
-// 设计说明：2027 正式地址是 192.168.12.1，但本地跑 tools/mock_rm_server.py 时监听的是 127.0.0.1，
-//           两者只差一个 IP，现场/开发切换时极容易只改一半。这里放一个"本地"快捷按钮 + 失败提示，
-//           点一下就能把地址切成 127.0.0.1:3333，不用手敲。
+/**
+ * @brief 渲染 MQTT 服务端地址输入框，并在解析错误/连接失败时给出提示。设计说明：2027 正式地址是 192.168.12.1，但本地跑 tools/mock_rm_server.py
+ *        时监听的是 127.0.0.1，两者只差一个 IP，现场/开发切换时极容易只改一半。这里放一个"本地"快捷按钮 + 失败提示，点一下就能把地址切成 127.0.0.1:3333，
+ *        不用手敲。
+ */
 void ShowMqttServerEndpointInput(RoboGo::io::MqttClient &mqtt_client) {
     MqttServerAddressState &mqtt_server_state = GetMqttServerAddressState(mqtt_client); // 取全局地址输入状态
     ImGui::TextDisabled("MQTT 服务端");                               // 灰色标题
@@ -849,7 +927,9 @@ void ShowMqttServerEndpointInput(RoboGo::io::MqttClient &mqtt_client) {
     }
 }
 
-// 功能：渲染已登录时的"退出登录"面板（置空 client_id 触发断开）。
+/**
+ * @brief 渲染已登录时的"退出登录"面板（置空 client_id 触发断开）。
+ */
 void ShowLogoutPanel(RoboGo::io::MqttClient &mqtt_client) {
     ScopedTitledPanel logout_panel("LogoutPanel", ImGui::GetContentRegionAvail().x, "登录控制", ImVec4(1.0f, 0.3f, 0.3f, 1.0f)); // 红色标题子面板
     ScopedStyle logout_button_style = MakeButtonStyle(kLogoutButtonStyle); // Danger 层级：低饱和红
@@ -859,11 +939,11 @@ void ShowLogoutPanel(RoboGo::io::MqttClient &mqtt_client) {
     }
 }
 
-// 功能：登录/队伍选择区域的容器：已连接时显示退出登录面板，否则显示完整登录表单。
-// 高度策略：不再只用 GetLoginPanelHeight 的手算值，而是"上一帧实测内容高度"自校准。
-//   手算值漏算了 ImGui 每行之间的 ItemSpacing.y，子窗口会比内容矮几个像素；子窗口又是固定高度 +
-//   NoScrollbar，最后一行（机器人 4 个按钮）的下沿正好被裁剪矩形切平——表现就是按钮底部没有圆角、
-//   像被一块空白面板盖住。改成实测后，任何 DPI、任何提示文案换行都能刚好包住内容。
+/**
+ * @brief 登录/队伍选择区域的容器：已连接时显示退出登录面板，否则显示完整登录表单。高度策略：不再只用 GetLoginPanelHeight 的手算值，而是"上一帧实测内容高度"自校准。
+ *        手算值漏算了 ImGui 每行之间的 ItemSpacing.y，子窗口会比内容矮几个像素；子窗口又是固定高度 + NoScrollbar，最后一行（机器人 4 个按钮）的下沿正好被裁剪矩形切平——表现就是按钮底部没有圆角、
+ *        像被一块空白面板盖住。改成实测后，任何 DPI、任何提示文案换行都能刚好包住内容。
+ */
 void ShowTeamRobotSelection(RoboGo::io::MqttClient &mqtt_client) {
     TeamRobotSelectionState &selection_state = GetTeamRobotSelectionState(); // 取全局选择状态
     const auto connection_state = mqtt_client.get_connection_state();        // 取当前连接状态
@@ -907,9 +987,10 @@ void ShowTeamRobotSelection(RoboGo::io::MqttClient &mqtt_client) {
     measured_content_height = ImGui::GetCursorPosY() - content_top;    // 供下一帧确定子窗口高度
 }
 
-// 功能：依据当前 robot_id 计算开局面板各子面板的可见性（不同兵种可用指令不同）。
-// 思路：除兵种专属面板外，还要避免"同一功能在多个面板里重复出现"导致版面溢出——
-//       哨兵的补弹/回血/复活都走 SentryCtrlCommand，已在"哨兵控制"面板里，就不再显示通用的弹药/回血/复活面板。
+/**
+ * @brief 依据当前 robot_id 计算开局面板各子面板的可见性（不同兵种可用指令不同）。
+ * @note 思路：除兵种专属面板外，还要避免"同一功能在多个面板里重复出现"导致版面溢出——哨兵的补弹/回血/复活都走 SentryCtrlCommand，已在"哨兵控制"面板里，就不再显示通用的弹药/回血/复活面板。
+ */
 StartPanelVisibility GetStartPanelVisibility(const State &state) {
     uint32_t current_robot_id = GetCurrentRobotId(state);            // 取当前已登录 robot_id
     StartPanelVisibility visibility;                                  // 待填充的可见性集合
@@ -931,8 +1012,10 @@ StartPanelVisibility GetStartPanelVisibility(const State &state) {
     return visibility;   // 返回填充好的可见性集合
 }
 
-// 功能：渲染飞镖控制面板（目标选择 + 闸门开关 + 确认发射）。
-// 思路：5 个目标单选按钮排成两行；切换目标即时下发；开/关闸门与确认发射分别发送 DartCommand，发射附带进入比赛标记。
+/**
+ * @brief 渲染飞镖控制面板（目标选择 + 闸门开关 + 确认发射）。
+ * @note 思路：5 个目标单选按钮排成两行；切换目标即时下发；开/关闸门与确认发射分别发送 DartCommand，发射附带进入比赛标记。
+ */
 void ShowDartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel dart_panel("DartPanel", panel_width, "飞镖控制", ImVec4(1.0f, 0.4f, 0.8f, 1.0f)); // 粉色标题子面板
     ImGui::AlignTextToFramePadding();                                // 文本对齐到内边距
@@ -977,7 +1060,9 @@ void ShowDartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, floa
 }
 
 
-// 功能：渲染飞镖面板（2027 起本行仅保留飞镖）。
+/**
+ * @brief 渲染飞镖面板（2027 起本行仅保留飞镖）。
+ */
 void ShowDartRow(const State &state,
                  RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端，供子面板下发指令
                  bool show_dart_panel) {   // 飞镖面板是否可见
@@ -986,9 +1071,10 @@ void ShowDartRow(const State &state,
     });
 }
 
-// 功能：渲染哨兵控制面板（状态显示 + 补给/复活/姿态三组按钮）。
-// 思路：原先 11 个按钮挤成"一行 5 个 + 一行 6 个"，在半个面板宽度下直接横向溢出、
-//       还会压到窗口底部的"进入比赛"按钮上。现在按功能分两行、按钮宽度按可用宽度自适应均分。
+/**
+ * @brief 渲染哨兵控制面板（状态显示 + 补给/复活/姿态三组按钮）。
+ * @note 思路：原先 11 个按钮挤成"一行 5 个 + 一行 6 个"，在半个面板宽度下直接横向溢出、还会压到窗口底部的"进入比赛"按钮上。现在按功能分两行、按钮宽度按可用宽度自适应均分。
+ */
 void ShowSentryPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel sentry_panel("SentryPanel", panel_width, "哨兵控制", ImVec4(0.9f, 0.6f, 1.0f, 1.0f)); // 紫色标题子面板
 
@@ -1047,15 +1133,19 @@ void ShowSentryPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, fl
     if (ImGui::Button("强化移动", button_size)) SendSentryCtrlCommand(mqtt_client, 12); // 强化移动
 }
 
-// 功能：把哨兵面板单独排成一行。
+/**
+ * @brief 把哨兵面板单独排成一行。
+ */
 void ShowSentryRow(const State &state, RoboGo::io::MqttClient &mqtt_client, const StartPanelVisibility &visibility) {
     ShowPanelRow("SentryRow", 5.0f, {                                  // 行布局（标题 + 状态 + 两行按钮）
             {.visible = visibility.show_sentry_panel, .render = [&](float width) { ShowSentryPanel(state, mqtt_client, width); }}, // 哨兵面板回调
     });
 }
 
-// 功能：渲染弹药兑换面板（输入允许发弹量 + 兑换/远程兑换按钮）。
-// 思路：数字输入框解析发量；两按钮依据补给区/经济/英雄计价反馈决定是否可用，兑换发送 CommonCommand(cmd 1/2)，远程兑换发送 cmd 5。
+/**
+ * @brief 渲染弹药兑换面板（输入允许发弹量 + 兑换/远程兑换按钮）。
+ * @note 思路：数字输入框解析发量；两按钮依据补给区/经济/英雄计价反馈决定是否可用，兑换发送 CommonCommand(cmd 1/2)，远程兑换发送 cmd 5。
+ */
 void ShowAmmoPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width, bool is_hero) {
     ScopedTitledPanel ammo_panel("AmmoPanel", panel_width, "弹药兑换", ImVec4(0.3f, 1.0f, 0.3f, 1.0f)); // 绿色标题子面板
 
@@ -1091,8 +1181,10 @@ void ShowAmmoPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, floa
     }   // 结束禁用原因判断
 }
 
-// 功能：渲染装配控制面板（输入难度 + 取消/确认装配按钮）。
-// 思路：难度输入框；取消/确认按钮依据技术核心状态（basic_state）禁用；确认时把难度随 AssemblyCommand 下发。
+/**
+ * @brief 渲染装配控制面板（输入难度 + 取消/确认装配按钮）。
+ * @note 思路：难度输入框；取消/确认按钮依据技术核心状态（basic_state）禁用；确认时把难度随 AssemblyCommand 下发。
+ */
 void ShowAssemblyPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel assembly_panel("AssemblyPanel", panel_width, "装配控制", ImVec4(0.3f, 0.8f, 1.0f, 1.0f)); // 青蓝色标题子面板
 
@@ -1167,8 +1259,10 @@ void ShowAssemblyPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, 
 }
 
 
-// 功能：渲染远程回血面板。
-// 思路：依据经济反馈决定按钮可用性，点击发送 CommonCommand(cmd 6)。
+/**
+ * @brief 渲染远程回血面板。
+ * @note 思路：依据经济反馈决定按钮可用性，点击发送 CommonCommand(cmd 6)。
+ */
 void ShowRecoverPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel recover_panel("RecoverPanel", panel_width, "远程回血", ImVec4(1.0f, 0.3f, 0.3f, 1.0f)); // 红色标题子面板
 
@@ -1181,8 +1275,10 @@ void ShowRecoverPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, f
     }
 }
 
-// 功能：渲染复活控制面板（确认复活 / 兑换立即复活两个按钮）。
-// 思路：两按钮依据复活状态反馈分别决定是否可用，点击发送 CommonCommand(cmd 3 / 4)。
+/**
+ * @brief 渲染复活控制面板（确认复活 / 兑换立即复活两个按钮）。
+ * @note 思路：两按钮依据复活状态反馈分别决定是否可用，点击发送 CommonCommand(cmd 3 / 4)。
+ */
 void ShowRevivePanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel revive_panel("RevivePanel", panel_width, "复活控制", ImVec4(1.0f, 1.0f, 0.3f, 1.0f)); // 黄色标题子面板
 
@@ -1202,8 +1298,10 @@ void ShowRevivePanel(const State &state, RoboGo::io::MqttClient &mqtt_client, fl
     }
 }
 
-// 功能：渲染地图标记面板（进入/退出标记模式 + 是否包含哨兵）。
-// 思路：依据全局 marker 模式状态切换按钮文案；提供"包含哨兵"开关写入全局设置。
+/**
+ * @brief 渲染地图标记面板（进入/退出标记模式 + 是否包含哨兵）。
+ * @note 思路：依据全局 marker 模式状态切换按钮文案；提供"包含哨兵"开关写入全局设置。
+ */
 void ShowMarkerPanel(float panel_width) {
     ScopedTitledPanel marker_panel("MarkerPanel", panel_width, "地图标记", ImVec4(1.0f, 0.6f, 0.2f, 1.0f)); // 橙色标题子面板
 
@@ -1236,8 +1334,10 @@ void ShowMarkerPanel(float panel_width) {
     ImGui::Spacing();                                                // 底部留白
 }
 
-// 功能：渲染性能选择面板（发射机构/底盘/哨兵的模式单选）。
-// 思路：英雄与普通机器人选项文案不同；任一选项改变即下发 RobotPerformanceSelectionCommand。
+/**
+ * @brief 渲染性能选择面板（发射机构/底盘/哨兵的模式单选）。
+ * @note 思路：英雄与普通机器人选项文案不同；任一选项改变即下发 RobotPerformanceSelectionCommand。
+ */
 void ShowPerformancePanel(const State &state,
                           RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端，用于下发性能选择
                           float panel_width,   // 本面板被行布局工具分配的宽度
@@ -1275,7 +1375,9 @@ void ShowPerformancePanel(const State &state,
     }
 }
 
-// 功能：把弹药/装配两个面板排成一行（按可见性隐藏空位）。
+/**
+ * @brief 把弹药/装配两个面板排成一行（按可见性隐藏空位）。
+ */
 void ShowAmmoAssemblyDeployRow(const State &state,
                                RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端
                                const StartPanelVisibility &visibility) {   // 可见性集合，决定哪些面板参与排布
@@ -1285,7 +1387,9 @@ void ShowAmmoAssemblyDeployRow(const State &state,
     });
 }
 
-// 功能：把回血/复活两个面板排成一行（按可见性隐藏空位）。
+/**
+ * @brief 把回血/复活两个面板排成一行（按可见性隐藏空位）。
+ */
 void ShowRecoverReviveRow(const State &state,
                           RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端
                           const StartPanelVisibility &visibility) {   // 可见性集合
@@ -1295,7 +1399,9 @@ void ShowRecoverReviveRow(const State &state,
     });
 }
 
-// 功能：把地图标记/性能选择两个面板排成一行（按可见性隐藏空位）。
+/**
+ * @brief 把地图标记/性能选择两个面板排成一行（按可见性隐藏空位）。
+ */
 void ShowMarkerPerformanceRow(const State &state,
                               RoboGo::io::MqttClient &mqtt_client,   // MQTT 客户端
                               const StartPanelVisibility &visibility) {   // 可见性集合
@@ -1312,7 +1418,9 @@ void ShowMarkerPerformanceRow(const State &state,
     });
 }
 
-// 功能：渲染鼠标灵敏度滑块行，并把改动实时写回全局设置。
+/**
+ * @brief 渲染鼠标灵敏度滑块行，并把改动实时写回全局设置。
+ */
 void ShowMouseSensitivityRow() {
     ImGui::Dummy(ImVec2(0.0f, kMouseSensitivityTopGap * ImGui::GetScale())); // 顶部留白
 
@@ -1337,9 +1445,10 @@ void ShowMouseSensitivityRow() {
     }
 }
 
-// 功能：渲染底部主操作按钮：已登录显示"进入比赛"，否则显示"登录"。
-// 思路：按钮改为在正常布局流中居中（原来是 SetCursorPos 绝对定位到窗口底部），
-//       这样"进入比赛"永远排在内容区之后，不会再被上面的功能面板压住。
+/**
+ * @brief 渲染底部主操作按钮：已登录显示"进入比赛"，否则显示"登录"。
+ * @note 思路：按钮改为在正常布局流中居中（原来是 SetCursorPos 绝对定位到窗口底部），这样"进入比赛"永远排在内容区之后，不会再被上面的功能面板压住。
+ */
 void ShowPrimaryActionButton(RoboGo::io::MqttClient &mqtt_client) {
     float button_width = 200 * ImGui::GetScale();                     // 按钮宽度（随缩放）
     float button_height = kPrimaryActionButtonHeight * ImGui::GetScale(); // 按钮高度
@@ -1387,13 +1496,13 @@ void ShowPrimaryActionButton(RoboGo::io::MqttClient &mqtt_client) {
     }
 }
 
-// 功能：绘制「UDP 画面反转」开关行（标题 + 拨动开关 + 状态文字）。
-// 思路：原来用一个 SmallButton 显示「开/关」，深色面板上几乎与背景同色，看不出是可点控件；
-//       改为常见设置项的样式——金色标题右侧紧跟胶囊形拨动开关（轨道 + 圆形滑块，开启绿色靠右、
-//       关闭深灰靠左），开关右边再用文字复述当前状态。标题+开关+状态整体作为点击热区，
-//       悬停时该区域淡高亮并弹提示。控件跟随标题左对齐（而不是贴窗口右边缘）：登录控制面板
-//       右下角会被小地图面板压住，右对齐会被盖掉。
-// 返回：本帧是否点了开关（由调用方翻转实际方向并写日志）。
+/**
+ * @brief 绘制「UDP 画面反转」开关行（标题 + 拨动开关 + 状态文字）。
+ * @note 思路：原来用一个 SmallButton 显示「开/关」，深色面板上几乎与背景同色，看不出是可点控件；改为常见设置项的样式——金色标题右侧紧跟胶囊形拨动开关（轨道 + 圆形滑块，
+ *        开启绿色靠右、关闭深灰靠左），开关右边再用文字复述当前状态。标题+开关+状态整体作为点击热区，悬停时该区域淡高亮并弹提示。控件跟随标题左对齐（而不是贴窗口右边缘）：登录控制面板右下角会被小地图面板压住，
+ *        右对齐会被盖掉。
+ * @return 本帧是否点了开关（由调用方翻转实际方向并写日志）。
+ */
 bool ShowVideoInvertRow(bool udp_video_inverted) {
     const float scale = ImGui::GetScale();                              // 全局缩放
     const float row_height = std::max(ImGui::GetFrameHeight(), 24.0f * scale); // 行高至少放得下开关
@@ -1465,9 +1574,11 @@ bool ShowVideoInvertRow(bool udp_video_inverted) {
 
 }  // namespace
 
-// 功能：本地联调用的自动登录钩子——设置了环境变量 ROBOGO_DEV_ROBOT_ID 时，直接以该编号作为 client_id 连接。
-// 思路：只在首次调用时执行一次；未设置环境变量则完全不影响原有登录流程（比赛现场不会设置它）。
-//       配套 tools/mock_rm_server.py 使用，可跳过每次点选队伍/机器人，方便验证 HUD 排版。
+/**
+ * @brief 本地联调用的自动登录钩子——设置了环境变量 ROBOGO_DEV_ROBOT_ID 时，直接以该编号作为 client_id 连接。
+ * @note 思路：只在首次调用时执行一次；未设置环境变量则完全不影响原有登录流程（比赛现场不会设置它）。配套 tools/mock_rm_server.py 使用，可跳过每次点选队伍/机器人，
+ *        方便验证 HUD 排版。
+ */
 void ApplyDevAutoLogin(RoboGo::io::MqttClient &mqtt_client) {
     static bool already_applied = false;                                  // 保证只执行一次
     if (already_applied) {                                                // 已执行过
@@ -1483,7 +1594,7 @@ void ApplyDevAutoLogin(RoboGo::io::MqttClient &mqtt_client) {
     mqtt_client.set_server_endpoint(dev_host != nullptr && *dev_host != '\0' ? dev_host : "127.0.0.1",  // 默认本地假数据源
                                     dev_port != nullptr && *dev_port != '\0' ? dev_port : "3333");      // 默认 3333
     mqtt_client.set_client_id(dev_robot_id);                              // 以指定编号连接，触发 MQTT 握手
-    logged_in_robot_id = static_cast<uint32_t>(std::atoi(dev_robot_id));  // 联调身份：让"按兵种决定可见性"的面板立刻可用
+    logged_in_robot_id = RoboGo::app::ParseInteger<uint32_t>(dev_robot_id).value_or(0u);  // 联调身份：非法 ID 记 0
     // 可选：把本次会话标记为"指挥手"，方便联调指挥台（ROBOGO_DEV_COMMANDER=1）。
     const char *dev_commander = std::getenv("ROBOGO_DEV_COMMANDER");      // 读取指挥手调试开关
     if (dev_commander != nullptr && dev_commander[0] == '1' && dev_commander[1] == '\0') {   // 严格等于 "1"
@@ -1495,7 +1606,9 @@ void ApplyDevAutoLogin(RoboGo::io::MqttClient &mqtt_client) {
                 dev_port != nullptr ? dev_port : "3333");                 // 实际使用的端口
 }
 
-// 功能：开局面板总入口。组织登录区、各赛前指令行、鼠标灵敏度与底部主按钮。仅当未进入比赛时由主窗口调用。
+/**
+ * @brief 开局面板总入口。组织登录区、各赛前指令行、鼠标灵敏度与底部主按钮。仅当未进入比赛时由主窗口调用。
+ */
 bool StartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, bool udp_video_inverted) {
     ApplyDevAutoLogin(mqtt_client);                                    // 联调时可自动登录（未设环境变量则无副作用）
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings; // 无导航/装饰/移动/保存
@@ -1549,11 +1662,10 @@ bool StartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, bool ud
     return video_invert_requested;                                    // 返回本帧是否请求翻转
 }
 
-// 功能：比赛中的重装装配浮层（F1 开关，纯键盘操作）。
-// 为什么做成键盘而非按钮：比赛模式下鼠标被捕获/隐藏，点按钮会顺带把云台带偏；
-// 而且装配要在 45 秒窗口内完成，弹窗+点击的路径太长。
-// 难度来源：默认沿用开局面板里已经填好的难度（避免"赛前填了 4、浮层却发 1"），
-//           数字键 1~4 可以随时改，改完会同步写回开局面板的输入串，两边始终一致。
+/**
+ * @brief 比赛中的重装装配浮层（F1 开关，纯键盘操作）。为什么做成键盘而非按钮：比赛模式下鼠标被捕获/隐藏，点按钮会顺带把云台带偏；而且装配要在 45 秒窗口内完成，弹窗+点击的路径太长。
+ *        难度来源：默认沿用开局面板里已经填好的难度（避免"赛前填了 4、浮层却发 1"），数字键 1~4 可以随时改，改完会同步写回开局面板的输入串，两边始终一致。
+ */
 namespace {
 
 // 装配浮层的展示参数（全部由 ShowAssemblyOverlay 从 State 里读出来）。
@@ -1574,7 +1686,8 @@ void HandleAssemblyHotkeys(const ImGuiIO &io, bool &overlay_open, int &selected_
         overlay_open = !overlay_open;
         if (overlay_open && selected_difficulty <= 0) {  // 首次打开时从开局面板带入难度
             AssemblyPanelState &panel_state = GetAssemblyPanelState();
-            selected_difficulty = std::clamp(std::atoi(panel_state.difficulty_str.c_str()), 1, 4);
+            selected_difficulty = std::clamp(
+                    RoboGo::app::ParseInteger<int>(panel_state.difficulty_str).value_or(1), 1, 4);
         }
     }
     if (!overlay_open || io.WantTextInput) {

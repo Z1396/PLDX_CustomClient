@@ -61,8 +61,10 @@ struct DescriptorHeapAllocator {
     UINT heap_handle_increment = 0;  // 单个描述符的句柄步长(字节)，由设备查询得到
     ImVector<int> free_indices;  // 空闲描述符索引栈，分配时弹出、释放时压回
 
-    // 功能：绑定一个已创建的描述符堆并完成初始化。
-    // 思路：记录堆起止句柄、句柄步长，并把所有描述符下标压入空闲栈备用。
+    /**
+     * @brief 绑定一个已创建的描述符堆并完成初始化。
+     * @note 思路：记录堆起止句柄、句柄步长，并把所有描述符下标压入空闲栈备用。
+     */
     void Create(ID3D12Device *device, ID3D12DescriptorHeap *descriptor_heap) {
         IM_ASSERT(heap == nullptr && free_indices.empty());  // 断言：分配器只能初始化一次，且空闲栈必须为空
         heap = descriptor_heap;  // 记录被管理的描述符堆指针
@@ -77,14 +79,18 @@ struct DescriptorHeapAllocator {
         }
     }
 
-    // 功能：清理分配器状态（仅清空指针与空闲列表，不释放堆本身）。
+    /**
+     * @brief 清理分配器状态（仅清空指针与空闲列表，不释放堆本身）。
+     */
     void Destroy() {
         heap = nullptr;  // 清空堆指针，表示分配器不再管理任何堆
         free_indices.clear();  // 清空空闲索引栈，释放其内部内存
     }
 
-    // 功能：从空闲栈弹出一个描述符下标，计算出对应的 CPU/GPU 句柄返回。
-    // 思路：下标乘以句柄步长再加上堆基址，得到连续排列的描述符地址。
+    /**
+     * @brief 从空闲栈弹出一个描述符下标，计算出对应的 CPU/GPU 句柄返回。
+     * @note 思路：下标乘以句柄步长再加上堆基址，得到连续排列的描述符地址。
+     */
     void Alloc(D3D12_CPU_DESCRIPTOR_HANDLE *out_cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE *out_gpu_desc_handle) {
         IM_ASSERT(free_indices.Size > 0);  // 断言尚有空闲描述符，堆耗尽属于调用方违约
         const int index = free_indices.back();  // 取栈顶索引作为本次分配结果
@@ -93,8 +99,10 @@ struct DescriptorHeapAllocator {
         out_gpu_desc_handle->ptr = heap_start_gpu.ptr + (static_cast<UINT64>(index) * heap_handle_increment);  // GPU 句柄同样按索引推进，供命令列表绑定使用
     }
 
-    // 功能：释放一个描述符，将其下标归还空闲栈。
-    // 思路：用句柄地址反推下标（CPU/GPU 下标应一致），压回空闲列表供后续复用。
+    /**
+     * @brief 释放一个描述符，将其下标归还空闲栈。
+     * @note 思路：用句柄地址反推下标（CPU/GPU 下标应一致），压回空闲列表供后续复用。
+     */
     void Free(const D3D12_CPU_DESCRIPTOR_HANDLE cpu_desc_handle, const D3D12_GPU_DESCRIPTOR_HANDLE gpu_desc_handle) {
         const int cpu_index = static_cast<int>((cpu_desc_handle.ptr - heap_start_cpu.ptr) / heap_handle_increment);  // 用 CPU 句柄地址反推出描述符下标
         const int gpu_index = static_cast<int>((gpu_desc_handle.ptr - heap_start_gpu.ptr) / heap_handle_increment);  // 用 GPU 句柄地址反推下标，正常情况下两者应相等
@@ -150,15 +158,19 @@ struct TextureUploadContext {
 // WindowsPlatformBackend —— PlatformBackend 的 Windows 实现：Win32 窗口 + DirectX12，承载所有 DX12 资源管理。
 class WindowsPlatformBackend final : public RoboGo::platform::PlatformBackend {
 public:  // 以下为 PlatformBackend 接口的公开实现
-    // 功能：返回本后端的平台标识名称。
-    // 思路：直接返回编译期字面量 "RoboGo-windows"，用于日志/调试区分当前运行平台。
-    // 返回值：C 字符串形式的应用名（静态存储，生命周期安全）。
+    /**
+     * @brief 返回本后端的平台标识名称。
+     * @note 思路：直接返回编译期字面量 "RoboGo-windows"，用于日志/调试区分当前运行平台。
+     * @return C 字符串形式的应用名（静态存储，生命周期安全）。
+     */
     [[nodiscard]] const char *application_name() const override {
         return "RoboGo-windows";  // 返回 Windows 平台标识字符串，供日志与调试区分运行平台
     }
 
-    // 功能：初始化整个 Windows 后端（DPI、窗口、DX12 设备、ImGui 上下文、视频纹理描述符）。
-    // 思路：依次开启 DPI 感知、注册窗口类、创建窗口、创建设备，再初始化 ImGui 的 Win32/DX12 后端。
+    /**
+     * @brief 初始化整个 Windows 后端（DPI、窗口、DX12 设备、ImGui 上下文、视频纹理描述符）。
+     * @note 思路：依次开启 DPI 感知、注册窗口类、创建窗口、创建设备，再初始化 ImGui 的 Win32/DX12 后端。
+     */
     bool Initialize() override {
         // 开启进程级 DPI 感知，避免高 DPI 屏幕下界面被拉伸模糊。
         ImGui_ImplWin32_EnableDpiAwareness();
@@ -224,8 +236,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         RAWINPUTDEVICE raw_mouse_device{};
         raw_mouse_device.usUsagePage = 0x01;  // HID_USAGE_PAGE_GENERIC
         raw_mouse_device.usUsage = 0x02;      // HID_USAGE_GENERIC_MOUSE
-        raw_mouse_device.dwFlags = 0;
-        raw_mouse_device.hwndTarget = hwnd_;
+        raw_mouse_device.dwFlags = 0;       // 0：只在窗口处于前台时投递，避免后台误采。
+        raw_mouse_device.hwndTarget = hwnd_;     // 目标窗口句柄，注册随窗口销毁自动失效。
+
+        // 注册鼠标 Raw Input 设备
         if (!::RegisterRawInputDevices(&raw_mouse_device, 1, sizeof(raw_mouse_device))) {
             SPDLOG_WARN("注册鼠标 Raw Input 失败，Windows 端鼠标位移将不可用");
         } else {
@@ -271,8 +285,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         return true;  // 初始化成功
     }
 
-    // 功能：释放 Windows 后端所有资源（纹理、ImGui、DX12 设备、窗口）。
-    // 思路：先解除输入捕获并等待 GPU 完成，再依次释放视频纹理、ImGui 上下文、DX12 设备与窗口。
+    /**
+     * @brief 释放 Windows 后端所有资源（纹理、ImGui、DX12 设备、窗口）。
+     * @note 思路：先解除输入捕获并等待 GPU 完成，再依次释放视频纹理、ImGui 上下文、DX12 设备与窗口。
+     */
     void Shutdown() override {
         if (!initialized_) {  // 未初始化则没有需要释放的资源，直接返回
             return;  // 提前返回，保证 Shutdown 可重复调用
@@ -299,8 +315,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         initialized_ = false;  // 复位初始化标志，防止重复释放
     }
 
-    // 功能：非阻塞地取出并分发所有窗口消息。
-    // 思路：用 PeekMessage 轮询消息队列，遇到 WM_QUIT 时标记应关闭；返回是否应继续运行主循环。
+    /**
+     * @brief 非阻塞地取出并分发所有窗口消息。
+     * @note 思路：用 PeekMessage 轮询消息队列，遇到 WM_QUIT 时标记应关闭；返回是否应继续运行主循环。
+     */
     [[nodiscard]] bool ProcessEvents() override {
         // MSG:是 Windows 消息结构体，包含消息类型、发送窗口句柄、消息参数等。
         MSG message;
@@ -314,7 +332,8 @@ public:  // 以下为 PlatformBackend 接口的公开实现
             UINT  wRemoveMsg
         );
         hWnd：指定要查看哪个窗口的消息。若为 NULL，则检查当前线程所有窗口及线程消息；若为 -1，仅检查通过 PostThreadMessage 投递的线程消息。
-        wRemoveMsg：控制是否将消息从队列中移除。常用 PM_REMOVE（处理并移除）或 PM_NOREMOVE（仅查看，不移除，常用于检查队列是否为空）。*/
+        wRemoveMsg：控制是否将消息从队列中移除。常用 PM_REMOVE（处理并移除）或 PM_NOREMOVE（仅查看，不移除，常用于检查队列是否为空）。
+         */
         while (::PeekMessage(&message, nullptr, 0U, 0U, PM_REMOVE)) {  // 循环取出消息队列中的全部消息（PM_REMOVE 表示取走即删除）
             // TranslateMessage 是 Windows 消息循环中的关键函数，它的作用是将虚拟键消息（如按键按下 WM_KEYDOWN也就是键盘上的任意键）转换为字符消息（如 WM_CHAR）
             ::TranslateMessage(&message);
@@ -328,8 +347,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         return !should_close_;  // 已标记关闭则返回 false 结束主循环
     }
 
-    // 功能：开始新的一帧，处理交换链被遮挡/窗口最小化的暂停情形。
-    // 思路：若交换链仍被遮挡或窗口最小化则短暂休眠并返回 false（跳过本帧）；否则依次启动 DX12/Win32/ImGui 帧。
+    /**
+     * @brief 开始新的一帧，处理交换链被遮挡/窗口最小化的暂停情形。
+     * @note 思路：若交换链仍被遮挡或窗口最小化则短暂休眠并返回 false（跳过本帧）；否则依次启动 DX12/Win32/ImGui 帧。
+     */
     [[nodiscard]] bool BeginFrame() override {
         // 用 Present(测试) 探测交换链是否仍处于被遮挡状态，或窗口是否最小化；是则休眠 10ms 并跳过本帧。
         if ((swap_chain_occluded_ && swap_chain_->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) || ::IsIconic(hwnd_)) {
@@ -344,9 +365,11 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         return true;  // 本帧可以正常渲染，返回 true
     }
 
-    // 功能：将本帧 ImGui 绘制数据渲染到后台缓冲并提交呈现。
-    // 思路：等待可用帧上下文，把后台缓冲从 PRESENT 态转为 RENDER_TARGET 态后清屏、绘制，再转回 PRESENT 态并呈现。
-    // 参数：draw_data —— 当前帧 ImGui 绘制数据，包含全部图元命令与顶点缓冲。
+    /**
+     * @brief 将本帧 ImGui 绘制数据渲染到后台缓冲并提交呈现。
+     * @param draw_data 当前帧 ImGui 绘制数据，包含全部图元命令与顶点缓冲。
+     * @note 思路：等待可用帧上下文，把后台缓冲从 PRESENT 态转为 RENDER_TARGET 态后清屏、绘制，再转回 PRESENT 态并呈现。
+     */
     void RenderFrame(ImDrawData *draw_data) override {
         // 获取下一帧上下文（必要时等待 GPU 完成上一帧或等待交换链可呈现）。
         WindowsFrameContext *frame_context = WaitForNextFrameContext();  // 获取本帧上下文（必要时等待 GPU）
@@ -388,12 +411,15 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         ++frame_index_;  // 帧序号自增，轮换飞行帧上下文
     }
 
-    // 功能：切换游戏输入捕获模式（将鼠标光标限制在窗口客户区内并隐藏光标）。
-    // 思路：enabled 为真时把鼠标裁剪到窗口屏幕坐标矩形并隐藏光标；为假时恢复。重复设置直接返回。
-    // 参数：enabled —— true 锁定并隐藏鼠标（游戏操控），false 恢复普通光标。
+    /**
+     * @brief 切换游戏输入捕获模式（将鼠标光标限制在窗口客户区内并隐藏光标）。
+     * @param enabled true 锁定并隐藏鼠标（游戏操控），false 恢复普通光标。
+     * @note 思路：enabled 为真时把鼠标裁剪到窗口屏幕坐标矩形并隐藏光标；为假时恢复。重复设置直接返回。
+     */
     void SetGameInputCapture(const bool enabled) override {
         /*hwnd_ 主窗口句柄
-        game_input_captured_ 游戏输入捕获状态*/
+        game_input_captured_ 游戏输入捕获状态
+         */
         if (hwnd_ == nullptr || game_input_captured_ == enabled) {  // 窗口未创建或状态未发生变化时无需处理
             return;  // 窗口无效或状态已一致，无需处理
         }
@@ -427,10 +453,12 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         game_input_captured_ = enabled;
     }
 
-    // 功能：从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
-    // 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
-    // 参数：slot —— 目标纹理槽；frame —— 视频帧像素数据（RGBA 缓冲 + 宽高）。
-    // 返回值：true 上传成功，false 槽位不支持或上传失败。
+    /**
+     * @brief 从视频帧上传纹理（按纹理槽分流到动态或静态纹理）。
+     * @param slot 目标纹理槽；frame —— 视频帧像素数据（RGBA 缓冲 + 宽高）。
+     * @note 思路：UDP/自定义视频走双缓冲动态纹理，小地图走静态纹理。
+     * @return true 上传成功，false 槽位不支持或上传失败。
+     */
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::app::VideoFrame &frame) override {
         switch (slot) {  // 按纹理槽类型分流到不同的上传实现
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 图传视频槽
@@ -441,10 +469,12 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         return false;  // 未知槽位或不支持，返回失败
     }  // 结束 UploadTexture（视频帧重载）
 
-    // 功能：从解码后的图像上传纹理（仅小地图槽支持该重载）。
-    // 思路：仅 MiniMap 槽接受 DecodedImage，其余槽直接拒绝。
-    // 参数：slot —— 目标纹理槽（仅 MiniMap）；image —— 已解码图像像素数据。
-    // 返回值：true 上传成功，false 槽位不支持或上传失败。
+    /**
+     * @brief 从解码后的图像上传纹理（仅小地图槽支持该重载）。
+     * @param slot 目标纹理槽（仅 MiniMap）；image —— 已解码图像像素数据。
+     * @note 思路：仅 MiniMap 槽接受 DecodedImage，其余槽直接拒绝。
+     * @return true 上传成功，false 槽位不支持或上传失败。
+     */
     [[nodiscard]] bool UploadTexture(const RoboGo::app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) override {
         // 两张静态图：小地图底图、地形分层叠加层。都只在启动时上传一次。
         if (slot == RoboGo::app::TextureSlot::MiniMap) {  // 小地图底图
@@ -456,10 +486,12 @@ public:  // 以下为 PlatformBackend 接口的公开实现
         return false;  // 视频槽不接受已解码图像
     }  // 结束 UploadTexture（解码图像重载）
 
-    // 功能：获取指定纹理槽当前应显示的纹理视图。
-    // 思路：动态纹理取 current_index 指向的一张，静态纹理直接取 mini_map_texture_。
-    // 参数：slot —— 目标纹理槽。
-    // 返回值：TextureView（GPU 句柄 + 尺寸）；若无有效纹理返回空视图。
+    /**
+     * @brief 获取指定纹理槽当前应显示的纹理视图。
+     * @param slot 目标纹理槽。
+     * @note 思路：动态纹理取 current_index 指向的一张，静态纹理直接取 mini_map_texture_。
+     * @return TextureView（GPU 句柄 + 尺寸）；若无有效纹理返回空视图。
+     */
     [[nodiscard]] RoboGo::app::TextureView GetTextureView(const RoboGo::app::TextureSlot slot) const override {
         switch (slot) {  // 按槽位返回对应的纹理视图
             case RoboGo::app::TextureSlot::UdpVideo:  // UDP 视频槽
@@ -473,8 +505,10 @@ public:  // 以下为 PlatformBackend 接口的公开实现
     }
 
 private:  // 以下为内部实现细节，不对外暴露
-    // 功能：创建并初始化 DirectX12 核心对象（设备、交换链、描述符堆、命令队列/分配器/列表、fence）。
-    // 思路：先填交换链描述并按需开启调试层，再创建设备，随后依次创建 RTV/SRV 堆、命令队列与飞行帧资源。
+    /**
+     * @brief 创建并初始化 DirectX12 核心对象（设备、交换链、描述符堆、命令队列/分配器/列表、fence）。
+     * @note 思路：先填交换链描述并按需开启调试层，再创建设备，随后依次创建 RTV/SRV 堆、命令队列与飞行帧资源。
+     */
     bool CreateDeviceD3D() {
         // 配置交换链：双缓冲、RGBA8 格式、可等待延迟对象、翻转丢弃交换效果。
         DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};              // 交换链描述
@@ -618,8 +652,10 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // D3D 核心对象全部创建成功
     }
 
-    // 功能：释放所有 DX12 相关资源（交换链、命令队列/列表、描述符堆、fence、设备）。
-    // 思路：先清理渲染目标，再按创建逆序逐个 Release 并置空指针；调试层下额外报告存活对象以便排查泄漏。
+    /**
+     * @brief 释放所有 DX12 相关资源（交换链、命令队列/列表、描述符堆、fence、设备）。
+     * @note 思路：先清理渲染目标，再按创建逆序逐个 Release 并置空指针；调试层下额外报告存活对象以便排查泄漏。
+     */
     void CleanupDeviceD3D() {
         CleanupRenderTarget();  // 先释放后台缓冲的 RTV 与资源引用
         if (swap_chain_ != nullptr) {  // 交换链存在时先退出全屏再释放
@@ -677,8 +713,10 @@ private:  // 以下为内部实现细节，不对外暴露
 #endif
     }
 
-    // 功能：销毁窗口并注销窗口类。
-    // 思路：先销毁 HWND，再在已注册时注销窗口类并复位标志。
+    /**
+     * @brief 销毁窗口并注销窗口类。
+     * @note 思路：先销毁 HWND，再在已注册时注销窗口类并复位标志。
+     */
     void CleanupWindow() {
         if (hwnd_ != nullptr) {  // 窗口句柄存在才需要销毁
             ::DestroyWindow(hwnd_);  // 销毁窗口（会触发 WM_DESTROY 消息）
@@ -690,8 +728,10 @@ private:  // 以下为内部实现细节，不对外暴露
         }
     }
 
-    // 功能：为交换链的每个后台缓冲创建渲染目标视图(RTV)。
-    // 思路：依次取交换链缓冲，用预分配的 RTV 句柄创建 RTV 并保存资源指针。
+    /**
+     * @brief 为交换链的每个后台缓冲创建渲染目标视图(RTV)。
+     * @note 思路：依次取交换链缓冲，用预分配的 RTV 句柄创建 RTV 并保存资源指针。
+     */
     void CreateRenderTarget() {
         for (UINT i = 0; i < kBackBuffers; ++i) {  // 遍历每个后台缓冲，各创建一个 RTV
             ID3D12Resource *back_buffer = nullptr;  // 用于接收交换链缓冲资源指针
@@ -701,8 +741,10 @@ private:  // 以下为内部实现细节，不对外暴露
         }
     }
 
-    // 功能：释放后台缓冲渲染目标资源。
-    // 思路：先等待 GPU 完成，再逐个 Release 后台缓冲资源。
+    /**
+     * @brief 释放后台缓冲渲染目标资源。
+     * @note 思路：先等待 GPU 完成，再逐个 Release 后台缓冲资源。
+     */
     void CleanupRenderTarget() {
         WaitForPendingOperations();  // 先等 GPU 画完，避免释放仍在使用的后台缓冲
         for (auto &resource: main_render_target_resource_) {  // 遍历所有后台缓冲资源
@@ -713,9 +755,11 @@ private:  // 以下为内部实现细节，不对外暴露
         }
     }
 
-    // 功能：阻塞等待所有已提交但尚未完成的 GPU 命令执行完毕。
-    // 思路：向 fence 发信号、设置完成事件，再用 WaitForSingleObject 等待该事件。
-    // 返回值：无（当设备/围栏/事件任一为空时直接返回，避免非法等待）。
+    /**
+     * @brief 阻塞等待所有已提交但尚未完成的 GPU 命令执行完毕。
+     * @note 思路：向 fence 发信号、设置完成事件，再用 WaitForSingleObject 等待该事件。
+     * @note 返回值：无（当设备/围栏/事件任一为空时直接返回，避免非法等待）。
+     */
     void WaitForPendingOperations() {
         // 防御性检查：命令队列/围栏/事件任一为空时无法可靠等待，直接返回，避免对空接口调用导致崩溃。
         if (command_queue_ == nullptr || fence_ == nullptr || fence_event_ == nullptr) {
@@ -729,9 +773,11 @@ private:  // 以下为内部实现细节，不对外暴露
         ::WaitForSingleObject(fence_event_, INFINITE);
     }
 
-    // 功能：获取当前帧对应的帧上下文，并在必要时等待其上一轮 GPU 工作结束或交换链可呈现。
-    // 思路：用帧索引对飞行帧数取模选取上下文；若 GPU 未完成该帧则同时等待 fence 与交换链可等待对象。
-    // 返回值：指向选中帧上下文的指针（其命令分配器将被本帧复用）；该指针生命周期与后端一致，调用方无需释放。
+    /**
+     * @brief 获取当前帧对应的帧上下文，并在必要时等待其上一轮 GPU 工作结束或交换链可呈现。
+     * @note 思路：用帧索引对飞行帧数取模选取上下文；若 GPU 未完成该帧则同时等待 fence 与交换链可等待对象。
+     * @return 指向选中帧上下文的指针（其命令分配器将被本帧复用）；该指针生命周期与后端一致，调用方无需释放。
+     */
     WindowsFrameContext *WaitForNextFrameContext() {
         // 用当前帧序号 frame_index_ 对“在飞行中”的帧数 kFramesInFlight 取模，选出本帧要复用的帧上下文；
         // 双缓冲(kFramesInFlight=2)故在 0/1 之间轮换，保证 CPU 提交的第 N 帧与 GPU 正在画的第 N-1 帧互不踩踏。
@@ -756,12 +802,13 @@ private:  // 以下为内部实现细节，不对外暴露
         return frame_context;
     }  // 返回选中的帧上下文指针
 
-    // 功能：从内存中的 RGBA 像素数据创建 D3D12 纹理并完成上传（含临时上传缓冲与一次性拷贝命令）。
-    // 思路：在 DEFAULT 堆建目标纹理（初始 COPY_DEST），在 UPLOAD 堆建暂存缓冲并写入像素，再用独立命令列表拷贝并屏障转态，最后建 SRV。
-    // 参数：data —— 源像素指针（RGBA8，行宽=width*4）；width/height —— 纹理尺寸；
-    //       srv_cpu_handle —— 用于创建 SRV 的 CPU 描述符句柄（由调用方从分配器取得）；
-    //       out_texture_resource —— 输出参数，成功时写入新建的 D3D12 纹理资源指针。
-    // 返回值：true 创建并上传成功，false 任意一步（设备/缓冲/映射）失败。
+    /**
+     * @brief 从内存中的 RGBA 像素数据创建 D3D12 纹理并完成上传（含临时上传缓冲与一次性拷贝命令）。
+     * @param data 源像素指针（RGBA8，行宽=width*4）；width/height —— 纹理尺寸；srv_cpu_handle —— 用于创建 SRV 的 CPU 描述符句柄（由调用方从分配器取得）
+     *        ；out_texture_resource —— 输出参数，成功时写入新建的 D3D12 纹理资源指针。
+     * @note 思路：在 DEFAULT 堆建目标纹理（初始 COPY_DEST），在 UPLOAD 堆建暂存缓冲并写入像素，再用独立命令列表拷贝并屏障转态，最后建 SRV。
+     * @return true 创建并上传成功，false 任意一步（设备/缓冲/映射）失败。
+     */
     [[nodiscard]] bool LoadTextureFromMemory(const uint8_t *data,
                                              const int width,  // 源像素数据指针（RGBA8 紧凑排列）
                                              const int height,  // 纹理宽度（像素）
@@ -922,8 +969,10 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 创建并上传成功
     }
 
-    // 功能：为所有视频纹理（UDP、小地图）预先从 SRV 堆分配描述符。
-    // 思路：在初始化时一次性分配好描述符并标记，避免运行时频繁分配。
+    /**
+     * @brief 为所有视频纹理（UDP、小地图）预先从 SRV 堆分配描述符。
+     * @note 思路：在初始化时一次性分配好描述符并标记，避免运行时频繁分配。
+     */
     void AllocateVideoTextureDescriptors() {
         for (auto &texture: udp_video_textures_.textures) {  // 为 UDP 双缓冲的两张纹理各分配一个描述符
             srv_descriptor_heap_allocator_.Alloc(&texture.cpu_handle, &texture.gpu_handle);  // 分配 CPU/GPU 句柄并写回纹理结构
@@ -937,11 +986,12 @@ private:  // 以下为内部实现细节，不对外暴露
         mini_map_terrain_texture_.descriptor_allocated = true;  // 标记已分配
     }
 
-    // 功能：确保上传上下文（队列/分配器/命令列表/fence/事件/上传缓冲）已创建，且上传缓冲容量足够。
-    // 参数：required_size 本帧需要写入的字节数（行距已对齐）。
-    // 返回值：true 表示可以开始上传。
-    // 功能：确保上传围栏与指定桶的资源就绪（分配器/命令列表/足够大的上传缓冲）。
-    // 关键点：上传缓冲创建时 Map 一次并常驻映射，之后每帧只做 memcpy，不再每帧 Map/Unmap（省两次系统调用）。
+    /**
+     * @brief 确保上传围栏与指定桶的资源就绪（分配器/命令列表/足够大的上传缓冲）。关键点：上传缓冲创建时 Map 一次并常驻映射，之后每帧只做 memcpy，不再每帧 Map/Unmap（省两次系统调用）
+     *        。
+     * @note 参数：required_size 本帧需要写入的字节数（行距已对齐）。
+     * @return true 表示可以开始上传。
+     */
     [[nodiscard]] bool EnsureTextureUploadBucket(TextureUploadBucket &bucket, const UINT required_size) {
         TextureUploadContext &context = texture_upload_;  // 常驻上下文
         if (context.fence == nullptr) {  // 首次使用：建围栏与完成事件
@@ -1015,8 +1065,10 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 就绪
     }
 
-    // 功能：按帧尺寸创建（或重建）目标纹理，并创建对应的 SRV。
-    // 说明：纹理只在尺寸变化时重建；尺寸不变时复用同一张，避免每帧 8MB 的显存分配。
+    /**
+     * @brief 按帧尺寸创建（或重建）目标纹理，并创建对应的 SRV。
+     * @note 说明：纹理只在尺寸变化时重建；尺寸不变时复用同一张，避免每帧 8MB 的显存分配。
+     */
     [[nodiscard]] bool CreateDynamicTexture(WindowsVideoTexture &texture, const int width, const int height) const {
         if (texture.texture != nullptr) {  // 已有旧纹理（尺寸变了）
             texture.texture->Release();  // 释放旧资源
@@ -1056,13 +1108,12 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 创建成功
     }
 
-    // 功能：把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
-    // 思路：尺寸校验 -> 必要时重建纹理 -> 确保上传上下文 -> 写映射内存 -> 录制「屏障 + 拷贝 + 屏障」-> 提交并等待完成。
-    // 功能：把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
-    // 思路：选桶 -> 等该桶上一轮完成 -> 准备资源 -> 纹理尺寸变化时重建 -> 写常驻映射
-    //       -> 录制「屏障 + 拷贝 + 屏障」-> 提交到渲染队列后立即返回（不等 GPU）。
-    // 为什么可以不等：上传与渲染走同一个队列，命令按提交顺序执行，本帧的绘制必然排在上传之后；
-    //       只有绕回同一个桶（3 帧后）时才可能需要等，而那时 GPU 早就拷完了。
+    /**
+     * @brief 把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
+     * @note 思路：尺寸校验 -> 必要时重建纹理 -> 确保上传上下文 -> 写映射内存 -> 录制「屏障 + 拷贝 + 屏障」-> 提交并等待完成。
+     * @note 思路：选桶 -> 等该桶上一轮完成 -> 准备资源 -> 纹理尺寸变化时重建 -> 写常驻映射-> 录制「屏障 + 拷贝 + 屏障」-> 提交到渲染队列后立即返回（不等 GPU）
+     *        。为什么可以不等：上传与渲染走同一个队列，命令按提交顺序执行，本帧的绘制必然排在上传之后；只有绕回同一个桶（3 帧后）时才可能需要等，而那时 GPU 早就拷完了。
+     */
     [[nodiscard]] bool UploadFrameToTexture(WindowsVideoTexture &texture, const RoboGo::app::VideoFrame &frame) {
         if (frame.width <= 0 || frame.height <= 0) {  // 尺寸非法
             return false;  // 丢弃
@@ -1180,10 +1231,12 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 上传成功（命令已提交，GPU 稍后执行）
     }
 
-    // 功能：向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引。
-    // 思路：复用目标槽的纹理与共用的上传缓冲（只在尺寸变化时重建），上传成功后把 current 指向它、next 轮转。
-    // 参数：texture_set —— 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
-    // 返回值：true 上传与轮换成功，false 纹理创建/上传失败。
+    /**
+     * @brief 向动态纹理集合的“下一张”写入新视频帧，并轮换 current/next 索引。
+     * @param texture_set 目标双缓冲纹理集合（引用，会被修改）；frame —— 新视频帧数据。
+     * @note 思路：复用目标槽的纹理与共用的上传缓冲（只在尺寸变化时重建），上传成功后把 current 指向它、next 轮转。
+     * @return true 上传与轮换成功，false 纹理创建/上传失败。
+     */
     [[nodiscard]] bool UploadDynamicTexture(WindowsDynamicTextureSet &texture_set, const RoboGo::app::VideoFrame &frame) {
         WindowsVideoTexture &next_texture = texture_set.textures[texture_set.next_index];  // 取出下一张待写入的纹理槽
         if (!UploadFrameToTexture(next_texture, frame)) {  // 复用纹理上传本帧
@@ -1194,10 +1247,12 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 动态纹理上传与轮换成功
     }
 
-    // 功能：向静态纹理（小地图）上传一次像素数据。
-    // 思路：先释放旧纹理再上传新数据，并记录尺寸；静态纹理内容不频繁变化。
-    // 参数：texture —— 目标纹理（引用，会被更新）；data —— 源像素；width/height —— 尺寸。
-    // 返回值：true 上传成功，false 失败。
+    /**
+     * @brief 向静态纹理（小地图）上传一次像素数据。
+     * @param texture 目标纹理（引用，会被更新）；data —— 源像素；width/height —— 尺寸。
+     * @note 思路：先释放旧纹理再上传新数据，并记录尺寸；静态纹理内容不频繁变化。
+     * @return true 上传成功，false 失败。
+     */
     [[nodiscard]] bool UploadStaticTexture(WindowsVideoTexture &texture,// 目标纹理（引用，会被更新）
                                            const uint8_t *data,  // 源像素数据
                                            const int width,  // 纹理宽度
@@ -1216,12 +1271,12 @@ private:  // 以下为内部实现细节，不对外暴露
         return true;  // 静态纹理上传成功
     }
 
-    // 功能：释放动态纹理集合中的两张纹理。
-    // 思路：遍历集合，按指定是否归还描述符的标记逐个释放。
-    // 功能：释放常驻的纹理上传上下文（退出时调用一次）。
-    // 说明：必须在所有上传都停止之后调用，否则会释放仍在被 GPU 读取的上传缓冲。
-    // 功能：释放常驻的纹理上传上下文（退出时调用一次）。
-    // 说明：必须在所有上传都停止之后调用；三个桶逐个释放，围栏与事件最后释放。
+    /**
+     * @brief 释放常驻的纹理上传上下文（退出时调用一次）。
+     * @note 思路：遍历集合，按指定是否归还描述符的标记逐个释放。
+     * @note 说明：必须在所有上传都停止之后调用，否则会释放仍在被 GPU 读取的上传缓冲。
+     * @note 说明：必须在所有上传都停止之后调用；三个桶逐个释放，围栏与事件最后释放。
+     */
     void ReleaseTextureUploadContext() {
         TextureUploadContext &context = texture_upload_;  // 常驻上下文
         for (auto &bucket: context.buckets) {  // 逐个桶释放
@@ -1262,8 +1317,10 @@ private:  // 以下为内部实现细节，不对外暴露
         }
     }
 
-    // 功能：释放单张视频纹理资源，必要时归还其 SRV 描述符。
-    // 思路：释放 D3D 纹理、复位尺寸与就绪标志；free_descriptor 为真时把描述符退回分配器以便复用。
+    /**
+     * @brief 释放单张视频纹理资源，必要时归还其 SRV 描述符。
+     * @note 思路：释放 D3D 纹理、复位尺寸与就绪标志；free_descriptor 为真时把描述符退回分配器以便复用。
+     */
     void ReleaseTexture(WindowsVideoTexture &texture, const bool free_descriptor) {
         if (texture.texture != nullptr) {  // 纹理资源存在则释放
             texture.texture->Release();  // 减少 D3D12 引用计数
@@ -1278,10 +1335,12 @@ private:  // 以下为内部实现细节，不对外暴露
         texture.uploaded_once = false;  // 新纹理尚未上传过任何一帧
     }
 
-    // 功能：由视频纹理构建供 ImGui 使用的 TextureView（GPU 句柄 + 像素尺寸）。
-    // 思路：把 SRV 的 GPU 句柄转为 ImTextureID 填入纹理引用，并携带宽高。
-    // 参数：texture —— 源视频纹理（含 SRV GPU 句柄与宽高）。
-    // 返回值：TextureView；若纹理为空则返回仅含尺寸 0 的视图。
+    /**
+     * @brief 由视频纹理构建供 ImGui 使用的 TextureView（GPU 句柄 + 像素尺寸）。
+     * @param texture 源视频纹理（含 SRV GPU 句柄与宽高）。
+     * @note 思路：把 SRV 的 GPU 句柄转为 ImTextureID 填入纹理引用，并携带宽高。
+     * @return TextureView；若纹理为空则返回仅含尺寸 0 的视图。
+     */
     [[nodiscard]] static RoboGo::app::TextureView BuildTextureView(const WindowsVideoTexture &texture) {
         RoboGo::app::TextureView texture_view;  // 待填充的纹理视图（默认空）
         if (texture.texture != nullptr) {  // 只有资源有效时才提供可用的纹理引用
@@ -1291,8 +1350,10 @@ private:  // 以下为内部实现细节，不对外暴露
         return texture_view;  // 返回供 ImGui 使用的纹理视图
     }
 
-    // 功能：窗口类注册的静态窗口过程（C 风格回调），负责把窗口绑定到后端实例并转发到成员 WndProc。
-    // 思路：在 WM_NCCREATE 时把创建参数中的 this 存入窗口用户数据并记录 hwnd_；之后取出后端调用其 WndProc。
+    /**
+     * @brief 窗口类注册的静态窗口过程（C 风格回调），负责把窗口绑定到后端实例并转发到成员 WndProc。
+     * @note 思路：在 WM_NCCREATE 时把创建参数中的 this 存入窗口用户数据并记录 hwnd_；之后取出后端调用其 WndProc。
+     */
     static LRESULT WINAPI StaticWndProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
         if (message == WM_NCCREATE) {  // 窗口创建消息：此时可以拿到 CREATESTRUCT 里的创建参数
             auto *create_struct = reinterpret_cast<CREATESTRUCTW *>(l_param);  // 把 lParam 解释为窗口创建结构体
@@ -1308,8 +1369,10 @@ private:  // 以下为内部实现细节，不对外暴露
         return ::DefWindowProcW(hwnd, message, w_param, l_param);  // 无后端时走默认处理
     }
 
-    // 功能：后端实例的窗口过程，处理与渲染/窗口生命周期相关的消息。
-    // 思路：先把消息交给 ImGui 的 Win32 处理器；再处理窗口尺寸变化(重建交换链)、系统命令(屏蔽 Alt 菜单)、销毁(退出)等。
+    /**
+     * @brief 后端实例的窗口过程，处理与渲染/窗口生命周期相关的消息。
+     * @note 思路：先把消息交给 ImGui 的 Win32 处理器；再处理窗口尺寸变化(重建交换链)、系统命令(屏蔽 Alt 菜单)、销毁(退出)等。
+     */
     LRESULT WndProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
         // 优先让 ImGui 处理输入/光标等消息（如已被处理则直接返回）。
         if (ImGui::GetCurrentContext() != nullptr && ImGui_ImplWin32_WndProcHandler(hwnd, message, w_param, l_param)) {
@@ -1409,8 +1472,10 @@ private:  // 以下为内部实现细节，不对外暴露
 
 namespace RoboGo::platform {  // 进入平台命名空间，声明工厂函数
 
-// 功能：Windows 平台下的后端工厂实现。
-// 思路：返回 WindowsPlatformBackend 实例（仅本文件内可见的具名类型经基类指针返回）。
+/**
+ * @brief Windows 平台下的后端工厂实现。
+ * @note 思路：返回 WindowsPlatformBackend 实例（仅本文件内可见的具名类型经基类指针返回）。
+ */
 std::unique_ptr<PlatformBackend> CreatePlatformBackend() {
     return std::make_unique<WindowsPlatformBackend>();  // 构造 Windows 后端并以基类指针返回
 }
@@ -1418,3 +1483,4 @@ std::unique_ptr<PlatformBackend> CreatePlatformBackend() {
 }  // namespace RoboGo::platform
 
 #endif
+

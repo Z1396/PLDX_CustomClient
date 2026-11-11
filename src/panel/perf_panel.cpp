@@ -24,7 +24,9 @@ ImVec4 ColorForMilliseconds(const double milliseconds) {
     return ImVec4(0.95f, 0.42f, 0.42f, 1.0f);  // 红：这一段已经在吃帧预算
 }
 
-// 功能：画一行"标签 + 数值"，数值按阈值着色。
+/**
+ * @brief 画一行"标签 + 数值"，数值按阈值着色。
+ */
 void MetricRow(const char *label, const double milliseconds) {
     ImGui::TextDisabled("%s", label);  // 灰色标签
     ImGui::SameLine(96.0f * ImGui::GetScale());  // 数值统一从固定列开始，便于纵向对比

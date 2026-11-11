@@ -27,12 +27,16 @@ namespace {  // 匿名命名空间开始：内部符号仅在当前翻译单元�
     // 取值依据：实测发送端会在同一毫秒内连发 4 份同一条判罚，且断流补发时整轮重复，2 秒足够覆盖这类突发。
     constexpr auto kSystemLogDedupeWindow = std::chrono::seconds(2);
 
-    // 功能：把形如 "a,b" 的字符串按首个逗号拆成两段的键值对。
-    // 思路：用 string::find 定位首个逗号，分别取左右子串；找不到逗号则返回空。
-    // 说明：Event 事件参数的拆分逻辑随文案翻译一起搬到 mqtt/event_formatter.cpp。
+    /**
+     * @brief 把形如 "a,b" 的字符串按首个逗号拆成两段的键值对。
+     * @note 思路：用 string::find 定位首个逗号，分别取左右子串；找不到逗号则返回空。
+     * @note 说明：Event 事件参数的拆分逻辑随文案翻译一起搬到 mqtt/event_formatter.cpp。
+     */
 
-    // 功能：构造一条带本地时间戳与自增序号的日志并追加到指定缓冲区。
-    // 思路：取当前时间格式化为 "HH:MM:SS"，分配自增 sequence，超 50 条则丢弃最旧一条以限长。
+    /**
+     * @brief 构造一条带本地时间戳与自增序号的日志并追加到指定缓冲区。
+     * @note 思路：取当前时间格式化为 "HH:MM:SS"，分配自增 sequence，超 50 条则丢弃最旧一条以限长。
+     */
     void AppendLogBuffer(State &state, std::vector<LogEntry> &buffer, int type, const std::string &text) {  // buffer 由调用方指定(本车日志或系统日志)
         LogEntry log_entry;  // 在栈上先构造一条待填充的日志记录
         time_t now = time(nullptr);  // 取当前 UTC 时间戳(自 1970 起的秒数)
@@ -47,8 +51,10 @@ namespace {  // 匿名命名空间开始：内部符号仅在当前翻译单元�
         }
     }
 
-    // 功能：按日志类型把文案输出到终端（spdlog），便于现场调试。
-    // 思路：根据 type(0/1/2) 分别走 INFO/WARN/ERROR 级别，其余按 INFO 处理。
+    /**
+     * @brief 按日志类型把文案输出到终端（spdlog），便于现场调试。
+     * @note 思路：根据 type(0/1/2) 分别走 INFO/WARN/ERROR 级别，其余按 INFO 处理。
+     */
     void EmitUiLog(int type, const char *scope, const std::string &text) {  // scope 为前缀常量("本车日志: "/"系统日志: ")
         switch (type) {  // 按日志级别选择 spdlog 的输出宏
             case 0:  // 0 = INFO
@@ -71,15 +77,19 @@ namespace {  // 匿名命名空间开始：内部符号仅在当前翻译单元�
 
 }  // namespace
 
-// 功能：追加本车日志（操作手主动动作/状态）。
-// 思路：写入车辆日志缓冲区并打印终端日志。
+/**
+ * @brief 追加本车日志（操作手主动动作/状态）。
+ * @note 思路：写入车辆日志缓冲区并打印终端日志。
+ */
 void AppendVehicleLog(State &state, int type, const std::string &text) {  // 对外接口：type 为级别，text 为日志正文
     AppendLogBuffer(state, state.vehicle_logs, type, text);  // 写入本车日志缓冲区(带时间戳/自增序号，自动限长 50 条)
     EmitUiLog(type, "本车日志: ", text);  // 同步输出到终端日志(spdlog)，便于离屏排查
 }
 
-// 功能：追加系统日志（裁判系统事件/判罚）。
-// 思路：写入系统日志缓冲区并打印终端日志。
+/**
+ * @brief 追加系统日志（裁判系统事件/判罚）。
+ * @note 思路：写入系统日志缓冲区并打印终端日志。
+ */
 void AppendSystemLog(State &state, int type, const std::string &text) {  // 对外接口：用于裁判系统事件、判罚、解析异常等
     // 去重：发送端在断流补发/整轮广播时会把同一条消息连发多份（实测同一毫秒 4 条判罚），
     // 若每条都记一行，日志面板会被无意义的重复文本刷满。这里在窗口期内把相同文本折叠成 ×N。
@@ -97,8 +107,10 @@ void AppendSystemLog(State &state, int type, const std::string &text) {  // 对�
     EmitUiLog(type, "系统日志: ", text);  // 同步输出到终端日志(spdlog)，便于离屏排查
 }
 
-// 功能：构造初始状态。
-// 思路：清零红蓝双方各 9 个机器人的血量/弹量后返回。
+/**
+ * @brief 构造初始状态。
+ * @note 思路：清零红蓝双方各 9 个机器人的血量/弹量后返回。
+ */
 State CreateInitialState() {  // 返回一个字段均已初始化的 State 值
     State state;  // 默认构造：optional 字段为空，vector 为空，计数器为初值
     for (size_t i = 0; i < std::size(state.red_robots); i++) {  // 遍历 9 个机器人槽位(std::size 编译期取数组元素个数)
@@ -111,8 +123,11 @@ State CreateInitialState() {  // 返回一个字段均已初始化的 State 值
     return state;  // 按值返回(依赖 RVO/移动语义，开销可忽略)
 }
 
-// 功能：主界面总绘制入口。组织视频背景、顶部栏、状态栏、各功能面板与开局面板的绘制顺序，处理视频主画面切换。
-// 思路：先绘制全屏视频背景（按主/次视频源选择并居中缩放），再按布局矩形逐个 SetNextWindow 摆放各 ImGui 面板；在比赛中绘制准星，否则绘制开局面板。返回是否请求切换 UDP 视频翻转。
+/**
+ * @brief 主界面总绘制入口。组织视频背景、顶部栏、状态栏、各功能面板与开局面板的绘制顺序，处理视频主画面切换。
+ * @note 思路：先绘制全屏视频背景（按主/次视频源选择并居中缩放），再按布局矩形逐个 SetNextWindow 摆放各 ImGui 面板；在比赛中绘制准星，否则绘制开局面板。返回是否请求切换
+ *        UDP 视频翻转。
+ */
 bool ShowMainWindow(const State &state,  // 全局状态快照(各面板只读渲染)
                     RoboGo::io::MqttClient &mqtt_client,  // MQTT 客户端(开局面板用于下发选型/开始指令)
                     ImTextureRef video_texture_ref,  // UDP 视频纹理引用
@@ -236,8 +251,12 @@ bool ShowMainWindow(const State &state,  // 全局状态快照(各面板只读�
     return toggle_udp_video_inversion_requested;  // 返回值=true 表示用户本帧点击了翻转开关
 }
 
-// 功能：每帧推进本地状态。目前负责清理已超出剩余时间的 Buff。
-// 思路：遍历 active_buffs，用当前时间减去更新时间得到已持续秒数，若 >= buff 剩余时间则移除；并统计清理条数用于调试日志。
+/**
+ * @brief 每帧推进本地状态。目前负责清理已超出剩余时间的 Buff。
+ * @note 思路：遍历 active_buffs，用当前时间减去更新时间得到已持续秒数，若 >= buff 剩余时间则移除；并统计清理条数用于调试日志。
+ * @note 注意：协议按 1Hz 持续续期直到失去，但 buff_left_time 常被服务器取整成 0（实测补给区 Buff 会一直推 0）。若严格按 0 秒删除，Buff 会在两帧之间消失，
+ *        兑换按钮就永远判定"不在补给区"。因此给 0 留 3 秒续期窗口：服务器还在推就保留，停止推送 3 秒后才自然过期。
+ */
 void UpdateState(State &state) {  // 由主循环每帧调用一次
     // 取单调时钟当前时刻(不受系统时间调整影响，适合做间隔/超时判断)
     auto now = std::chrono::steady_clock::now();
@@ -251,7 +270,9 @@ void UpdateState(State &state) {  // 由主循环每帧调用一次
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                                         now - buff_entry.update_time)  //
                                         .count();  // 取出秒数的数值部分(long long)
-                return elapsed >= static_cast<int>(buff_entry.buff.buff_left_time());  // 已持续时间 >= 协议给的剩余时间 → 判定过期，返回 true 触发删除
+                const int left_time = static_cast<int>(buff_entry.buff.buff_left_time());// 剩余时间
+                const int ttl = left_time > 3 ? left_time : 3;  // left_time=0 时按 3 秒续期窗口处理
+                return elapsed >= ttl;  // 已持续时间 >= 存活时间 → 判定过期，返回 true 触发删除
             });
 
     // 前后条数相减即本次清理掉的条数
@@ -262,9 +283,11 @@ void UpdateState(State &state) {  // 由主循环每帧调用一次
     }
 }
 
-// 功能：处理从 MQTT 收到的裁判系统/模拟器消息。
-// 思路：转交 mqtt/mqtt_router 的静态分发表；每个 topic 的处理函数分布在 mqtt/handlers_*.cpp 中，
-//       新增协议消息时只需在分发表加一行、在 handlers.h 加一个声明。
+/**
+ * @brief 处理从 MQTT 收到的裁判系统/模拟器消息。
+ * @note 思路：转交 mqtt/mqtt_router 的静态分发表；每个 topic 的处理函数分布在 mqtt/handlers_*.cpp 中，新增协议消息时只需在分发表加一行、在
+ *        handlers.h 加一个声明。
+ */
 void HandleMqttMessage(State &state,  // 待刷新的全局状态
                        RoboGo::io::MqttClient &mqtt_client,  // 保留参数以统一签名（下行分发当前不使用）
                        const std::string &topic,  // 话题名 = 裁判系统消息类型

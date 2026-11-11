@@ -1,15 +1,12 @@
-// ============================================================================
-// 文件：src/io/mqtt_client.h
-// 层级：业务功能层 - 网络 IO（RoboGo 后台服务 BackgroundServices 组件之一）
-// 职责：声明 MqttClient 类，封装与 RoboMaster 2026 裁判系统 MQTT broker 的异步连接。
-//       - 对外暴露 set_server_endpoint / set_client_id 等接口，支持运行时动态修改服务端地址与客户端ID；
-//       - 内部以协程（Boost.Asio + async_mqtt）维护「连接→订阅→接收下行→自动重连」主循环（实现见 .cpp）；
-//       - 下行报文通过 on_receive_message 回调交给业务层（Protobuf 解析）；上行调用 publish() 发送；
-//       - 连接状态以原子量 connection_state 暴露，供 UI 无锁查询。
+// mqtt_client.h：MQTT 客户端接口——封装与裁判系统的异步连接、上行发布与下行消息回调，并以原子量对外暴露连接状态。
+//
+// 声明 MqttClient 类，封装与 RoboMaster 2026 裁判系统 MQTT broker 的异步连接。
+// - 对外暴露 set_server_endpoint / set_client_id 等接口，支持运行时动态修改服务端地址与客户端ID；
+// - 内部以协程（Boost.Asio + async_mqtt）维护「连接→订阅→接收下行→自动重连」主循环（实现见 .cpp）；
+// - 下行报文通过 on_receive_message 回调交给业务层（Protobuf 解析）；上行调用 publish() 发送；
+// - 连接状态以原子量 connection_state 暴露，供 UI 无锁查询。
 // 依赖：async_mqtt（MQTT 3.1.1 异步客户端）、Boost.Asio（协程执行器）、spdlog（日志）。
 // 注意：本文件只声明接口；topic 订阅列表、超时/重连常量与协程实现均位于 mqtt_client.cpp。
-// ============================================================================
-// mqtt_client.h：MQTT 客户端接口——封装与裁判系统的异步连接、上行发布与下行消息回调，并以原子量对外暴露连接状态。
 #pragma once  // 头文件包含守卫：防止重复包含
 
 #include <pch.h>  // 预编译头(PCH)：集中包含常用标准库与第三方库(async_mqtt/Boost.Asio/spdlog 等)
@@ -21,19 +18,24 @@
 
 namespace RoboGo::io {  // 进入网络 IO 命名空间
 
-    // 功能：RoboGo 与 RoboMaster 2026 裁判系统之间的 MQTT 异步客户端封装。
-    // 思路：连接/订阅/收包/自动重连全部跑在单个 Asio 协程 run() 中（detached 自管理生命周期）；
-    //       通过原子修订号(endpoint_revision)与标志(is_client_id_updated)配合互斥锁，实现「主线程改参数、
-    //       IO 协程感知并重建连接」的安全解耦；下行报文经 on_receive_message 回调交给业务层解析 Protobuf，
-    //       上行消息由 publish() 异步发出；连接状态用原子量 connection_state 暴露供 UI 无锁查询。
-    // 参数：构造时传入 io_context（共用 IO 线程）、host/port（broker 地址）、on_receive_message（下行回调）。
-    // 返回值：无（类类型）；运行状态通过 get_connection_state() 等原子接口读取。
+struct RoundContext;  // [run-split] 单轮连接的共享状态，完整定义见 mqtt_client.cpp
+
+    /**
+     * @brief RoboGo 与 RoboMaster 2026 裁判系统之间的 MQTT 异步客户端封装。
+     * @note 思路：连接/订阅/收包/自动重连全部跑在单个 Asio 协程 run() 中（detached 自管理生命周期）；通过原子修订号(endpoint_revision)与标志(is_client_id_updated)
+     *        配合互斥锁，实现「主线程改参数、IO 协程感知并重建连接」的安全解耦；下行报文经 on_receive_message 回调交给业务层解析 Protobuf，上行消息由 publish()
+     *        异步发出；连接状态用原子量 connection_state 暴露供 UI 无锁查询。
+     * @note 参数：构造时传入 io_context（共用 IO 线程）、host/port（broker 地址）、on_receive_message（下行回调）。
+     * @note 返回值：无（类类型）；运行状态通过 get_connection_state() 等原子接口读取。
+     */
     class MqttClient {  // 设计要点：所有网络 IO 都在 IO 线程的协程内完成，其它线程只通过原子量/互斥锁交接参数
     public:  // 公开的类型与接口先声明，私有状态放在中间，最后是 run() 与 publish()
-        // 功能：描述客户端与 broker 的连接生命周期状态，供 UI 与调用方无锁查询。
-        // 思路：用 enum class 避免命名污染；状态机 Idle→Connecting→Connected，异常或参数变更→Failed，
-        //       由 run() 协程与 set_* 接口原子地写、get_connection_state() 原子地读，读端无需加锁。
-        // 取值：Idle=未配置/已停止；Connecting=正在建连或重连；Connected=已连接且完成订阅；Failed=出错待重连。
+        /**
+         * @brief 描述客户端与 broker 的连接生命周期状态，供 UI 与调用方无锁查询。
+         * @note 思路：用 enum class 避免命名污染；状态机 Idle→Connecting→Connected，异常或参数变更→Failed，由 run() 协程与 set_* 接口原子地写、
+         *        get_connection_state() 原子地读，读端无需加锁。
+         * @note 取值：Idle=未配置/已停止；Connecting=正在建连或重连；Connected=已连接且完成订阅；Failed=出错待重连。
+         */
         enum class ConnectionState {  // 底层类型默认 int，刚好可被 std::atomic 无锁承载
             Idle,       // 空闲：尚未设置 client_id，或已被置空，不尝试连接
             Connecting, // 连接中：已设置 client_id，协程正在建立 TCP/MQTT 连接
@@ -57,73 +59,93 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
         std::shared_ptr<async_mqtt::client<async_mqtt::protocol_version::v3_1_1, async_mqtt::protocol::mqtt>> active_client;  // 当前活动连接，空表示未连接
 
     public:  // ---- 生命周期与配置接口 ----
-        // 功能：构造 MQTT 客户端——记录服务端地址与收消息回调，并启动后台运行协程。
-        // 思路：仅保存参数与回调，不立即连接；在 io_context 上 co_spawn 启动 run() 协程（detached），
-        //       由 run() 自身根据 client_id 是否已设置决定是否发起连接。
-        // 参数 io_context：共用的 Asio 执行上下文；host_ip/port：裁判系统 MQTT 地址（默认 192.168.12.1:3333）；
-        //      on_receive_message：收到下行消息时的回调（话题 + 负载），由上层解析 protobuf。
-        // 返回值：无。
-        // 说明：此处只保存参数不立即连接，需后续调用 set_client_id() 才会真正发起连接。
+        /**
+         * @brief 构造 MQTT 客户端——记录服务端地址与收消息回调，并启动后台运行协程。
+         * @note 思路：仅保存参数与回调，不立即连接；在 io_context 上 co_spawn 启动 run() 协程（detached），由 run() 自身根据 client_id 是否已设置决定是否发起连接。
+         *        参数 io_context：共用的 Asio 执行上下文；host_ip/port：裁判系统 MQTT 地址（默认 192.168.12.1:3333）；on_receive_message：收到下行消息时的回调（话题
+         *        + 负载），由上层解析 protobuf。
+         * @note 返回值：无。
+         * @note 说明：此处只保存参数不立即连接，需后续调用 set_client_id() 才会真正发起连接。
+         */
         explicit MqttClient(boost::asio::io_context &io_context,  // 共用 IO 上下文，run() 协程在此调度
                             std::string host_ip,  // broker 地址(值传递后可 move 进成员)
                             std::string port,  // broker 端口(字符串形式，交给 async_mqtt 解析)
                             const std::function<void(const std::string &topic, const std::string &payload)> &on_receive_message);  // 下行报文回调
 
-        // 功能：动态更新服务端地址（host:port）。
-        // 思路：空地址直接忽略；加锁比较新旧地址，仅当确实变化时递增 endpoint_revision（供 run() 检测变更并重建连接），
-        //       并按是否已有 client_id 置 Connecting/Idle，从而触发或暂缓连接。
-        // 参数 host_ip/port：新的 broker 地址；为空则被忽略不生效。
-        // 返回值：无。
+        /**
+         * @brief 动态更新服务端地址（host:port）。
+         * @note 思路：空地址直接忽略；加锁比较新旧地址，仅当确实变化时递增 endpoint_revision（供 run() 检测变更并重建连接），并按是否已有 client_id 置 Connecting/Idle，
+         *        从而触发或暂缓连接。参数 host_ip/port：新的 broker 地址；为空则被忽略不生效。
+         * @note 返回值：无。
+         */
         void set_server_endpoint(std::string host_ip, std::string port);  // 线程安全：可从 UI 线程随时调用
 
-        // 功能：获取当前服务端地址（线程安全副本）。
-        // 思路：加锁拷贝 host_ip/port 后返回，避免调用方读到半更新状态。
-        // 参数：无。
-        // 返回值：std::pair<host, port> 的字符串副本。
+        /**
+         * @brief 获取当前服务端地址（线程安全副本）。
+         * @note 思路：加锁拷贝 host_ip/port 后返回，避免调用方读到半更新状态。
+         * @return std::pair<host, port> 的字符串副本。
+         */
         [[nodiscard]] std::pair<std::string, std::string> get_server_endpoint() const;  // nodiscard：返回值必须被使用，防止误当 setter 用
 
-        // 功能：设置客户端 ID（裁判系统据此区分客户端）。
-        // 思路：保存 ID 后按非空/空置 Connecting/Idle；并置 is_client_id_updated=true，使正在进行的连接流程
-        //       在下一次「参数变更检查点」感知并主动重建连接，无需外部再触发。
-        // 参数 client_id：新客户端 ID；空字符串表示回到 Idle 不连接。
-        // 返回值：无。
+        /**
+         * @brief 设置客户端 ID（裁判系统据此区分客户端）。
+         * @note 思路：保存 ID 后按非空/空置 Connecting/Idle；并置 is_client_id_updated=true，使正在进行的连接流程在下一次「参数变更检查点」感知并主动重建连接，
+         *        无需外部再触发。参数 client_id：新客户端 ID；空字符串表示回到 Idle 不连接。
+         * @note 返回值：无。
+         */
         void set_client_id(std::string client_id);  // 线程安全：加锁写成员 + 原子写标志
 
-        // 功能：获取当前连接状态。
-        // 思路：原子读取 connection_state，无需加锁，可安全在 UI 线程高频调用。
-        // 参数：无。
-        // 返回值：ConnectionState 枚举（Idle/Connecting/Connected/Failed）。
+        /**
+         * @brief 获取当前连接状态。
+         * @note 思路：原子读取 connection_state，无需加锁，可安全在 UI 线程高频调用。
+         * @return ConnectionState 枚举（Idle/Connecting/Connected/Failed）。
+         */
         [[nodiscard]] ConnectionState get_connection_state() const;  // 无锁读：单条原子 load，可在渲染循环里每帧调用
 
-        // 功能：获取当前客户端 ID（线程安全副本）。
-        // 思路：加锁拷贝后返回，避免与 set_client_id / run() 并发读写竞争。
-        // 参数：无。
-        // 返回值：当前 client_id 字符串副本（可能为空）。
+        /**
+         * @brief 获取当前客户端 ID（线程安全副本）。
+         * @note 思路：加锁拷贝后返回，避免与 set_client_id / run() 并发读写竞争。
+         * @return 当前 client_id 字符串副本（可能为空）。
+         */
         [[nodiscard]] std::string get_client_id() const;  // 返回副本而非引用，避免调用期间被后台协程改写
 
-        // 功能：请求停止客户端并复位状态。
-        // 思路：置 is_running=false（run() 循环据此退出），并把连接状态复位为 Idle；
-        //       run() 退出时会关闭底层 socket，回收资源。
-        // 参数：无。
-        // 返回值：无。
+        /**
+         * @brief 请求停止客户端并复位状态。
+         * @note 思路：置 is_running=false（run() 循环据此退出），并把连接状态复位为 Idle；run() 退出时会关闭底层 socket，回收资源。
+         * @note 返回值：无。
+         */
         void stop();  // 非阻塞：只置标志，实际关连由 run() 协程在下一检查点完成
 
     private:  // 主循环属于内部实现，外部只能通过上面的配置接口间接驱动
-        // 功能：连接/订阅/收消息的主协程循环（核心异步状态机）。
-        // 思路：在 is_running 下反复循环——每次取 endpoint 快照，若地址/ID 变化或连接失败则重建 client 对象；
-        //       依次完成 底层握手→connect→subscribe→recv 循环；在握手/连接/订阅各阶段后都检查参数是否变更，
-        //       变更则关闭并重连；任意异常捕获后置 Failed 并等待 mqtt_reconnect_delay 重连。所有网络操作用
-        //       RunMqttOperationWithTimeout 包裹超时，避免永久挂死。
-        // 参数：无（使用类成员）。
-        // 返回值：awaitable<void>，由 co_spawn(detached) 驱动，正常随 stop() 退出。
+        /**
+         * @brief 连接/订阅/收消息的主协程循环（核心异步状态机）。
+         * @note 思路：在 is_running 下反复循环——每次取 endpoint 快照，若地址/ID 变化或连接失败则重建 client 对象；依次完成 底层握手→connect→subscribe→recv
+         *        循环；在握手/连接/订阅各阶段后都检查参数是否变更，变更则关闭并重连；任意异常捕获后置 Failed 并等待 mqtt_reconnect_delay 重连。所有网络操作用RunMqttOperationWithTimeout
+         *        包裹超时，避免永久挂死。
+         * @note 参数：无（使用类成员）。
+         * @return awaitable<void>，由 co_spawn(detached) 驱动，正常随 stop() 退出。
+         */
         boost::asio::awaitable<void> run();  // 连接/订阅/收消息的主协程循环
 
+        // [run-split] 把原来近 300 行的循环体纯提取为三段，控制流语义完全不变：
+        // ConnectOnce 内的 co_return 对应原来的 continue（跳过清理与退避）；
+        // 只有走完整轮或落入 catch 时才会调用 CleanupAndBackoff。
+        boost::asio::awaitable<void> ConnectOnce(RoundContext &round);       // 一轮：快照→握手→连接→订阅→收包→断开
+        boost::asio::awaitable<void> ReceiveLoop(RoundContext &round);       // 内层收包循环
+        boost::asio::awaitable<void> CleanupAndBackoff(RoundContext &round); // 清理活动连接 + 出错时退避
+
+        // 判断 endpoint 是否在本轮快照之后被改动过（等价于原 run() 里的 is_endpoint_updated 闭包）。
+        [[nodiscard]] bool EndpointChangedSince(const std::uint64_t snapshot) const noexcept {
+            return endpoint_revision.load(std::memory_order_acquire) != snapshot;
+        }
+
     public:  // ---- 上行发送接口 ----
-        // 功能：发布一条上行消息（topic + 负载）。
-        // 思路：仅当状态为 Connected 才发送；取 active_client 共享指针副本，在其执行器上 detached 启动
-        //       PublishMqttMessage 协程异步发送，从而不阻塞调用方（多为 UI/业务线程）。
-        // 参数 topic：目标话题（如 "CustomByteBlock"）；message：已序列化的 Protobuf 负载字节串。
-        // 返回值：无。
+        /**
+         * @brief 发布一条上行消息（topic + 负载）。
+         * @note 思路：仅当状态为 Connected 才发送；取 active_client 共享指针副本，在其执行器上 detached 启动PublishMqttMessage 协程异步发送，
+         *        从而不阻塞调用方（多为 UI/业务线程）。参数 topic：目标话题（如 "CustomByteBlock"）；message：已序列化的 Protobuf 负载字节串。
+         * @note 返回值：无。
+         */
         void publish(const std::string &topic, const std::string &message);  // 立即返回：真正发送在 IO 线程的协程里完成
     };
 

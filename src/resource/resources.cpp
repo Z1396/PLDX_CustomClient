@@ -23,17 +23,19 @@
 
 namespace RoboGo::resource {   // 进入资源命名空间，集中管理内嵌资源的加载逻辑
 
-// 功能：从内存中的编码字节流(如 PNG)解码出像素图像。
-// 思路：借助 stb_image 的 stbi_load_from_memory 将压缩图像解码为 RGBA8 像素；
-//       先做空数据校验，再解码，失败则记录日志并返回 std::nullopt，成功则拷贝像素到 DecodedImage 并返回。
-// 参数：encoded_bytes 为原始编码字节(只读视图)；resource_name 仅用于日志显示的资源名。
-// 返回：解码成功返回含宽高与像素的 DecodedImage，失败返回 std::nullopt。
-std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> encoded_bytes,  // 编码后的图像字节(PNG/JPG 等)
+/**
+ * @brief 从内存中的编码字节流(如 PNG)解码出像素图像。
+ * @note 思路：借助 stb_image 的 stbi_load_from_memory 将压缩图像解码为 RGBA8 像素；先做空数据校验，再解码，失败则记录日志并返回 unexpected(带原因)
+ *        ，成功则拷贝像素到 DecodedImage 并返回。
+ * @note 参数：encoded_bytes 为原始编码字节(只读视图)；resource_name 仅用于日志显示的资源名。
+ * @return 解码成功返回含宽高与像素的 DecodedImage，失败返回 unexpected(ImageDecodeError)。
+ */
+std::expected<DecodedImage, ImageDecodeError> LoadEmbeddedImage(const std::span<const uint8_t> encoded_bytes,  // 编码后的图像字节(PNG/JPG 等)
                                               const std::string_view resource_name) {  // 资源名，仅用于日志输出
     const std::string_view display_name = resource_name.empty() ? "内嵌资源" : resource_name;  // 资源名为空时给出默认显示名，便于日志定位
     if (encoded_bytes.empty()) {   // 防御性校验：传入字节为空无法解码
         SPDLOG_ERROR("{}解码失败 reason=empty resource bytes", display_name);   // 记录错误日志
-        return std::nullopt;   // 返回空可选值表示解码失败
+        return std::unexpected(ImageDecodeError::EmptyBytes);   // 带原因的解码失败
     }
 
     int width = 0;       // 解码后的图像宽度
@@ -44,7 +46,8 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     - 入参：图片数据指针、数据长度
     - 输出参数：`width/height/channels_in_file` 带出原图宽高、原图通道数
     - 最后参数 `STBI_rgb_alpha`：强制输出 4 通道 RGBA，不管原图是 RGB 3 通道还是带透明的 PNG，统一转 RGBA，GPU 纹理上传逻辑就不用写多分支。
-    - 返回值：stb 内部 `malloc` 出来的一块像素缓冲区，必须手动 stbi_image_free 释放，否则内存泄漏；失败返回 `nullptr`。*/
+    - 返回值：stb 内部 `malloc` 出来的一块像素缓冲区，必须手动 stbi_image_free 释放，否则内存泄漏；失败返回 `nullptr`。
+     */
     stbi_uc *decoded_pixels = stbi_load_from_memory(  
             encoded_bytes.data(),         // 指向编码字节流的指针
             static_cast<int>(encoded_bytes.size()),   // 编码字节流的字节数
@@ -55,7 +58,7 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     if (decoded_pixels == nullptr) {   // stb 解码失败会返回空指针
         const char *failure_reason = stbi_failure_reason();   // 获取 stb 内部失败原因字符串
         SPDLOG_ERROR("{}解码失败 reason={}", display_name, failure_reason != nullptr ? failure_reason : "unknown");   // 记录失败原因(空则标记 unknown)
-        return std::nullopt;   // 返回空可选值
+        return std::unexpected(ImageDecodeError::StbDecodeFailed);   // 带原因的解码失败
     }
 
     DecodedImage image;   // 构造返回用的图像结构
@@ -71,20 +74,25 @@ std::optional<DecodedImage> LoadEmbeddedImage(const std::span<const uint8_t> enc
     return image;   // 返回解码完成的图像
 }
 
-// 功能：加载内嵌的小地图 PNG 图像。
-// 思路：把 CMake 生成的内嵌数组 embedded_map_png_data/len 包装为 span，转交给通用解码函数处理。
-std::optional<DecodedImage> LoadEmbeddedMapImage() {  // 无参数：数据在编译期已经内嵌进可执行文件
+/**
+ * @brief 加载内嵌的小地图 PNG 图像。
+ * @note 思路：把 CMake 生成的内嵌数组 embedded_map_png_data/len 包装为 span，转交给通用解码函数处理。
+ */
+std::expected<DecodedImage, ImageDecodeError> LoadEmbeddedMapImage() {  // 无参数：数据在编译期已经内嵌进可执行文件
     return LoadEmbeddedImage(  // 直接返回通用解码结果
             std::span<const uint8_t>(embedded_map_png_data, static_cast<std::size_t>(embedded_map_png_data_len)),   // 用内嵌字节数组与其长度构造只读 span
             "内嵌小地图");   // 指定资源显示名为"内嵌小地图"
 }
 
-// 功能：加载内嵌的地形分层叠加层（2027 高度掩膜上色版）。
-// 思路：与底图相同，只是换一份内嵌数组；图像本身带 alpha，地面区域完全透明。
-std::optional<DecodedImage> LoadEmbeddedMapTerrainImage() {
+/**
+ * @brief 加载内嵌的地形分层叠加层（2027 高度掩膜上色版）。
+ * @note 思路：与底图相同，只是换一份内嵌数组；图像本身带 alpha，地面区域完全透明。
+ */
+std::expected<DecodedImage, ImageDecodeError> LoadEmbeddedMapTerrainImage() {
     return LoadEmbeddedImage(
             std::span<const uint8_t>(embedded_map_terrain_png_data, static_cast<std::size_t>(embedded_map_terrain_png_data_len)),
             "内嵌地形分层");
 }
 
 }  // namespace RoboGo::resource
+

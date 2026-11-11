@@ -57,7 +57,9 @@ struct LocalMapMarker {
 
 LocalMapMarker g_local_map_marker;   // 全局唯一实例：本地最近一次标记点
 
-// 功能：返回地图内边框颜色，未识别阵营时给中性灰。
+/**
+ * @brief 返回地图内边框颜色，未识别阵营时给中性灰。
+ */
 ImU32 GetMapInnerBorderColor(bool team_known, bool is_red_team) {
     if (!team_known) {                                            // 尚未确定己方阵营
         return kMapInnerBorderUnknownColor;  // 阵营未知
@@ -65,7 +67,9 @@ ImU32 GetMapInnerBorderColor(bool team_known, bool is_red_team) {
     return is_red_team ? kMapInnerBorderRedColor : kMapInnerBorderBlueColor;  // 按己方阵营上色
 }
 
-// 功能：返回地图外边框颜色，未识别阵营时给中性灰。
+/**
+ * @brief 返回地图外边框颜色，未识别阵营时给中性灰。
+ */
 ImU32 GetMapOuterBorderColor(bool team_known, bool is_red_team) {
     if (!team_known) {                                            // 尚未确定己方阵营
         return kMapOuterBorderUnknownColor;  // 阵营未知
@@ -73,14 +77,12 @@ ImU32 GetMapOuterBorderColor(bool team_known, bool is_red_team) {
     return is_red_team ? kMapOuterBorderRedColor : kMapOuterBorderBlueColor; // 按己方阵营上色
 }
 
-// 功能：返回小地图底图的 UV 矩形。
-// 说明：底图已换成 2027 官方场地资源包里的标准图（2800×1500，100 px/m，整幅正好 28×15 m、无白边），
-//       所以 UV 直接取满整张纹理，不需要任何裁剪。
-//
-//       原来那张 1285×711 的 2026 旧图带黑边，只能靠 (45,31)-(1226,683) 四个手调像素常量硬裁；
-//       裁出来 1181×652，比例 1.811，而小地图窗口按 28:15=1.867 排——底图被纵向拉伸 3%，
-//       地形特征和 map_x/map_y 坐标对不上，全场高度方向上边缘能差约 0.45 m。
-//       换图后这类"手调数字 + 隐式变形"全部消失。
+/**
+ * @brief 返回小地图底图的 UV 矩形。
+ * @note 说明：底图已换成 2027 官方场地资源包里的标准图（2800×1500，100 px/m，整幅正好 28×15 m、无白边），所以 UV 直接取满整张纹理，不需要任何裁剪。原来那张
+ *        1285×711 的 2026 旧图带黑边，只能靠 (45,31)-(1226,683) 四个手调像素常量硬裁；裁出来 1181×652，比例 1.811，而小地图窗口按 28:15=1.867
+ *        排——底图被纵向拉伸 3%，地形特征和 map_x/map_y 坐标对不上，全场高度方向上边缘能差约 0.45 m。换图后这类"手调数字 + 隐式变形"全部消失。
+ */
 std::pair<ImVec2, ImVec2> GetMiniMapUvRect(const ImVec2 &texture_size) {
     (void) texture_size;  // 整幅取满，不再依赖纹理尺寸
     return {ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f)};  // 左上 → 右下，覆盖整张底图
@@ -88,8 +90,10 @@ std::pair<ImVec2, ImVec2> GetMiniMapUvRect(const ImVec2 &texture_size) {
 
 }  // namespace
 
-// 功能：绘制小地图（背景/单位/路径），并处理标记模式点击下发坐标。详见头文件。
-// 思路：用窗口 DrawList 绘制底图与单位，外边框用前景 DrawList；坐标按 kMap 尺寸线性映射到屏幕。
+/**
+ * @brief 绘制小地图（背景/单位/路径），并处理标记模式点击下发坐标。详见头文件。
+ * @note 思路：用窗口 DrawList 绘制底图与单位，外边框用前景 DrawList；坐标按 kMap 尺寸线性映射到屏幕。
+ */
 namespace {
 
 // 地图区域：屏幕坐标下的左上角与尺寸。

@@ -7,18 +7,23 @@
 
 namespace RoboGo::app {  // 进入应用层命名空间
 
-// 功能：返回配置文件的绝对路径。
-// 位置：Windows 为 %APPDATA%/RoboGo/config.ini；Linux 为 $XDG_CONFIG_HOME/robogo/config.ini
-//       或 ~/.config/robogo/config.ini；都取不到时退回当前工作目录。
+/**
+ * @brief 返回配置文件的绝对路径。位置：Windows 为 %APPDATA%/RoboGo/config.ini；Linux 为 $XDG_CONFIG_HOME/robogo/config.ini或
+ *        ~/.config/robogo/config.ini；都取不到时退回当前工作目录。
+ */
 std::filesystem::path ConfigFilePath();
 
-// 功能：读取上次保存的 MQTT 服务端地址。
-// 返回：形如 "192.168.12.1:3333" 的字符串；文件不存在/没有该项/读取失败时返回空串。
+/**
+ * @brief 读取上次保存的 MQTT 服务端地址。
+ * @return 形如 "192.168.12.1:3333" 的字符串；文件不存在/没有该项/读取失败时返回空串。
+ */
 std::string LoadConfiguredMqttServer();
 
-// 功能：保存 MQTT 服务端地址（形如 "192.168.12.1:3333"）。
-// 思路：先写临时文件再原子替换，避免写入过程中断电/崩溃把原配置写坏。
-// 返回：true 表示保存成功。
+/**
+ * @brief 保存 MQTT 服务端地址（形如 "192.168.12.1:3333"）。
+ * @note 思路：先写临时文件再原子替换，避免写入过程中断电/崩溃把原配置写坏。
+ * @return true 表示保存成功。
+ */
 bool SaveConfiguredMqttServer(std::string_view host_port);
 
 }  // namespace RoboGo::app

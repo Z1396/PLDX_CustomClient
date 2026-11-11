@@ -17,16 +17,18 @@ inline constexpr size_t kCustomControlDebugCounterOffset = kCustomControlCounter
 inline constexpr size_t kCustomControlPayloadSize = kCustomControlDebugCounterOffset + 1; // 整个自定义控制载荷的总字节数
 inline constexpr auto kCustomControlPublishInterval = std::chrono::milliseconds(100); // 自定义控制载荷发布间隔(100ms，即 10Hz)
 
-// 功能：按既定布局打包完整自定义控制载荷字节数组。
-// 参数 enemy_health：各敌方机器人血量(uint16 小端)；debug_counter：调试计数。
-// 返回：长度为 kCustomControlPayloadSize 的载荷数组。
-// 说明：2027 起不再有空中支援状态入参，原先的 2 个状态字节固定填 0(保留位)。
+/**
+ * @brief 按既定布局打包完整自定义控制载荷字节数组。参数 enemy_health：各敌方机器人血量(uint16 小端)；debug_counter：调试计数。
+ * @note 说明：2027 起不再有空中支援状态入参，原先的 2 个状态字节固定填 0(保留位)。
+ * @return 长度为 kCustomControlPayloadSize 的载荷数组。
+ */
 std::array<uint8_t, kCustomControlPayloadSize> BuildCustomControlPayload(  // 返回定长数组，长度在编译期确定
     std::span<const uint16_t, kCustomControlRobotCount> enemy_health,  // 定长 span：编译期即校验元素个数必须为 5
     uint8_t debug_counter);  // 自增调试计数，用于排查丢包/乱序
 
-// 功能：判断当前是否到达自定义控制载荷的发布时间。
-// 参数 last_publish_time：上次发布时刻(可空)；now：当前时刻。
-// 返回：从未发布或距上次发布已满间隔则返回 true。
+/**
+ * @brief 判断当前是否到达自定义控制载荷的发布时间。参数 last_publish_time：上次发布时刻(可空)；now：当前时刻。
+ * @return 从未发布或距上次发布已满间隔则返回 true。
+ */
 bool IsCustomControlPublishDue(std::optional<std::chrono::steady_clock::time_point> last_publish_time,  // 按值传入，空值表示从未发布
                                std::chrono::steady_clock::time_point now);  // 当前时刻，与上次发布时刻做差比较

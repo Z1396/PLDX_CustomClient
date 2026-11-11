@@ -1,7 +1,22 @@
 // robot_status_panel.cpp：己方机器人「本车卡」的实现。
+//
+// 在一张圆角卡片里显示本车身份/等级、32px 大血量数字与血条、热量/弹量/缓冲能量
+// 三栏，以及底部两行 42mm 装配权限与设备连接状态。
+// 数据流：只读 State。血量/等级/上限取 robot_static_status 与 robot_dynamic_status，
+// 设备状态取 robot_module_status；任一 optional 缺失时按 0 处理并显示「未知」，
+// 绝不臆测数值，也不因缺数据崩溃。
+// 设计要点：
+// · 全部 ImDrawList 自绘，窗口带 NoInputs/NoBackground，不参与布局流也不抢交互；
+// · 所有坐标以卡片左上角为原点乘 ImGui::GetScale()，保证高 DPI 下对齐；
+// · 兵种名统一查 robot_registry::kRobotTypes，避免面板各写一份中文名；
+// · 设备离线列表按 UTF-8 码点边界裁短（FitLine），防止长中文把卡片撑破；
+// · 自瞄 / 小陀螺状态由顶部胶囊常驻显示，本卡刻意不重复。
+// 依赖：ImGui（imgui_internal.h 提供 GetScale）、app/robot_registry.h、
+// ui/format_utils.h、ui/hud_primitives.h、ui/theme.h。
+// 注意：本文件不写 State、不发上行指令；卡片尺寸由主窗口的布局函数决定。
 // 2027-11-06 按「主界面定稿」：由堆叠的彩色文字+进度条，改为一张卡片
 // （身份 + 32px 大血量数字 + 血条 + 热量/弹量/缓冲能量三栏）。
-// 设备连接状态、42mm 装配权限、自瞄/小陀螺等原有信息全部保留，压缩到卡片底部两行。
+// 设备连接状态、42mm 装配权限保留在卡片底部两行；自瞄/小陀螺只在顶部胶囊显示，本卡不再重复。
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -24,6 +39,10 @@ using RoboGo::ui::hud::AddTextRightAligned;
 using RoboGo::ui::hud::TextSize;
 
 // 把过长的一行按 UTF-8 字符边界裁短，尾部加省略号，避免压出卡片。
+// 思路：PushFont 后循环调用 CalcTextSize，每次从末尾删掉「一个完整码点」——
+//       通过 &0xC0==0x80 跳过续字节回到起始字节，保证中文不会被截成非法 UTF-8。
+// 参数：text —— 原文；max_width —— 像素上限；font_size —— 度量用的基准字号。
+// 返回值：裁短后的副本；若真的裁过，末尾再让出一个码点并补「…」。
 std::string FitLine(const std::string &text, float max_width, float font_size) {
     ImGui::PushFont(ImGui::GetFont(), font_size);
     std::string result = text;
@@ -49,10 +68,17 @@ std::string FitLine(const std::string &text, float max_width, float font_size) {
 }
 
 // 10 个模块的连接状态（与协议 2.2.12 顺序一致）。
+// CollectOfflineModules 里用 static_assert 校验它与状态数组等长，防止改协议时漏项。
 const char *const kModuleNames[] = {
         "主控", "电源管理", "图传", "RFID", "UWB",
         "装甲板", "小弹丸", "大弹丸", "超级电容", "灯条"};
 
+/**
+ * @brief 汇总离线/安装不规范的模块名，供卡片底部一行显示。
+ * @param state 只读状态；has_any —— 出参，是否存在异常模块。
+ * @note 思路：把 10 个协议字段按 kModuleNames 顺序装进局部数组，status==1 视为在线跳过，==2 追加「(安装不规范)」；has_any 作为出参告诉调用方是否要标红。
+ * @note 返回值：无数据时「未知」，全在线「全部在线」，否则逗号分隔的模块列表。
+ */
 std::string CollectOfflineModules(const State &state, bool &has_any) {
     has_any = false;
     std::string result;
@@ -89,7 +115,12 @@ std::string CollectOfflineModules(const State &state, bool &has_any) {
 
 }  // namespace
 
-// 功能：绘制本车卡（血量、热量、弹量、缓冲能量、等级、模式与设备状态）。
+/**
+ * @brief 绘制本车卡（血量、热量、弹量、缓冲能量、等级、模式与设备状态）。
+ * @param state 只读全局状态。
+ * @note 思路：先开透明无输入窗口并取窗口矩形，按 s=GetScale() 依次画卡面、身份行、32px 大血量 + 上限、血条、三栏指标、底部两行。所有协议字段先判 has_value()
+ *        ，缺失按 0 处理；RatioOf 内部已处理 max=0，不会除零。
+ */
 void ShowRobotStatusPanel(const State &state) {
     const ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration
                                           | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground
@@ -187,6 +218,8 @@ void ShowRobotStatusPanel(const State &state) {
     char buffer_text[32];
     std::snprintf(buffer_text, sizeof(buffer_text), "%u / %u", current_buffer, max_buffer);
 
+    // 三栏指标的显示数据：标签、格式化后的数值、血条比例、是否画轨道。
+    // 弹量没有协议上限，故 ratio=0 / show_track=false；热量与缓冲能量才显示细轨道。
     struct Metric {
         const char *label;
         const char *value;
@@ -214,12 +247,8 @@ void ShowRobotStatusPanel(const State &state) {
         }
     }
 
-    // 底部第一行：模式开关 + 42mm 装配权限
+    // 底部第一行：42mm 装配权限（自瞄 / 小陀螺状态已由顶部胶囊常驻显示，这里不再重复）
     const float line1_y = origin.y + 136.0f * s;
-    char mode_text[64];
-    std::snprintf(mode_text, sizeof(mode_text), "自瞄 %s · 小陀螺 %s",
-                  state.auto_aim ? "ON" : "OFF", state.gyro ? "ON" : "OFF");
-    AddText(draw_list, ImVec2(origin.x + pad, line1_y), dim, mode_text, 9.5f);
     const char *perm_text = "42mm 未知";
     if (state.robot_module_status.has_value()) {
         perm_text = state.robot_module_status->modular_42mm() == 1 ? "42mm 已获得" : "42mm 未获得";

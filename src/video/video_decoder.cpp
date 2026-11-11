@@ -15,14 +15,13 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video { // 进入视频模块命名空间
 
-    // 功能：构造解码器，按优先级选择 HEVC 解码器并初始化解析器与缓存。
-    // 思路：先尝试 Nvidia 硬件解码(hevc_cuvid)，失败再回退 CPU 软解(hevc)；
-    //       启用低延迟/快速解码标志，随后初始化解析器、数据包与帧缓存。
-    //       任一关键步骤失败时【只降级、不终止进程】：把 is_available_ 置 false 并记录 CRITICAL，
-    //       后续 decode_frame 会直接返回，界面表现为"无画面"，但小地图/血量/自定义 UI 仍可正常使用
-    //       —— 这是 2027 规则明确要求的行为（图传断开时 UI 仍须可用），也避免现场因缺解码器直接闪退。
-    // 功能：判断某个解码器是否支持通过 D3D11VA 设备上下文做硬件解码。
-    // 思路：遍历 avcodec_get_hw_config 返回的硬件配置，找"由外部设备上下文驱动"且类型为 D3D11VA 的那一条。
+    /**
+     * @brief 判断某个解码器是否支持通过 D3D11VA 设备上下文做硬件解码。
+     * @note 思路：先尝试 Nvidia 硬件解码(hevc_cuvid)，失败再回退 CPU 软解(hevc)；启用低延迟/快速解码标志，随后初始化解析器、数据包与帧缓存。任一关键步骤失败时【只降级、
+     *        不终止进程】：把 is_available_ 置 false 并记录 CRITICAL，后续 decode_frame 会直接返回，界面表现为"无画面"，但小地图/血量/自定义
+     *        UI 仍可正常使用—— 这是 2027 规则明确要求的行为（图传断开时 UI 仍须可用），也避免现场因缺解码器直接闪退。
+     * @note 思路：遍历 avcodec_get_hw_config 返回的硬件配置，找"由外部设备上下文驱动"且类型为 D3D11VA 的那一条。
+     */
     static bool CodecSupportsD3d11va(const AVCodec *codec) {
         if (codec == nullptr) { // 解码器不存在
             return false; // 直接判否
@@ -40,15 +39,14 @@ namespace RoboGo::video { // 进入视频模块命名空间
         return false; // 未找到
     }
 
-    // 功能：构造解码器，按"硬件优先、软解兜底"的顺序选择 HEVC 解码器。
-    // 顺序：① D3D11VA（A/N/I 三家通用）② hevc_cuvid（仅 NVIDIA）③ hevc 软解。
-    // 为什么把 D3D11VA 放第一：原来只试 cuvid，队友用 AMD/Intel 核显的笔记本会直接掉到软解，
-    // 1080p HEVC 软解要吃 1~2 个核；D3D11VA 是 Windows 上的通用硬解接口，能把 CPU 占用砍半。
-    // 任一关键步骤失败时【只降级、不终止进程】：is_available_ 置 false，界面表现为"无画面"，
-    // 其余面板照常可用（2027 规则要求图传断开时 UI 仍可用）。
+    /**
+     * @brief 构造解码器，按"硬件优先、软解兜底"的顺序选择 HEVC 解码器。顺序：① D3D11VA（A/N/I 三家通用）② hevc_cuvid（仅 NVIDIA）③ hevc 软解。
+     *        为什么把 D3D11VA 放第一：原来只试 cuvid，队友用 AMD/Intel 核显的笔记本会直接掉到软解，1080p HEVC 软解要吃 1~2 个核；D3D11VA 是
+     *        Windows 上的通用硬解接口，能把 CPU 占用砍半。任一关键步骤失败时【只降级、不终止进程】：is_available_ 置 false，界面表现为"无画面"，其余面板照常可用（2027
+     *        规则要求图传断开时 UI 仍可用）。
+     */
     VideoDecoder::VideoDecoder(const std::function<void(const AVFrame *frame)> &frame_callback) // 构造函数：接收出帧回调
         : frame_callback(frame_callback) { // 保存每解出一帧时的回调
-
         // ---------- ① D3D11VA 硬解 ----------
         const AVCodec *hevc_codec = avcodec_find_decoder_by_name("hevc"); // 通用 HEVC 解码器（可挂硬件设备）
         if (hevc_codec != nullptr && CodecSupportsD3d11va(hevc_codec)) { // 当前构建支持 D3D11VA
@@ -122,7 +120,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
             return; // 直接返回：is_available_ 保持 false，decode_frame 会全部丢弃
         }
 
-        // 创建解析器
+        // 创建解析器上下文
         av_parser_context = av_parser_init(AV_CODEC_ID_HEVC); // 创建 HEVC 码流解析器
         if (!av_parser_context) { // 解析器创建失败
             SPDLOG_CRITICAL("未找到HEVC解析器，图传将不可用（其余界面功能不受影响）"); // 严重错误，但不终止进程
@@ -153,7 +151,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
         SPDLOG_INFO("HEVC解析器已初始化"); // 记录解析器初始化成功
     }
 
-    // 功能：析构函数，按资源创建的逆序释放 FFmpeg 所有相关对象。
+    /**
+     * @brief 析构函数，按资源创建的逆序释放 FFmpeg 所有相关对象。
+     */
     VideoDecoder::~VideoDecoder() { // 析构函数体
         SPDLOG_INFO("销毁视频解码器"); // 记录解码器销毁
         if (av_parser_context) { // 解析器存在才释放
@@ -176,9 +176,11 @@ namespace RoboGo::video { // 进入视频模块命名空间
         } // 设备上下文已释放
     }
 
-    // 功能：从载荷中定位起始码并提取 NAL 单元类型。
-    // 思路：先判断是否带 4 字节(00 00 00 01)或 3 字节(00 00 01)起始码，定位到 NAL 头；
-    //       对 HEVC，类型位于头字节右移 1 位后的低 6 位（H.264 同字段位宽为 5 位，此处按 HEVC 处理）。
+    /**
+     * @brief 从载荷中定位起始码并提取 NAL 单元类型。
+     * @note 思路：先判断是否带 4 字节(00 00 00 01)或 3 字节(00 00 01)起始码，定位到 NAL 头；对 HEVC，类型位于头字节右移 1 位后的低 6 位（H.264
+     *        同字段位宽为 5 位，此处按 HEVC 处理）。
+     */
     int VideoDecoder::get_nal_type(const std::vector<uint8_t> &payload) { // 静态方法：仅依赖入参载荷
         if (payload.size() < 4) { // 至少需要 4 字节才能容纳起始码+NAL头
             SPDLOG_DEBUG("视频帧过短，无法识别NAL类型 bytes={}", payload.size()); // 记录过短告警
@@ -207,7 +209,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
         return nal_type; // 返回 NAL 类型值
     }
 
-    // 功能：硬解发送失败时回退到软件 HEVC 解码器，保证仍能出画面。
+    /**
+     * @brief 硬解发送失败时回退到软件 HEVC 解码器，保证仍能出画面。
+     */
     bool VideoDecoder::ReinitializeWithSoftwareDecoder() {
         const AVCodec *software_codec = avcodec_find_decoder_by_name("hevc"); // 软件 HEVC 解码器
         if (!software_codec) {
@@ -242,9 +246,11 @@ namespace RoboGo::video { // 进入视频模块命名空间
         return av_parser_context != nullptr;
     }
 
-    // 功能：把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
-    // 思路：用 av_parser_parse2 按字节流逐步切出完整包，每切出一包就 send 给解码器，
-    //       再循环 receive 把所有已就绪的帧取出回调，直到缓冲区空(EAGAIN)或出错。
+    /**
+     * @brief 把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
+     * @note 思路：用 av_parser_parse2 按字节流逐步切出完整包，每切出一包就 send 给解码器，再循环 receive 把所有已就绪的帧取出回调，直到缓冲区空(EAGAIN)
+     *        或出错。
+     */
     void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) { // const 成员：不修改对象可见状态
         // 解码计时：只累加 send_packet 与 receive_frame 两段，**不包含帧回调**。
         // 为什么必须拆开：frame_callback 里做的是 YUV->RGBA 转换 + 入队，

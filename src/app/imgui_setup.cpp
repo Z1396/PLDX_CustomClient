@@ -10,9 +10,11 @@
 
 namespace RoboGo::app {  // 进入应用层命名空间
 
-// 功能：初始化 ImGui 的通用上下文与样式（导航、主题、DPI 缩放）。
-// 思路：校验版本 -> 创建上下文 -> 开启键鼠/手柄导航 -> 暗色主题 -> 按 main_scale 缩放。
-// 参数 main_scale：界面整体缩放系数，适配高 DPI 显示器。
+/**
+ * @brief 初始化 ImGui 的通用上下文与样式（导航、主题、DPI 缩放）。
+ * @note 思路：校验版本 -> 创建上下文 -> 开启键鼠/手柄导航 -> 暗色主题 -> 按 main_scale 缩放。参数 main_scale：界面整体缩放系数，适配高 DPI
+ *        显示器。
+ */
 void InitializeCommonImGui(const float main_scale) {
     IMGUI_CHECKVERSION(); // 校验当前链接的 Dear ImGui 版本与头文件是否匹配，不匹配将触发断言
     ImGui::CreateContext(); // 创建并绑定全局 ImGui 上下文
@@ -27,9 +29,10 @@ void InitializeCommonImGui(const float main_scale) {
     style.FontScaleDpi = main_scale; // 设置字体 DPI 缩放系数
 } // 结束 InitializeCommonImGui：上下文已就绪，后续由 LoadEmbeddedImGuiFont 装载字体
 
-// 功能：加载内嵌的 ZCOOL 中文字体到 ImGui 字体图集，并关闭自动保存文件。
-// 思路：将编译期嵌入的 TTF 字节直接交给 ImGui 内存字体加载接口，
-//       字体数据由程序常量持有(不交由图集释放)，最后禁用 ini/日志的自动写入。
+/**
+ * @brief 加载内嵌的 ZCOOL 中文字体到 ImGui 字体图集，并关闭自动保存文件。
+ * @note 思路：将编译期嵌入的 TTF 字节直接交给 ImGui 内存字体加载接口，字体数据由程序常量持有(不交由图集释放)，最后禁用 ini/日志的自动写入。
+ */
 void LoadEmbeddedImGuiFont() {
     ImGuiIO &io = ImGui::GetIO(); // 获取 IO 对象以便操作字体图集与关闭自动保存文件
     ImGuiStyle &style = ImGui::GetStyle(); // 取全局样式对象引用，用于设定界面基础字号 FontSizeBase

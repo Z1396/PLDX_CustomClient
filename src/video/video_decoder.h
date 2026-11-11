@@ -29,25 +29,37 @@ namespace RoboGo::video { // 进入视频模块命名空间
         bool is_available_ = false; // 解码链路是否初始化成功；false 表示"图传不可用"但不影响其它界面
 
     public: // ---------- 公开接口 ----------
-        // 功能：构造解码器，优先尝试 Nvidia 硬解(hevc_cuvid)，失败则回退到 CPU 软解(hevc)。
-        // 参数：frame_callback 为解出 AVFrame 后的回调。
-        // 说明：找不到解码器/解析器时不再终止进程，而是降级为"无画面"（2027 规则要求图传中断时 UI 仍可用）。
+        /**
+         * @brief 构造解码器，优先尝试 Nvidia 硬解(hevc_cuvid)，失败则回退到 CPU 软解(hevc)。
+         * @note 参数：frame_callback 为解出 AVFrame 后的回调。
+         * @note 说明：找不到解码器/解析器时不再终止进程，而是降级为"无画面"（2027 规则要求图传中断时 UI 仍可用）。
+         */
         explicit VideoDecoder(const std::function<void(const AVFrame *frame)> &frame_callback); // 传入帧回调并完成解码器初始化
 
-        // 功能：查询解码链路是否可用（false 时 decode_frame 不会产生任何帧）。
+        /**
+         * @brief 查询解码链路是否可用（false 时 decode_frame 不会产生任何帧）。
+         */
         [[nodiscard]] bool is_available() const { return is_available_; }
 
-        // 功能：析构并释放所有 FFmpeg 资源（解析器、解码器上下文、包与帧缓存）。
+        /**
+         * @brief 析构并释放所有 FFmpeg 资源（解析器、解码器上下文、包与帧缓存）。
+         */
         ~VideoDecoder(); // 逆序释放解析器、解码器上下文、包与帧缓存四类资源
 
-        // 功能：从一帧比特流载荷中识别 NAL 单元类型（H.264/HEVC 共用逻辑，取第二字节低 6 位）。
-        // 参数：payload 为含起始码的完整 NAL 单元；返回值 -1 表示无法识别，否则为 NAL 类型值。
+        /**
+         * @brief 从一帧比特流载荷中识别 NAL 单元类型（H.264/HEVC 共用逻辑，取第二字节低 6 位）。
+         * @note 参数：payload 为含起始码的完整 NAL 单元；返回值 -1 表示无法识别，否则为 NAL 类型值。
+         */
         static int get_nal_type(const std::vector<uint8_t> &payload); // 静态工具函数：仅依赖入参，不访问成员状态
 
-        // 功能：把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
-        // 参数：frame 为完整帧的字节数据；const 表示本方法不修改解码器成员以外的外部状态。
+        /**
+         * @brief 把一整帧编码数据送入解析器再喂给解码器，解出所有 AVFrame 并通过回调上抛。
+         * @note 参数：frame 为完整帧的字节数据；const 表示本方法不修改解码器成员以外的外部状态。
+         */
         void decode_frame(const std::vector<uint8_t> &frame); // 非 const：硬解失败时可能切换为软解
-        // 功能：硬解发送失败时回退到软件 HEVC 解码器（内部使用）。
+        /**
+         * @brief 硬解发送失败时回退到软件 HEVC 解码器（内部使用）。
+         */
         bool ReinitializeWithSoftwareDecoder(); // 返回是否成功切换到软解
     };
 

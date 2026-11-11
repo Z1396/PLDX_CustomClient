@@ -13,7 +13,9 @@ namespace {  // 匿名命名空间：内部实现细节
 // 配置项键名（文件里是 "mqtt_server=host:port" 一行）
 constexpr std::string_view kMqttServerKey = "mqtt_server";
 
-// 功能：解析用户配置目录（不存在则按平台约定推导）。
+/**
+ * @brief 解析用户配置目录（不存在则按平台约定推导）。
+ */
 std::filesystem::path ResolveConfigDirectory() {
 #ifdef _WIN32
     if (const char *app_data = std::getenv("APPDATA"); app_data != nullptr && app_data[0] != '\0') {  // Windows 标准漫游目录
@@ -30,7 +32,9 @@ std::filesystem::path ResolveConfigDirectory() {
     return std::filesystem::current_path();  // 兜底：当前工作目录（不会因为取不到环境变量而失败）
 }
 
-// 功能：去掉字符串首尾的 ASCII 空白。
+/**
+ * @brief 去掉字符串首尾的 ASCII 空白。
+ */
 std::string Trim(std::string_view text) {
     const auto is_space = [](char character) {  // 只把空格/制表/回车/换行当空白，避免 locale 依赖
         return character == ' ' || character == '\t' || character == '\r' || character == '\n';
@@ -48,13 +52,17 @@ std::string Trim(std::string_view text) {
 
 }
 
-// 功能：返回配置文件的绝对路径。
+/**
+ * @brief 返回配置文件的绝对路径。
+ */
 std::filesystem::path ConfigFilePath() {
     return ResolveConfigDirectory() / "config.ini";  // 固定文件名，便于用户手工编辑
 }
 
-// 功能：读取配置里的 MQTT 服务端地址。
-// 思路：逐行扫描 key=value；忽略空行与 '#' 开头的注释；只认第一个 mqtt_server。
+/**
+ * @brief 读取配置里的 MQTT 服务端地址。
+ * @note 思路：逐行扫描 key=value；忽略空行与 '#' 开头的注释；只认第一个 mqtt_server。
+ */
 std::string LoadConfiguredMqttServer() {
     std::ifstream stream(ConfigFilePath());  // 打开配置文件（不存在时 is_open 为 false）
     if (!stream.is_open()) {  // 首次运行或文件被删
@@ -79,7 +87,9 @@ std::string LoadConfiguredMqttServer() {
     return {};  // 没找到该项
 }
 
-// 功能：保存 MQTT 服务端地址。
+/**
+ * @brief 保存 MQTT 服务端地址。
+ */
 bool SaveConfiguredMqttServer(std::string_view host_port) {
     const std::string value = Trim(host_port);  // 去掉用户输入可能带的空白
     if (value.empty()) {  // 空值不写，避免把配置清成空

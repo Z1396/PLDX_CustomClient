@@ -1,24 +1,29 @@
 // 机器人 ID 与显示名的映射实现。
 #include "app/robot_registry.h"
 
+#include "app/number_parser.h"  // 无异常整数解析（from_chars + std::expected）
 #include "app/team_util.h"   // IsRedRobotId：阵营判定单一来源
 #include "logging/logging.h"
 
 namespace RoboGo::app::robot_registry {
 
+/**
+ * @brief GetRobotName
+ * @note 纯函数：只读入参，不修改全局状态，可在任意线程调用。
+ */
 std::string GetRobotName(const std::string &robot_id) {
     if (robot_id.empty()) {
         SPDLOG_WARN("收到空机器人ID");
         return "未知机器人";
     }
 
-    int id = 0;
-    try {
-        id = std::stoi(robot_id);  // 十进制解析，红方 1~12 / 蓝方 101~112
-    } catch (const std::exception &error) {
-        SPDLOG_WARN("机器人ID解析失败 robot_id={} message={}", robot_id, error.what());
+    const auto parsed_id = RoboGo::app::ParseInteger<int>(robot_id);  // 不抛异常，失败带具体原因
+    if (!parsed_id.has_value()) {
+        SPDLOG_WARN("机器人ID解析失败 robot_id={} reason={}", robot_id,
+                    RoboGo::app::ToString(parsed_id.error()));
         return "未知机器人";
     }
+    const int id = *parsed_id;
 
     const bool is_red = team_util::IsRedRobotId(static_cast<uint32_t>(id));
     const int num = is_red ? id : id - 100;  // 换算成 1~12 的兵种编号
@@ -38,3 +43,4 @@ std::string GetRobotName(const std::string &robot_id) {
 }
 
 }  // namespace RoboGo::app::robot_registry
+

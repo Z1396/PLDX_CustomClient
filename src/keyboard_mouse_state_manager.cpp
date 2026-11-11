@@ -69,24 +69,32 @@ KeyboardMouseState g_state;  // 全局唯一状态实例(匿名命名空间内�
 
 }  // namespace
 
-// 功能：查询当前是否处于比赛模式。
+/**
+ * @brief 查询当前是否处于比赛模式。
+ */
 bool is_in_game_mode() {  // 无副作用的只读查询
     return g_state.game_mode_enabled.load(std::memory_order_acquire);  // 原子读：UI 线程与上报线程都可能访问
 }
 
-// 功能：进入比赛模式，置位开关并记录日志。
+/**
+ * @brief 进入比赛模式，置位开关并记录日志。
+ */
 void enter_game_mode() {  // 由界面"进入比赛"按钮触发
     if (!g_state.game_mode_enabled.exchange(true, std::memory_order_acq_rel)) {  // 仅在状态真正变化时打日志，避免重复刷屏
         SPDLOG_INFO("进入比赛模式");  // spdlog 宏：格式化输出 info 级别日志到默认 logger
     }
 }
 
-// 功能：查询当前登录身份是否为指挥手。
+/**
+ * @brief 查询当前登录身份是否为指挥手。
+ */
 bool is_commander_role() {
     return g_state.commander_role_enabled;  // 直接返回角色标志
 }
 
-// 功能：设置当前登录身份是否为指挥手；取消身份时顺手关掉指挥台。
+/**
+ * @brief 设置当前登录身份是否为指挥手；取消身份时顺手关掉指挥台。
+ */
 void set_commander_role(bool enabled) {
     g_state.commander_role_enabled = enabled;  // 记录新的角色标志
     if (!enabled) {  // 不再是指挥手
@@ -95,35 +103,36 @@ void set_commander_role(bool enabled) {
     SPDLOG_INFO("指挥手身份切换 enabled={}", enabled);  // 记录切换便于排查
 }
 
-// 功能：查询指挥台是否已打开。
+/**
+ * @brief 查询指挥台是否已打开。
+ */
 bool is_commander_console_active() {
     return g_state.commander_console_active;  // 直接返回指挥台标志
 }
 
-// 功能：打开指挥台。
-// 关键点：指挥台不控车，鼠标必须可见可点，所以强制退出比赛模式（比赛模式会捕获并隐藏鼠标）。
-//
-// 【重要】这里**不再校验登录身份**。原因：
-//   1) 规则里根本没有"指挥手"这个编号（附录二只有 1~11，8 是飞镖），"指挥手"是队内角色；
-//   2) 指挥台本质是一个界面，显示的是广播类数据（比分/全场血量/事件），任何已登录终端都能收到；
-//   3) 之前的"只有 8 号能进"把界面和一个并不存在的身份绑死了 —— 如果哪天改用 7 号登录，
-//      指挥台就再也打不开，而这跟数据权限毫无关系。
-// 安全约束仍在：调用点只有开局面板的按钮（非比赛模式），以及"指挥手槽位登录后自动进入"。
+/**
+ * @brief 打开指挥台。关键点：指挥台不控车，鼠标必须可见可点，所以强制退出比赛模式（比赛模式会捕获并隐藏鼠标）。【重要】这里**不再校验登录身份**。原因：1) 规则里根本没有"指挥手"这个编号（附录二只有
+ *        1~11，8 是飞镖），"指挥手"是队内角色；2) 指挥台本质是一个界面，显示的是广播类数据（比分/全场血量/事件），任何已登录终端都能收到；3) 之前的"只有 8 号能进"把界面和一个并不存在的身份绑死了
+ *        —— 如果哪天改用 7 号登录，指挥台就再也打不开，而这跟数据权限毫无关系。安全约束仍在：调用点只有开局面板的按钮（非比赛模式），以及"指挥手槽位登录后自动进入"。
+ */
 void enter_commander_console() {
     g_state.commander_console_active = true;  // 置位指挥台标志
     g_state.game_mode_enabled.store(false, std::memory_order_release);  // 退出比赛模式：释放键鼠捕获、恢复鼠标箭头
     SPDLOG_INFO("进入指挥台（鼠标可见、不采集键鼠）");  // 记录操作
 }
 
-// 功能：关闭指挥台，回到开局面板（仍保持登录）。
+/**
+ * @brief 关闭指挥台，回到开局面板（仍保持登录）。
+ */
 void exit_commander_console() {
     g_state.commander_console_active = false;  // 清除指挥台标志
     SPDLOG_INFO("退出指挥台");  // 记录操作
 }
 
-// 功能：指挥手登录成功后自动进入指挥台（每次成功登录只自动进一次）。
-// 思路：用"连接状态上升沿"触发——只在 未连接→已连接 的那一帧进指挥台。
-//       这样退出指挥台后回到赛前面板不会被立刻又拽进去，用户想再进就自己点按钮。
+/**
+ * @brief 指挥手登录成功后自动进入指挥台（每次成功登录只自动进一次）。
+ * @note 思路：用"连接状态上升沿"触发——只在 未连接→已连接 的那一帧进指挥台。这样退出指挥台后回到赛前面板不会被立刻又拽进去，用户想再进就自己点按钮。
+ */
 void maybe_auto_enter_commander_console(RoboGo::io::MqttClient &mqtt_client) {
     static bool was_connected = false;  // 上一帧是否已登录
     const bool connected = mqtt_client.get_connection_state() ==
@@ -151,27 +160,32 @@ void toggle_terrain_overlay() {
     SPDLOG_INFO("地图地形分层叠加已{}", g_state.terrain_overlay_enabled ? "开启" : "关闭");  // 留痕便于排查
 }
 
-// 功能：注册平台层的游戏输入捕获回调，进入/退出比赛模式时回调以独占输入。
-// 参数 handler：回调函数(参数为是否启用捕获)。
+/**
+ * @brief 注册平台层的游戏输入捕获回调，进入/退出比赛模式时回调以独占输入。参数 handler：回调函数(参数为是否启用捕获)。
+ */
 void set_game_input_capture_handler(std::function<void(bool enabled)> handler) {  // 按值接收后移动进静态变量
     g_state.game_input_capture_handler = std::move(handler);  // 以 move 保存回调，避免拷贝
 }  // set_game_input_capture_handler 结束
 
-// 功能：获取当前鼠标灵敏度系数。
+/**
+ * @brief 获取当前鼠标灵敏度系数。
+ */
 float get_mouse_sensitivity() {  // 只读访问器
     return g_state.mouse_sensitivity.load(std::memory_order_relaxed);  // 返回当前鼠标灵敏度系数
 }
 
-// 功能：更新鼠标灵敏度系数并记录日志。
-// 参数 sensitivity：新的灵敏度值。
+/**
+ * @brief 更新鼠标灵敏度系数并记录日志。参数 sensitivity：新的灵敏度值。
+ */
 void set_mouse_sensitivity(float sensitivity) {  // 由配置界面调整灵敏度
     SPDLOG_INFO("更新鼠标灵敏度 old={} new={}", g_state.mouse_sensitivity.load(std::memory_order_relaxed), sensitivity);  // "{}" 为 spdlog 占位符，按参数顺序替换
     g_state.mouse_sensitivity.store(sensitivity, std::memory_order_relaxed);  // 更新灵敏度，下一次位移累加时生效
 }
 
-// 功能：累加一次相对鼠标位移（由平台后端 / UI 线程调用，上报线程按周期取走）。
-// 关键点：这是「鼠标硬件报告的相对量」，与光标在屏幕上的绝对坐标无关，
-//         所以光标被 ClipCursor 钉在窗口边缘时仍能持续产生位移，云台才能连续 360° 旋转。
+/**
+ * @brief 累加一次相对鼠标位移（由平台后端 / UI 线程调用，上报线程按周期取走）。关键点：这是「鼠标硬件报告的相对量」，与光标在屏幕上的绝对坐标无关，所以光标被 ClipCursor
+ *        钉在窗口边缘时仍能持续产生位移，云台才能连续 360° 旋转。
+ */
 void accumulate_relative_mouse_delta(const float delta_x, const float delta_y) {
     // 菜单 / 指挥台里的移动一律丢弃，避免切回比赛时把菜单操作一次性算进云台。
     if (!g_state.game_mode_enabled.load(std::memory_order_acquire)) {
@@ -185,37 +199,48 @@ void accumulate_relative_mouse_delta(const float delta_x, const float delta_y) {
                                       std::memory_order_relaxed);  // 定点累加 Y
 }
 
-// 功能：查询当前是否处于地图点位标记模式。
+/**
+ * @brief 查询当前是否处于地图点位标记模式。
+ */
 bool is_marker_mode() {  // 只读访问器
     return g_state.marker_mode_enabled;  // 返回地图标记模式标志
 }
 
-// 功能：查询地图标记是否包含哨兵。
+/**
+ * @brief 查询地图标记是否包含哨兵。
+ */
 bool is_marker_mode_include_sentry() {  // 只读访问器
     return g_state.marker_mode_include_sentry;  // 返回标记是否包含哨兵标志
 }  // is_marker_mode_include_sentry 结束
 
-// 功能：设置地图标记是否包含哨兵并记录日志。
-// 参数 include：true 表示群发给哨兵。
+/**
+ * @brief 设置地图标记是否包含哨兵并记录日志。参数 include：true 表示群发给哨兵。
+ */
 void set_marker_mode_include_sentry(bool include) {  // 由设置界面切换
     SPDLOG_INFO("更新地图标记范围 include_sentry={}", include);  // 记录本次开关变化，便于排查误发
     g_state.marker_mode_include_sentry = include;  // 更新标记范围标志
 }  // set_marker_mode_include_sentry 结束
 
-// 功能：进入地图点位标记模式并记录日志。
+/**
+ * @brief 进入地图点位标记模式并记录日志。
+ */
 void enter_marker_mode() {  // 由快捷键触发
     SPDLOG_INFO("进入地图点位标记模式");  // 记录模式切换
     g_state.marker_mode_enabled = true;  // 置位标记模式，等待用户在小地图点击
 }
 
-// 功能：退出地图点位标记模式并记录日志。
+/**
+ * @brief 退出地图点位标记模式并记录日志。
+ */
 void exit_marker_mode() {  // 用户取消标记时调用
     SPDLOG_INFO("退出地图点位标记模式");  // 记录模式切换
     g_state.marker_mode_enabled = false;  // 清除标记模式
 }
 
-// 功能：在地图标记模式下，向裁判系统发送一次地图点击标记指令(MapClickCmd)。
-// 思路：校验标记模式 -> 填充 Protobuf 字段 -> 序列化并发布；发送后保持标记模式，由操作手手动退出。
+/**
+ * @brief 在地图标记模式下，向裁判系统发送一次地图点击标记指令(MapClickCmd)。
+ * @note 思路：校验标记模式 -> 填充 Protobuf 字段 -> 序列化并发布；发送后保持标记模式，由操作手手动退出。
+ */
 static void PublishMapClick(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry) {
     MapClickCmd map_click_cmd;  // 构造地图点击指令 Protobuf 消息
     map_click_cmd.set_is_send_all(include_sentry ? 2 : 1);  // 2 表示群发给哨兵，1 表示仅普通机器人
@@ -240,7 +265,9 @@ static void PublishMapClick(RoboGo::io::MqttClient &mqtt_client, float map_x, fl
     }
 }
 
-// 功能：标记模式下发送一次地图标记（保留"必须先进入标记模式"的原有约束）。
+/**
+ * @brief 标记模式下发送一次地图标记（保留"必须先进入标记模式"的原有约束）。
+ */
 void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y) {  // mqtt_client 用于发布消息
     if (!g_state.marker_mode_enabled) {  // 模式校验：只有处于标记模式才允许发送
         SPDLOG_WARN("忽略地图标记请求，因为当前不在标记模式");  // 记录告警，便于发现异常调用
@@ -255,14 +282,17 @@ void send_map_marker(RoboGo::io::MqttClient &mqtt_client, float map_x, float map
     // （进攻/防御/警戒），同时由小地图画出标记点做可视化确认。
 }
 
-// 功能：指挥台点地图时直接下发标记，不要求先切标记模式。
+/**
+ * @brief 指挥台点地图时直接下发标记，不要求先切标记模式。
+ */
 void send_map_marker_now(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry) {
     PublishMapClick(mqtt_client, map_x, map_y, include_sentry);  // 直接走公共下发实现
 }
 
-// 功能：把采样到的键鼠状态打包成一条 KeyboardMouseControl 并发布（只有上报线程调用）。
-// 思路：一次性取走累计位移（exchange 归零），按键位掩码直接读；不在比赛模式时清空累计值，
-//       避免下次进入比赛模式时把这一段位移一次性甩给机器人。
+/**
+ * @brief 把采样到的键鼠状态打包成一条 KeyboardMouseControl 并发布（只有上报线程调用）。
+ * @note 思路：一次性取走累计位移（exchange 归零），按键位掩码直接读；不在比赛模式时清空累计值，避免下次进入比赛模式时把这一段位移一次性甩给机器人。
+ */
 static void PublishKeyboardMouseOnce() {
     if (g_state.publisher_client == nullptr) {  // 线程已启动但客户端还没绑定（理论上不会发生）
         return;  // 直接返回
@@ -307,7 +337,9 @@ static void PublishKeyboardMouseOnce() {
     }
 }
 
-// 功能：键鼠上报线程主循环：按固定周期取走采样值并发送，与渲染帧率完全解耦。
+/**
+ * @brief 键鼠上报线程主循环：按固定周期取走采样值并发送，与渲染帧率完全解耦。
+ */
 static void KeyboardMousePublishLoop() {
     using clock = std::chrono::steady_clock;  // 单调时钟：不受系统时间调整影响
     auto next_wake = clock::now();  // 下一次唤醒时刻（绝对时间，避免累计漂移）
@@ -328,8 +360,10 @@ static void KeyboardMousePublishLoop() {
 // 直接调用 accumulate_relative_mouse_delta 累加。相对位移与光标屏幕位置无关，
 // 因此即使 ClipCursor 把光标钉在窗口边缘，云台也能连续 360° 旋转。
 
-// 功能：启动键鼠上报线程（进程内只启动一次）。
-// 参数 mqtt_client：发布用的客户端，调用方必须保证其生命周期长于本线程（application 里先 stop 再停 MQTT）。
+/**
+ * @brief 启动键鼠上报线程（进程内只启动一次）。参数 mqtt_client：发布用的客户端，调用方必须保证其生命周期长于本线程（application 里先 stop 再停 MQTT）
+ *        。
+ */
 void start_keyboard_mouse_publisher(RoboGo::io::MqttClient &mqtt_client) {
     if (g_state.publisher_running.exchange(true, std::memory_order_acq_rel)) {  // 已启动则不重复创建
         return;  // 直接返回
@@ -346,7 +380,9 @@ void start_keyboard_mouse_publisher(RoboGo::io::MqttClient &mqtt_client) {
                 1000 / kPublishPeriod.count());  // 预期频率（71Hz，低于协议 75Hz 上限）
 }  // start_keyboard_mouse_publisher 结束
 
-// 功能：停止键鼠上报线程并回收（幂等）。
+/**
+ * @brief 停止键鼠上报线程并回收（幂等）。
+ */
 void stop_keyboard_mouse_publisher() {
     if (!g_state.publisher_running.exchange(false, std::memory_order_acq_rel)) {  // 未启动或已停止
         return;  // 直接返回
@@ -361,9 +397,11 @@ void stop_keyboard_mouse_publisher() {
     SPDLOG_INFO("键鼠上报线程已退出");  // 记录线程生命周期
 }  // stop_keyboard_mouse_publisher 结束
 
-// 功能：每帧由 UI 线程调用，只做"采样"，不再直接发布。
-// 思路：Esc 切换比赛模式 -> 在模式边沿通知平台捕获输入 -> 把按键/鼠标增量写进原子变量 ->
-//       由上报线程按固定周期取走并发送。所有 ImGui 访问都留在 UI 线程，不跨线程读 ImGui 状态。
+/**
+ * @brief 每帧由 UI 线程调用，只做"采样"，不再直接发布。
+ * @note 思路：Esc 切换比赛模式 -> 在模式边沿通知平台捕获输入 -> 把按键/鼠标增量写进原子变量 ->由上报线程按固定周期取走并发送。所有 ImGui 访问都留在 UI 线程，
+ *        不跨线程读 ImGui 状态。
+ */
 void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client) {
     (void) mqtt_client;  // 发布已移到上报线程，本函数不再直接使用客户端（保留形参以稳定调用点）
     ImGuiIO &io = ImGui::GetIO();  // 获取 ImGui IO，用于读取鼠标/键盘输入

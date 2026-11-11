@@ -18,22 +18,32 @@ enum class CaptureMode {
     All,       // 全量：MQTT + UDP 图传原始分片
 };
 
-// 功能：把命令行/环境变量里的字符串解析成抓包档位。
-// 参数：取值 "off"/"mqtt"/"all"（大小写不敏感），无法识别时回退 MqttOnly。
+/**
+ * @brief 把命令行/环境变量里的字符串解析成抓包档位。
+ * @note 参数：取值 "off"/"mqtt"/"all"（大小写不敏感），无法识别时回退 MqttOnly。
+ */
 CaptureMode ParseCaptureMode(std::string_view text);
 
-// 功能：查询当前生效的抓包档位（供日志与界面显示）。
+/**
+ * @brief 查询当前生效的抓包档位（供日志与界面显示）。
+ */
 CaptureMode current_capture_mode();
 
-// 功能：初始化日志系统（spdlog 异步 + 控制台/文件双 sink）并按档位启用原始网络抓包。
-// 参数：application_name 应用名（写入日志）；invert_udp_video 是否在抓包标志中记录“翻转 UDP 视频”选项；
-//       capture_mode 抓包档位（默认只抓 MQTT）。
+/**
+ * @brief 初始化日志系统（spdlog 异步 + 控制台/文件双 sink）并按档位启用原始网络抓包。
+ * @note 参数：application_name 应用名（写入日志）；invert_udp_video 是否在抓包标志中记录“翻转 UDP 视频”选项；capture_mode 抓包档位（默认只抓
+ *        MQTT）。
+ */
 void initialize(std::string_view application_name, bool invert_udp_video, CaptureMode capture_mode = CaptureMode::MqttOnly);  // 声明初始化函数：进程启动时调用一次，内部用 call_once 保证幂等
 
-// 功能：关闭日志系统：停止抓包线程、等待其退出并关闭 spdlog。
+/**
+ * @brief 关闭日志系统：停止抓包线程、等待其退出并关闭 spdlog。
+ */
 void shutdown();  // 声明关闭函数：抓包线程落盘并关闭文件后，再关闭 spdlog 全局资源
 
-// 功能：查询日志系统是否已初始化。
+/**
+ * @brief 查询日志系统是否已初始化。
+ */
 bool is_initialized();  // 返回内部初始化标志，供调用方判断能否安全写日志/抓包
 
 // 以下为各全局路径/标识的访问器，返回内部存储的引用（只读使用，勿修改）。
@@ -42,12 +52,16 @@ const std::filesystem::path &log_directory();        // 本次会话日志目录
 const std::filesystem::path &network_capture_path(); // 网络抓包二进制文件路径
 const std::string &session_id();                     // 本次会话 ID（时间戳生成）
 
-// 功能：把文本截断到 max_length，超出则追加 "...(truncated)" 标记。
+/**
+ * @brief 把文本截断到 max_length，超出则追加 "...(truncated)" 标记。
+ */
 std::string truncate_text(std::string_view text, std::size_t max_length = 512);  // max_length 默认 512 字节，避免超长字段刷屏
 
-// 功能：记录一笔网络报文到抓包队列（二进制格式，供复盘）。
-// 参数：transport 传输类型("mqtt"/"udp-video")；direction 方向("rx"/"tx")；channel 通道(如 topic)；
-//       payload 原始载荷；peer 对端地址。本重载接受字节序列。
+/**
+ * @brief 记录一笔网络报文到抓包队列（二进制格式，供复盘）。
+ * @note 参数：transport 传输类型("mqtt"/"udp-video")；direction 方向("rx"/"tx")；channel 通道(如 topic)；payload
+ *        原始载荷；peer 对端地址。本重载接受字节序列。
+ */
 void log_network_payload(std::string_view transport,  // 参数1：传输类型，取值 "mqtt" / "udp-video"
                          std::string_view direction,  // 参数2：报文方向，"rx" 接收 / "tx" 发送
                          std::string_view channel,  // 参数3：通道名，例如 MQTT topic 或 "video-stream"

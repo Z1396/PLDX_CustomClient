@@ -6,6 +6,8 @@
 // [/pch-split]
 #include "main_window.h"  // 引入主窗口头文件（提供 State 类型与 ImGui/ImVec 等依赖）
 
-// 功能：在屏幕中心绘制十字准星，并用官方分档的环形读条实时反映枪管热量（含数值）。
-// 思路：ImDrawList 直接画底环 + 从 12 点逆时针的填充弧；热量冷却时弧平滑倒退。
+/**
+ * @brief 在屏幕中心绘制十字准星 + 单圈枪管热量环 + 热量数值。
+ * @note 思路：ImDrawList 直接画固定的白色底环 + 从 12 点逆时针的热量弧，按 1/2、3/4 上限分档换色；内层血量环、中层缓冲环、棕色余辉、火花线与事件涟漪均已移除。
+ */
 void ShowCrosshair(const State &state);

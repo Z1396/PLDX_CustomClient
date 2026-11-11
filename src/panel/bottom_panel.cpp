@@ -1,4 +1,19 @@
 // bottom_panel.cpp：底部「控制度带」的实现。
+//
+// 画一条双色控制度带（己方从左、对方从右）、上方大数字与标签、下方一行
+// 总伤害/存活/图传清晰度摘要，以及可选的复活进度、重装装配状态行。
+// 数据流：只读 State 的 global_unit_status（控制度/总伤害/基地血量）、
+// robot_respawn_status、tech_core_motion_state_sync 与 red_robots/blue_robots。
+// 设计要点：
+// · 控制度比例用 g_last 静态平滑值（MoveTowards，速度 1.2/秒）逼近目标，
+// 因为裁判系统按 1Hz 推送，硬切会让色带明显闪动；双方都为 0 时取 0.5 对半；
+// · 图传清晰度按 2027 规则 5.6.1：己方基地掉血后 λ² 降采样，λ<0.75 转橙、<0.5 转红；
+// · panel_height 由内容行数算出并写入 g_last_panel_height，左下角本车卡通过
+// GetBottomPanelHeight() 读取以让位 —— 这是上一帧实测高度的自校准，避免估算偏差裁切；
+// · 状态行只在有内容时产生（CollectStatusLines 返回空即不占位），底部条自然收缩。
+// 依赖：ImGui（imgui_internal.h 提供 GetScale）、messages.pb.h、app/robot_registry.h、
+// app/team_util.h、ui/hud_primitives.h、ui/theme.h。
+// 注意：本文件不写 State；g_last_panel_height 是唯一的跨帧 UI 态，仅主线程访问。
 // 2027-11-06 按「主界面定稿」：把两组长条 + 构成行合成一条居中的双色带，
 // 控制度用大数字，总伤害 / 存活 / 图传清晰度压到一行；复活与装配状态仍在下方居中显示。
 // 数据来源与缓动策略不变，只改呈现。
@@ -31,15 +46,20 @@ using RoboGo::ui::hud::TextSize;
 constexpr std::array<int, 4> kHudRobotIds = {1, 3, 4, 7};
 
 // 上一帧底部条实际占用的高度：左下角本车卡靠它让位。
+// 用「实测值」而非公式估算，是因为状态行数可变，估算偏差会裁掉底部内容。
 float g_last_panel_height = 0.0f;
 
 // 己方在总量中的占比；双方都为 0 时按对半，避免开局显示成一条纯对方色的空带。
+// 思路：双方都为 0 时返回 0.5，避免开局显示成一条纯对方色的空带。
+// 返回值：0.0~1.0 的比例。
 float CalcAllyRatio(uint32_t ally, uint32_t enemy) {
     const float total = static_cast<float>(ally) + static_cast<float>(enemy);
     return total <= 0.0f ? 0.5f : static_cast<float>(ally) / total;
 }
 
 // 固定步长逼近目标比例：数据 1Hz，硬切会闪。
+// 参数：max_delta —— 本帧允许的最大变化量（帧率无关，由 DeltaTime 换算）。
+// 返回值：不会越过 target 的新比例。
 float MoveTowards(float current, float target, float max_delta) {
     return current < target ? std::min(current + max_delta, target)
                             : std::max(current - max_delta, target);
@@ -51,6 +71,11 @@ struct StatusLine {
     ImVec4 color;
 };
 
+/**
+ * @brief 收集复活进度与重装装配状态两类可选状态行。
+ * @note 思路：只在对应 optional 存在且状态有效时才 push_back；装配状态把「已放入 / 已平移 / 已旋转」用 std::accumulate 拼成箭头链，并附上 remain_time_step
+ *        倒计时。返回空 vector 时底部条自动变矮。
+ */
 std::vector<StatusLine> CollectStatusLines(const State &state) {
     std::vector<StatusLine> lines;
     if (state.robot_respawn_status.has_value() && state.robot_respawn_status->is_pending_respawn()) {
@@ -87,6 +112,8 @@ std::vector<StatusLine> CollectStatusLines(const State &state) {
 }
 
 // 图传清晰度提示：2027 规则 5.6.1，己方基地掉血会让图传按 λ² 降采样。
+// 思路：2027 规则 5.6.1，λ = 1 - (10000 - base_health)/20000；满血或 λ>0.98 时不提示，
+//       λ<0.75 转橙、<0.5 转红。text/color 为出参，未触发时 text 保持空串。
 void ComputeQualityHint(const GlobalUnitStatus &unit_status, std::string &text, ImVec4 &color) {
     color = ImVec4(0.70f, 0.70f, 0.70f, 1.0f);
     if (unit_status.base_health() >= 10000) {
@@ -106,6 +133,11 @@ void ComputeQualityHint(const GlobalUnitStatus &unit_status, std::string &text, 
     }
 }
 
+/**
+ * @brief 数出己方四台有血量单位中仍存活的数量。
+ * @note 思路：按 we_are_red 选 red_robots/blue_robots，遍历 kHudRobotIds 用 health>0 判定；未同步的单位 health 为 0
+ *        会被计为阵亡，与顶部队伍条口径一致。
+ */
 int CountAlive(const State &state, bool we_are_red) {
     const RobotStatus *robots = we_are_red ? state.red_robots : state.blue_robots;
     int alive = 0;
@@ -118,6 +150,8 @@ int CountAlive(const State &state, bool we_are_red) {
 }
 
 // 双色带：己方从左、对方从右，中间一根 50% 刻度。
+// 思路：先铺满底槽，再按 clamp 后的 ally_ratio 分两段填充，两段各自只圆角外侧，
+//       避免交界处出现缺口；任一段宽度 <=1px 时直接不画，防止极端比例下的绘制噪点。
 void DrawControlBand(ImDrawList *draw_list, const ImVec2 &top_left, float width, float height,
                      float ally_ratio, ImU32 ally_color, ImU32 enemy_color, const RoboGo::ui::hud::Colors &colors) {
     const float rounding = height * 0.5f;
@@ -141,7 +175,12 @@ void DrawControlBand(ImDrawList *draw_list, const ImVec2 &top_left, float width,
 
 }  // namespace
 
-// 功能：在屏幕底部居中绘制控制度带与状态行。
+/**
+ * @brief 在屏幕底部居中绘制控制度带与状态行。
+ * @param state 只读全局状态。
+ * @note 思路：先由状态行数算 panel_height 与 panel_top，开一个全宽、透明、无输入的窗口；依次画状态行、控制度大数字、平滑后的双色带、摘要行；最后把实测高度写回g_last_panel_height（Begin
+ *        失败的提前返回分支也写，避免让位信息陈旧）。
+ */
 void ShowBottomPanel(const State &state) {
     const ImVec2 viewport_size = ImGui::GetMainViewport()->Size;
     const float s = ImGui::GetScale();
@@ -238,7 +277,10 @@ void ShowBottomPanel(const State &state) {
     g_last_panel_height = panel_height;
 }
 
-// 功能：返回底部条上一帧占用的高度（供其它贴底面板让位）。
+/**
+ * @brief 返回底部条上一帧占用的高度（供其它贴底面板让位）。
+ * @return 像素高度；首帧（本函数尚未被调用过）为 0，调用方需能容忍。
+ */
 float GetBottomPanelHeight() {
     return g_last_panel_height;
 }

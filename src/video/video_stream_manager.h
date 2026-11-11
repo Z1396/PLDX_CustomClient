@@ -30,16 +30,22 @@ namespace RoboGo::video { // 进入视频模块命名空间
         std::atomic<bool> is_running = true;           // 线程运行标志，停止时置 false
 
     public: // ---------- 公开接口 ----------
-        // 功能：构造管理器，连接 UDP 接收、分片重组与解码，并启动独立解码线程。
-        // 参数：io_context 为 Asio 事件循环；endpoint 为监听的 UDP 地址与端口；frame_callback 为解出帧的回调。
+        /**
+         * @brief 构造管理器，连接 UDP 接收、分片重组与解码，并启动独立解码线程。
+         * @note 参数：io_context 为 Asio 事件循环；endpoint 为监听的 UDP 地址与端口；frame_callback 为解出帧的回调。
+         */
         explicit VideoStreamManager(boost::asio::io_context &io_context, // Asio 事件循环，接收器在其上注册异步读
                                     boost::asio::ip::udp::endpoint endpoint, // 监听的 UDP 地址与端口
                                     const std::function<void(const AVFrame *frame)> &frame_callback); // 解出 AVFrame 后的回调
 
-        // 功能：析构时确保解码线程已回收（幂等调用 stop）。
+        /**
+         * @brief 析构时确保解码线程已回收（幂等调用 stop）。
+         */
         ~VideoStreamManager();
 
-        // 功能：停止接收、置停止标志并等待解码线程退出，完成资源回收。
+        /**
+         * @brief 停止接收、置停止标志并等待解码线程退出，完成资源回收。
+         */
         void stop(); // 幂等停止：先停收包，再通知线程退出并 join
     };
 

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.12)
 project(RoboGo)
 
 # set options
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -153,6 +153,13 @@ FetchContent_Declare(
 )
 if(WIN32)
     FetchContent_MakeAvailable(directxtk12)
+    # DirectXTK12 自带 CMake 把 C++ 标准锁在较低版本（内部 set(CMAKE_CXX_STANDARD 17)）。
+    # 在项目层把它的 target 属性统一到全局标准，避免同一个 exe 里混用不同 /std: 编译的 STL 代码。
+    if(TARGET DirectXTK12)
+        set_target_properties(DirectXTK12 PROPERTIES
+            CXX_STANDARD ${CMAKE_CXX_STANDARD}
+            CXX_STANDARD_REQUIRED ON)
+    endif()
 else ()
     FetchContent_MakeAvailable(glfw)
 endif()

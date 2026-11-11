@@ -7,20 +7,29 @@
 
 namespace RoboGo::app::team_util {  // 团队/阵营相关的共享工具，消除各面板重复实现
 
-// 判断一个 robot_id 属于哪一方：< 100 为红方，>= 100 为蓝方。
-// 协议里蓝方编号统一是红方 +100，全仓所有阵营判断都应走这里，避免各处手写 "< 100" 造成口径漂移。
+/**
+ * @brief 判断一个 robot_id 属于哪一方：< 100 为红方，>= 100 为蓝方。 协议里蓝方编号统一是红方 +100，全仓所有阵营判断都应走这里，避免各处手写 "< 100" 造成口径漂移。
+ * @note 纯函数：只读入参，不修改全局状态，可在任意线程调用。
+ * @note 结果用于写入 State::robot_static_status。
+ */
 inline bool IsRedRobotId(uint32_t robot_id) {
     return robot_id < 100;
 }
 
-// 判断己方是否红方：robot_id < 100 为红方；缺静态状态时按红方处理（与顶部状态栏/其它面板一致）。
-// 注意必须与 robot_static_status.has_value() 守卫一起使用，缺数据时不解引用，避免未定义行为。
+/**
+ * @brief 判断己方是否红方：robot_id < 100 为红方；缺静态状态时按红方处理（与顶部状态栏/其它面板一致）。 注意必须与 robot_static_status.has_value() 守卫一起使用，
+ *        缺数据时不解引用，避免未定义行为。
+ * @note 纯函数：只读入参，不修改全局状态，可在任意线程调用。
+ * @note 结果用于写入 State::robot_static_status。
+ */
 inline bool WeAreRed(const State &state) {
     return !state.robot_static_status.has_value() || IsRedRobotId(state.robot_static_status->robot_id());
 }
 
-// 把雷达槽位映射成 robot_id 列表（兼容 8 槽位与旧 12 槽位，红/蓝在前两种排序）。
-// 与 mini_map 原本的内联列表完全一致，集中在此后两边共用单一来源。
+/**
+ * @brief 把雷达槽位映射成 robot_id 列表（兼容 8 槽位与旧 12 槽位，红/蓝在前两种排序）。 与 mini_map 原本的内联列表完全一致，集中在此后两边共用单一来源。
+ * @note 纯函数：只读入参，不修改全局状态，可在任意线程调用。
+ */
 inline std::vector<uint32_t> RadarRobotIds(const State &state, bool we_red) {
     using RoboGo::app::robot_registry::kRadarRobotIdsRedFirst;
     using RoboGo::app::robot_registry::kRadarRobotIdsBlueFirst;
@@ -37,3 +46,4 @@ inline std::vector<uint32_t> RadarRobotIds(const State &state, bool we_red) {
 }
 
 }  // namespace RoboGo::app::team_util
+
