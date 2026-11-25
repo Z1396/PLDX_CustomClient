@@ -6,7 +6,9 @@
 #include <messages.pb.h>
 // [/pch-split]
 
-// 自定义控制载荷模块：定义上报给裁判系统的自定义字节块布局与编解码辅助接口。
+// 自定义控制载荷模块：定义**下发给机器人电控**的 CustomControl 私有字节布局与编解码辅助接口。
+// 方向别搞反：本文件描述的是「自定义终端 → 机器人」（图传 0x0311，≤60 字节），
+// 不是「机器人 → 自定义终端」的 CustomByteBlock（图传 0x0310，≤300 字节 / 50Hz）。
 // 【2027 协议变更】空中支援指令/状态已在 2027 协议中删除，原用于"呼叫标志 + 冷却计数"的 2 字节
 // 现为【保留位】：固定填 0，偏移保持不变以免影响机器人端既有解析；具体用途待与机器人端协商后再定义。
 inline constexpr size_t kCustomControlRobotCount = 5; // 敌方可上报血量的机器人数量(共 5 台)
@@ -15,7 +17,7 @@ inline constexpr size_t kCustomControlAirSupportCallOffset = kCustomControlHealt
 inline constexpr size_t kCustomControlCounterCooldownOffset = kCustomControlAirSupportCallOffset + 1; // 2027 保留字节 1 的偏移(+1 跳过第 1 个保留字节，原空中支援冷却计数位)
 inline constexpr size_t kCustomControlDebugCounterOffset = kCustomControlCounterCooldownOffset + 1; // 调试计数器的偏移(+1 跳过第 2 个保留字节)
 inline constexpr size_t kCustomControlPayloadSize = kCustomControlDebugCounterOffset + 1; // 整个自定义控制载荷的总字节数
-inline constexpr auto kCustomControlPublishInterval = std::chrono::milliseconds(100); // 自定义控制载荷发布间隔(100ms，即 10Hz)
+inline constexpr auto kCustomControlPublishInterval = std::chrono::milliseconds(100); // 本地发布间隔 100ms（10Hz）；协议上限是 75Hz（表 2-1），这里刻意留足余量
 
 /**
  * @brief 按既定布局打包完整自定义控制载荷字节数组。参数 enemy_health：各敌方机器人血量(uint16 小端)；debug_counter：调试计数。

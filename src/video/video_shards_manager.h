@@ -1,7 +1,7 @@
 // video_shards_manager.h：视频分片管理器——接收 UDP 视频分片并重组为完整帧，处理帧 ID 回绕、丢帧冲刷与过期分片丢弃。
 #pragma once
 
-#include <pch.h> // 预编译头：提供 map/array/vector/optional/function 等标准库与 moodycamel 无锁队列
+#include <pch.h> // 预编译头：提供 map/array/vector/optional/function 等 STL 设施
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 #include <libavcodec/avcodec.h>

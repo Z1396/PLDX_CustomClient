@@ -1,7 +1,7 @@
 // 键鼠状态管理实现：UI 线程只负责"采样"，独立线程按固定 71Hz 向裁判系统上报 KeyboardMouseControl，
 // 同时维护比赛模式、鼠标灵敏度与地图标记模式等模块级状态。
 //
-// 为什么要拆线程（2027 协议 2.2.1 要求键鼠最高 75Hz）：
+// 为什么要拆线程（2027 协议 2.2.1 KeyboardMouseControl，最高 75Hz）：
 //   原先"采样 + 打包 + 发布"全塞在渲染循环里，实际上报频率被垂直同步绑死 ——
 //   60Hz 屏就是 60Hz、144Hz 屏会跑到 76.9Hz（超过协议上限）、掉帧就直接掉控制频率。
 //   现在渲染循环只把按键状态与鼠标增量写进原子变量，由独立线程按固定周期取走并发送，
@@ -34,6 +34,20 @@ constexpr uint32_t kButtonLeft = 1u << 0;
 constexpr uint32_t kButtonRight = 1u << 1;
 constexpr uint32_t kButtonMid = 1u << 2;
 
+// 外接手柄的输入看门狗：超过该时长没有收到新帧，就认为手柄离线，
+// 把它注入的键盘位/鼠标键全部视为松开。防止拔线或固件死机时机器人一直收到"按住"。
+constexpr int64_t kControllerInputTimeoutNs = 500'000'000;  // 500ms
+
+/**
+ * @brief 取当前单调时钟的纳秒计数（手柄看门狗用）。
+ * @note static：仅本编译单元使用，避免和其他 TU 的同名函数冲突。
+ */
+static int64_t NowSteadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+}
+
 namespace {
 
 // KeyboardMouseState: 把原先散落的匿名 static 收敛到一处，便于统一查看初始化与析构顺序。
@@ -47,6 +61,12 @@ struct KeyboardMouseState {
     std::atomic<int32_t> pending_mouse_z{0};
     std::atomic<uint32_t> pending_keyboard_value{0};// 键盘按键状态位图
     std::atomic<uint32_t> pending_buttons{0};// 鼠标按键状态位图
+    // 外接 RS232 手柄注入的按键（与 UI 键盘/鼠标取并集，不覆盖真实输入）
+    std::atomic<uint32_t> controller_keyboard_bits{0};
+    std::atomic<uint32_t> controller_mouse_buttons{0};
+    // 最后一次收到手柄输入的时刻（steady_clock 纳秒）。用于看门狗：
+    // 手柄拔线/死机时如果正按着键，不能让它一直保持"按下"。
+    std::atomic<int64_t> controller_last_update_ns{0};
 
     // 仅 UI 线程访问的状态(含地形叠加开关，地图界面共用)
     std::atomic<float> mouse_sensitivity{1.0f};
@@ -111,9 +131,9 @@ bool is_commander_console_active() {
 }
 
 /**
- * @brief 打开指挥台。关键点：指挥台不控车，鼠标必须可见可点，所以强制退出比赛模式（比赛模式会捕获并隐藏鼠标）。【重要】这里**不再校验登录身份**。原因：1) 规则里根本没有"指挥手"这个编号（附录二只有
- *        1~11，8 是飞镖），"指挥手"是队内角色；2) 指挥台本质是一个界面，显示的是广播类数据（比分/全场血量/事件），任何已登录终端都能收到；3) 之前的"只有 8 号能进"把界面和一个并不存在的身份绑死了
- *        —— 如果哪天改用 7 号登录，指挥台就再也打不开，而这跟数据权限毫无关系。安全约束仍在：调用点只有开局面板的按钮（非比赛模式），以及"指挥手槽位登录后自动进入"。
+ * @brief 打开指挥台。关键点：指挥台不控车，鼠标必须可见可点，所以强制退出比赛模式（比赛模式会捕获并隐藏鼠标）。【重要】这里**不再校验登录身份**。原因：1) 规则附录二里没有"指挥手"这个编号，
+ *        "指挥手"是队内角色，2027 只是约定用它登空中系统 6 号槽位；2) 指挥台本质是一个界面，显示的是广播类数据（比分/全场血量/事件），任何已登录终端都能收到；3) 之前的"只有 8 号能进"把界面
+ *        和一个具体编号绑死了——2027 改成 6 号后那种写法会直接失效，而这跟数据权限毫无关系。安全约束仍在：调用点只有开局面板的按钮（非比赛模式），以及"指挥手槽位登录后自动进入"。
  */
 void enter_commander_console() {
     g_state.commander_console_active = true;  // 置位指挥台标志
@@ -200,6 +220,24 @@ void accumulate_relative_mouse_delta(const float delta_x, const float delta_y) {
 }
 
 /**
+ * @brief 设置外接手柄注入的键盘位（仅记录，发布时与 UI 键盘取并集）。
+ * @note 只在 IO 线程写入、UI/上报线程读取，用 relaxed 原子即可：它只是一个位掩码快照，
+ *       不承担跨变量的先后顺序语义。
+ */
+void set_controller_keyboard_bits(const uint32_t bits) {
+    g_state.controller_keyboard_bits.store(bits, std::memory_order_relaxed);
+    g_state.controller_last_update_ns.store(NowSteadyNs(), std::memory_order_relaxed);  // 喂看门狗
+}
+
+/**
+ * @brief 设置外接手柄注入的鼠标键（仅记录，发布时与 UI 鼠标取并集）。
+ */
+void set_controller_mouse_buttons(const uint32_t bits) {
+    g_state.controller_mouse_buttons.store(bits, std::memory_order_relaxed);
+    g_state.controller_last_update_ns.store(NowSteadyNs(), std::memory_order_relaxed);  // 喂看门狗
+}
+
+/**
  * @brief 查询当前是否处于地图点位标记模式。
  */
 bool is_marker_mode() {  // 只读访问器
@@ -243,9 +281,12 @@ void exit_marker_mode() {  // 用户取消标记时调用
  */
 static void PublishMapClick(RoboGo::io::MqttClient &mqtt_client, float map_x, float map_y, bool include_sentry) {
     MapClickCmd map_click_cmd;  // 构造地图点击指令 Protobuf 消息
-    map_click_cmd.set_is_send_all(include_sentry ? 2 : 1);  // 2 表示群发给哨兵，1 表示仅普通机器人
-    std::string robot_id(7, 0x00);  // 固定 7 字节 robot_id，先以全 0 占位
-    map_click_cmd.set_robot_id(robot_id);  // 设置目标机器人 ID(此处为占位)
+    map_click_cmd.set_is_send_all(include_sentry ? 2 : 1);  // 协议 2.2.18：1=除哨兵，2=包含哨兵
+    // robot_id 固定 7 字节。只有 is_send_all=0（指定客户端）时才需要逐字节填目标 ID
+    // （红方填 1/7、蓝方填 101/107，后续补 0）；这里是群发（1/2），范围已由 is_send_all 决定，
+    // 按协议保持 7 字节全 0 即可。
+    std::string robot_id(7, 0x00);  // 固定 7 字节占位（群发时协议允许全 0）
+    map_click_cmd.set_robot_id(robot_id);  // 写入 robot_id 字段
     map_click_cmd.set_mode(1);  // 设置标记类型(1=攻击)
     map_click_cmd.set_enemy_id(0);  // 敌方 ID(0 表示不适用)
     map_click_cmd.set_ascii(0);  // ASCII 字段(0 表示不适用)
@@ -475,7 +516,16 @@ void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client) {
     keyboard_value[14] = ImGui::IsKeyDown(ImGuiKey_V);  // 记录 V 键
     keyboard_value[15] = ImGui::IsKeyDown(ImGuiKey_B);  // 记录 B 键
 
-    g_state.pending_keyboard_value.store(static_cast<uint32_t>(keyboard_value.to_ulong()), std::memory_order_relaxed);  // 写入键盘位掩码
+    // 与手柄注入的按键取并集：两边都能控制，谁按下都算按下（不互相覆盖）。
+    // 看门狗：超过 500ms 没有新帧就认为手柄离线，注入的按键按"全松开"处理，
+    // 避免拔线/固件死机时机器人一直收到某个键按住。
+    const int64_t controller_age_ns = NowSteadyNs() - g_state.controller_last_update_ns.load(std::memory_order_relaxed);
+    const bool controller_online = controller_age_ns >= 0 && controller_age_ns < kControllerInputTimeoutNs;
+    const uint32_t ui_keyboard_bits = static_cast<uint32_t>(keyboard_value.to_ulong());  // UI 键盘位图
+    const uint32_t controller_keyboard_bits = controller_online
+                                                      ? g_state.controller_keyboard_bits.load(std::memory_order_relaxed)
+                                                      : 0u;  // 手柄离线时视为没有按键
+    g_state.pending_keyboard_value.store(ui_keyboard_bits | controller_keyboard_bits, std::memory_order_relaxed);  // 写入合并后的键盘位掩码
 
     uint32_t buttons = 0;  // 鼠标按键掩码
     if (io.MouseDown[0]) {  // 左键按下
@@ -487,5 +537,8 @@ void update_keyboard_mouse_state(RoboGo::io::MqttClient &mqtt_client) {
     if (io.MouseDown[2]) {  // 中键按下
         buttons |= kButtonMid;  // 置位中键
     }
-    g_state.pending_buttons.store(buttons, std::memory_order_relaxed);  // 写入鼠标按键掩码
+    const uint32_t controller_buttons = controller_online
+                                                ? g_state.controller_mouse_buttons.load(std::memory_order_relaxed)
+                                                : 0u;  // 手柄离线时视为没有按键
+    g_state.pending_buttons.store(buttons | controller_buttons, std::memory_order_relaxed);  // 写入合并后的鼠标按键掩码
 }

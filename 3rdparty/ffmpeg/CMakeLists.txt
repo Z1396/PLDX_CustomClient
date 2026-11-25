@@ -13,5 +13,14 @@ else()
     find_library(AVCODEC_LIB NAMES libavcodec.a PATHS ${FFMEPG_LIB_PATH} NO_DEFAULT_PATH)
     find_library(SWSCALE_LIB NAMES libswscale.a PATHS ${FFMEPG_LIB_PATH} NO_DEFAULT_PATH)
     find_library(AVUTIL_LIB NAMES libavutil.a PATHS ${FFMEPG_LIB_PATH} NO_DEFAULT_PATH)
+    # Linux 静态库必须补链系统依赖，否则链接期报 undefined reference：
+    #   pthread_create（FFmpeg 内部线程）/ dlopen（硬解驱动加载）/ 数学库。
+    # zlib 只在 FFmpeg 构建启用时才是必需，这里用 QUIET 探测，找到才链。
+    find_package(Threads REQUIRED)
+    find_package(ZLIB QUIET)
+    set(FFMPEG_SYSTEM_LIBS Threads::Threads ${CMAKE_DL_LIBS} m)
+    if(ZLIB_FOUND)
+        list(APPEND FFMPEG_SYSTEM_LIBS ZLIB::ZLIB)
+    endif()
 endif()
-target_link_libraries(ffmpeg INTERFACE ${AVCODEC_LIB} ${SWSCALE_LIB} ${AVUTIL_LIB} )
+target_link_libraries(ffmpeg INTERFACE ${AVCODEC_LIB} ${SWSCALE_LIB} ${AVUTIL_LIB} ${FFMPEG_SYSTEM_LIBS})

@@ -6,7 +6,9 @@
 // 3) Event → 中文文案 —— 协议码与文案错位，现场看到的就是错误战况；
 // 4) 顶部提示定级 —— 危急事件漏提示比误提示更危险；
 // 5) robot_id → 阵营/兵种名 —— 敌我判定错一次就是战术事故；
-// 6) 无异常整数解析 —— 空串/非法字符/溢出/尾随字符四类失败原因必须可区分。
+// 6) 无异常整数解析 —— 空串/非法字符/溢出/尾随字符四类失败原因必须可区分；
+// 7) 指挥手登录槽位 = 6 —— 登错照样能连上服务器，但机库永远收不到 CustomControl，
+//    现场只表现为"舱门打不开"，是最典型的静默失败。
 // 设计要点：所有被测函数都不依赖 GUI、网络或硬件，纯函数可直接链接进测试可执行；
 // 断言失败不中断，跑完全部用例后统一汇报，便于一次看到所有回归。
 // 依赖：custom_control_payload.h、mqtt/event_formatter.h、app/number_parser.h、
@@ -21,11 +23,16 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <array>
+#include <cstdint>
+#include <span>
 
 #include "app/number_parser.h"
 #include "app/robot_registry.h"
 #include "app/team_util.h"
 #include "custom_control_payload.h"
+#include "io/controller_input.h"
+#include "io/referee_frame.h"
 #include "mqtt/event_formatter.h"
 
 namespace {
@@ -132,8 +139,9 @@ void TestEventText() {
     Event event;
 
     event.set_event_id(1);
+    // 协议原文举例：「1,101 表示蓝方英雄击毁红方英雄」——参数 1 是被击杀者，参数 2 是击杀者。
     event.set_param("1,101");
-    CheckStr(RoboGo::mqtt::FormatEventText(event), "红方重装 击杀了 蓝方重装", "event 1 kill text");
+    CheckStr(RoboGo::mqtt::FormatEventText(event), "蓝方重装 击杀了 红方重装", "event 1 kill text");
 
     event.set_event_id(2);
     event.set_param("11");
@@ -198,7 +206,7 @@ void TestRobotIdMapping() {
     CheckStr(GetRobotName("3"), "红方步兵3", "id 3");
     CheckStr(GetRobotName("107"), "蓝方哨兵", "id 107");
     CheckStr(GetRobotName("11"), "红方前哨站", "id 11");
-    CheckStr(GetRobotName("112"), "蓝方基地", "id 112");
+    CheckStr(GetRobotName("110"), "蓝方基地", "id 110");
     CheckStr(GetRobotName("abc"), "未知机器人", "non-numeric id");
     CheckStr(GetRobotName(""), "未知机器人", "empty id");
 
@@ -209,7 +217,44 @@ void TestRobotIdMapping() {
 }
 
 /**
- * @brief 用例 6：校验 ParseInteger 的四类失败原因与正常值边界。
+ * @brief 用例 6：锁定「指挥手登哪个槽位」这条规则约定。
+ * @note 2027 规则：机库/空中系统的 CustomControl(0x0311) 只认 clientID = 6；飞镖与哨兵的指令
+ *       消息体里没有目标字段，服务器按消息类型路由，所以登 6 也能发。因此指挥手槽位必须是 6/106。
+ * @note 这个值改错的后果是静默的：登录照样成功、MQTT 照样连上，但机库永远收不到自定义控制包，
+ *       现场只会表现为"舱门打不开"，极难定位。所以用测试把它钉住。
+ * @note 反向断言：指挥手槽位不能是 8 —— 2027 飞镖发射架没有图传发送端，登 8 收不到 0x0311 回传。
+ */
+void TestCommanderLoginSlot() {
+    using RoboGo::app::robot_registry::kLoginRobotIds;
+
+    CheckEq(kLoginRobotIds[0][3], 6, "red commander slot is 6");
+    CheckEq(kLoginRobotIds[1][3], 106, "blue commander slot is 106");
+
+    // 其余三个槽位是常规兵种，不应被这条规则牵动。
+    CheckEq(kLoginRobotIds[0][0], 1, "red slot 0 still heavy");
+    CheckEq(kLoginRobotIds[0][1], 3, "red slot 1 still infantry 3");
+    CheckEq(kLoginRobotIds[0][2], 4, "red slot 2 still infantry 4");
+    CheckEq(kLoginRobotIds[1][0], 101, "blue slot 0 still heavy");
+    CheckEq(kLoginRobotIds[1][1], 103, "blue slot 1 still infantry 3");
+    CheckEq(kLoginRobotIds[1][2], 104, "blue slot 2 still infantry 4");
+
+    // 蓝队 = 红队 +100，这条不变量对四个槽位同时成立。
+    for (int slot = 0; slot < 4; ++slot) {
+        CheckEq(kLoginRobotIds[1][slot], kLoginRobotIds[0][slot] + 100,
+                "blue id == red id + 100");
+    }
+
+    // 兵种编号必须能落回「空中系统」，否则说明表里的数字和展示名已经脱节。
+    // 注意 kRobotTypes 的下标是「兵种编号 - 1」（见 robot_registry.cpp 的 num - 1），
+    // 所以这里直接走对外契约 GetRobotName()，比按下标去猜更可靠。
+    CheckStr(RoboGo::app::robot_registry::GetRobotName("6"), "红方空中系统", "6 is aerial system");
+    CheckStr(RoboGo::app::robot_registry::GetRobotName("106"), "蓝方空中系统", "106 is aerial system");
+    Check(kLoginRobotIds[0][3] != 8 && kLoginRobotIds[1][3] != 108,
+          "commander must not log in as dart (8 routes CustomControl to dart, not hangar)");
+}
+
+/**
+ * @brief 用例 7：校验 ParseInteger 的四类失败原因与正常值边界。
  * @note 正常值：3334 / 65535 / -1；失败原因必须可区分为 Empty、
  *       InvalidCharacter（含前导空格 " 12"）、OutOfRange、TrailingCharacters。
  * @note 带符号与无符号差异：uint32 收到 "-1" 判 OutOfRange；uint16 的 70000 判 OutOfRange。
@@ -245,6 +290,133 @@ void TestIntegerParsing() {
           "error reason is printable");
 }
 
+/**
+ * @brief 用例 8：裁判系统串口帧的 CRC 与增量解析。
+ * @note 契约：帧格式 SOF(0xA5)+len(2)+seq+CRC8+cmd_id(2)+data+CRC16。
+ *       这里用一份「逐位计算」的参考实现去校验查表实现，避免查表本身写错却自洽；
+ *       再覆盖半包、噪声前缀、坏帧后重同步三种现场最常见的异常。
+ */
+void TestRefereeFrame() {
+    using namespace RoboGo::io::referee;
+
+    // CRC8 参考实现（逐位，与查表实现相互独立）
+    const auto crc8_ref = [](const std::uint8_t *data, std::size_t len, std::uint8_t crc) {
+        while (len-- > 0) {
+            crc ^= *data++;
+            for (int bit = 0; bit < 8; ++bit) {
+                crc = (crc & 0x80u) != 0
+                              ? static_cast<std::uint8_t>((crc << 1) ^ 0x31u)
+                              : static_cast<std::uint8_t>(crc << 1);
+            }
+        }
+        return crc;
+    };
+    // CRC16 参考实现（逐位）
+    const auto crc16_ref = [](const std::uint8_t *data, std::size_t len, std::uint16_t crc) {
+        while (len-- > 0) {
+            crc ^= static_cast<std::uint16_t>(static_cast<std::uint16_t>(*data++) << 8);
+            for (int bit = 0; bit < 8; ++bit) {
+                crc = (crc & 0x8000u) != 0
+                              ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021u)
+                              : static_cast<std::uint16_t>(crc << 1);
+            }
+        }
+        return crc;
+    };
+
+    for (int value = 0; value < 256; ++value) {  // 全量单字节：查表必须与逐位一致
+        const std::uint8_t byte = static_cast<std::uint8_t>(value);
+        CheckEq(Crc8(&byte, 1), crc8_ref(&byte, 1, 0xFF), "crc8 table == bitwise");
+    }
+    for (int value = 0; value < 256; ++value) {  // 全量单字节：CRC16 同样比对
+        const std::uint8_t byte = static_cast<std::uint8_t>(value);
+        CheckEq(Crc16(&byte, 1), crc16_ref(&byte, 1, 0xFFFF), "crc16 table == bitwise");
+    }
+
+    std::array<std::uint8_t, 30> payload{};  // 模拟 0x0302 的 30 字节数据段
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<std::uint8_t>(i + 1);  // 用递增序列，便于发现偏移错误
+    }
+    const auto bytes = BuildFrame(0x0302, 7, payload);  // 封一帧
+    CheckEq(bytes.size(), static_cast<long long>(kOverhead + payload.size()), "frame size = 9 + payload");
+    CheckEq(bytes[0], kSof, "frame starts with SOF");
+    CheckEq(bytes[1], payload.size(), "length low byte");
+    CheckEq(bytes[2], 0, "length high byte");
+    CheckEq(bytes[3], 7, "seq");
+    CheckEq(bytes[4], crc8_ref(bytes.data() + 1, 3, 0xFF), "header crc8 matches reference");
+
+    FrameParser parser;
+    parser.Push(std::span<const std::uint8_t>(bytes.data(), bytes.size()));  // 整帧喂入
+    Frame frame;
+    Check(parser.Pop(frame), "whole frame parsed");
+    CheckEq(frame.cmd_id, 0x0302, "cmd id");
+    CheckEq(frame.seq, 7, "seq parsed");
+    CheckEq(frame.data.size(), payload.size(), "payload size");
+    CheckEq(frame.data[0], payload[0], "payload[0]");
+    CheckEq(frame.data[29], payload[29], "payload[29]");
+    Check(!parser.Pop(frame), "no extra frame");
+
+    FrameParser chunked;  // 逐字节喂入：模拟串口半包
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        chunked.Push(std::span<const std::uint8_t>(&bytes[i], 1));
+    }
+    Check(chunked.Pop(frame), "frame parsed from 1-byte chunks");
+    CheckEq(frame.cmd_id, 0x0302, "chunked cmd id");
+
+    FrameParser resync;  // 噪声 + 坏帧 + 好帧：必须能自己恢复
+    const std::array<std::uint8_t, 3> noise{0x00, 0x11, 0x22};
+    resync.Push(std::span<const std::uint8_t>(noise.data(), noise.size()));
+    auto broken = bytes;
+    broken.back() ^= 0xFFu;  // 破坏 CRC16
+    resync.Push(std::span<const std::uint8_t>(broken.data(), broken.size()));
+    Check(!resync.Pop(frame), "broken frame rejected");
+    Check(resync.CrcErrors() >= 1, "crc error counted");
+    resync.Push(std::span<const std::uint8_t>(bytes.data(), bytes.size()));
+    Check(resync.Pop(frame), "resync after broken frame");
+    CheckEq(frame.cmd_id, 0x0302, "resync cmd id");
+}
+
+/**
+ * @brief 用例 9：外接手柄的载荷解码与按键映射。
+ * @note 契约：默认布局 0..1 横轴、2..3 纵轴、6..7 按键位图，均为小端；
+ *       位 0/1 映射鼠标左右键、位 2 映射 Shift、位 8 映射 W。
+ *       布局若与固件不一致，改 io/controller_input.h 的偏移表，本用例同步改。
+ */
+void TestControllerInput() {
+    using namespace RoboGo::io::controller;
+
+    std::array<std::uint8_t, 30> payload{};  // 30 字节默认布局
+    payload[0] = 0xE8;  // axis_x = 1000
+    payload[1] = 0x03;
+    payload[2] = 0x18;  // axis_y = -1000 (0xFC18)
+    payload[3] = 0xFC;
+    payload[6] = 0x03;  // buttons = bit0 | bit1
+    payload[7] = 0x00;
+
+    const auto state = DecodeDefaultLayout(std::span<const std::uint8_t>(payload.data(), payload.size()));
+    Check(state.valid, "decode: valid");
+    CheckEq(state.axis_x, 1000, "decode: axis_x");
+    CheckEq(state.axis_y, -1000, "decode: axis_y");
+    CheckEq(state.buttons, 3, "decode: buttons");
+
+    const auto mapped = MapButtons(state.buttons);
+    CheckEq(mapped.mouse_buttons, 0x3u, "map: bit0/bit1 -> mouse left/right");
+    CheckEq(mapped.keyboard_bits, 0u, "map: no keyboard bits");
+
+    CheckEq(MapButtons(static_cast<std::uint16_t>(1u << 2)).keyboard_bits, 1u << 4, "map: bit2 -> Shift");
+    CheckEq(MapButtons(static_cast<std::uint16_t>(1u << 8)).keyboard_bits, 1u << 0, "map: bit8 -> W");
+
+    std::array<std::uint8_t, 4> too_short{};  // 长度不足：必须拒绝，不能越界读
+    Check(!DecodeDefaultLayout(std::span<const std::uint8_t>(too_short.data(), too_short.size())).valid,
+          "decode: short payload rejected");
+
+    Check(AxisToVelocity(0) == 0.0f, "axis: 0 -> 0");
+    Check(AxisToVelocity(kDefaultAxisDeadzone) == 0.0f, "axis: at deadzone -> 0");
+    Check(AxisToVelocity(-1000) < 0.0f, "axis: full left -> negative");
+    Check(AxisToVelocity(1000) > 0.0f, "axis: full right -> positive");
+    Check(AxisToVelocity(2000) == AxisToVelocity(1000), "axis: overshoot clamped");
+}
+
 }  // namespace
 
 /**
@@ -257,7 +429,10 @@ int main() {
     TestEventText();
     TestToastLevels();
     TestRobotIdMapping();
+    TestCommanderLoginSlot();
     TestIntegerParsing();
+    TestRefereeFrame();
+    TestControllerInput();
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;

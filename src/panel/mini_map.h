@@ -8,7 +8,9 @@
 #include "io/mqtt_client.h"  // 提供 MqttClient（标记模式下下发坐标）
 
 /**
- * @brief 绘制战场小地图，显示双方机器人位置、哨兵路径，并支持标记模式点击下发坐标。
+ * @brief 绘制战场小地图，显示双方机器人位置与建筑，并支持标记模式点击下发坐标。
+ * @note 2027 起**不再绘制哨兵路径**（形状完全由数据决定，画在 200px 的小图上容易和标记点混淆）；
+ *       路径数据仍照常解析进 State，需要时可以在 DrawMapLayers 里恢复。
  * @note 参数：state 提供雷达/路径数据；mqtt_client 用于发送地图标记；mini_map_texture_ref/size 为地图底图纹理及其尺寸；mini_map_terrain_texture_ref/size
  *        为地形分层叠加层（2027 高度掩膜上色版，按 M 键开关）。
  */

@@ -24,7 +24,7 @@ struct VideoFrame {  // 视频帧结构：后台线程写入，经无锁队列�
 };
 
 // UI 日志消息：由后台线程产生、供界面日志面板显示、带类型标记的文本内容。
-struct UiLogMessage {  // 单条待显示的日志：从解码 worker 线程送到 UI 线程
+struct UiLogMessage {  // 单条待显示的日志：由后台线程产生，供日志面板显示
     int type = 0; // 日志类型/级别(0 普通，1 警告，2 错误等，语义由调用方约定)
     std::string text; // 日志文本内容
 };
@@ -59,6 +59,13 @@ struct LaunchOptions {  // 原始字符串参数与解析结果并存，便于�
     bool invert_udp_video = false; // 是否将 UDP 视频做 180 度旋转
     std::string capture_mode = "mqtt"; // 网络抓包档位(off/mqtt/all)，默认只抓 MQTT
     bool video_test = false; // 是否启用合成视频源(--video-test)：没有图传时可用来验证渲染/上传链路
+
+    // 外接 RS232 手柄：2027 规则已取消「自定义控制器」类别，操作间也不再提供 RS232 口，
+    // 它只能作为自定义终端自己的输入外设（手柄 RS232 → USB 转串口 → 本机 COM 口）。
+    std::string serial_port; // 串口设备名(Windows 形如 COM3；Linux 形如 /dev/ttyUSB0)；空表示不启用
+    int serial_baud = 115200; // 串口波特率(旧控制器固件默认 115200，8N1 无流控)
+    bool serial_raw = false; // 只把收到的帧按十六进制写日志(--serial-raw)：用于反推自家固件的载荷布局
+    float serial_scale = 900.0f; // 摇杆满杆时每秒注入的鼠标像素数(灵敏度=1 时)，--serial-scale 可调
 };
 
 }  // namespace RoboGo::app

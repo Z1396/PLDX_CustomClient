@@ -32,14 +32,18 @@ using RoboGo::panel::ScopedTitledPanel;                  // 带标题的命名�
 using RoboGo::panel::ShowPanelRow;                       // 一行多面板横向排布工具
 
 // 登录面板可选身份（2027：重装 / 步兵3 / 步兵4 / 指挥手）。
-// 最后一个槽位原先叫"飞镖"——飞镖不是机器人，而指挥手要把哨兵、飞镖、空中系统都收进一屏，
-// 所以这一列改成"指挥手"，robot_id 仍沿用 8（飞镖系统的槽位），只是 UI 身份按指挥台渲染。
+// 最后一个槽位原先叫"飞镖"，robot_id 也沿用飞镖的 8；2027 改成登**空中系统槽位 6**——
+// 因为机库/空中系统只能靠 CustomControl 控制，而它是「终端 → 图传 0x0311 → 机器人」的点对点链路，
+// 服务器按 clientID 决定上行落到哪台设备，只有 6 才指向空中系统；而飞镖、哨兵的指令消息体里
+// 没有目标机器人字段（DartCommand.target_id 是"打哪个目标"，不是"发给谁"），服务器按消息类型
+// 路由，登 6 照样能发。于是"6"这一个身份就能同时指挥
+// 机库 + 飞镖 + 哨兵，指挥手不再需要中途切 ID。详见 app/robot_registry.h 的说明。
 // 哨兵的整套操作（姿态/强化/补弹/回血/复活）已经并入指挥台，因此不再单独占一个登录身份。
 constexpr std::array<const char *, 4> kLoginRobotNames = {
         RoboGo::app::robot_registry::kRobotTypes[0].standalone,  // 重装
         RoboGo::app::robot_registry::kRobotTypes[2].standalone,  // 3号步兵
         RoboGo::app::robot_registry::kRobotTypes[3].standalone,  // 4号步兵
-        "指挥手"};  // 指挥手沿用飞镖槽位连接，不是兵种，故不进表 // 登录面板可选身份（下标对应 kLoginRobotIds 的列）
+        "指挥手"};  // 指挥手登空中系统槽位 6，不是兵种，故不进 kRobotTypes 表
 constexpr int kCommanderLoginSlot = 3;   // "指挥手"在登录槽位中的下标（0 基）
 constexpr float kLoginStatusGap = 4.0f;             // 连接状态行与下方内容之间的垂直间距
 constexpr float kLoginSectionGap = 8.0f;            // 各区块（队伍/机器人）之间的垂直间距
@@ -304,7 +308,8 @@ const ButtonStyle kEnterGameButtonStyle = { // 进入比赛/登录：一屏唯�
         ButtonVariant::Primary,               // 主操作：低饱和青绿实心
 };
 
-// 退出登录单独用 Danger，避免与「远程回血」共用 kRecoverButtonStyle 时被一起改成幽灵按钮。
+// 退出登录单独用 Danger，不跟「远程回血」共用 kRecoverButtonStyle：
+// 回血是亮红实心、登出是低饱和红，两个红色按钮挨在一起时得能一眼分开。
 const ButtonStyle kLogoutButtonStyle = { // 破坏性操作：低饱和红
         ImVec4(0.78f, 0.30f, 0.28f, 1.0f),
         ImVec4(0.86f, 0.36f, 0.34f, 1.0f),
@@ -388,13 +393,16 @@ ButtonFeedback GetRemoteAmmoExchangeFeedback(const State &state, bool is_valid_a
 
 /**
  * @brief 计算"远程回血"按钮的可用性反馈。
- * @note 思路：依据剩余比赛时间动态计算回血价格（越接近结束越便宜），再走经济判断。
+ * @note 思路：依据剩余比赛时间动态计算回血价格，再走经济判断。
+ * @note 【方向提醒】按下面的公式，剩余时间越少 price 越大，实际是"越接近结束越贵"。若设计意图是
+ *       "越晚越便宜"，需要把 420 后面的减号改成加号——当前实现与口头描述相反，改逻辑前先确认规则口径。
  */
 ButtonFeedback GetRecoverFeedback(const State &state) {
     if (!state.game_status.has_value()) {                           // 尚未收到比赛状态
         return MakeDisabledFeedback("无法获取比赛状态");            // 无数据则禁用
     }
-    // 依据剩余比赛时间动态定价：越接近结束越便宜（420 为基准，按每分钟 20 递减）。
+    // 依据剩余比赛时间动态定价：420 为基准，每剩余 1 分钟减 20，再与 50 相加。
+    // 结果：剩余越多价格越低，越接近结束价格越高（与"越晚越便宜"的直觉相反，见函数头说明）。
     uint32_t price = static_cast<uint32_t>(50 + std::ceil(420 - state.game_status->stage_countdown_sec() / 60 * 20));
     return GetEconomyFeedback(state, price);                         // 走经济判断返回反馈
 }
@@ -782,7 +790,8 @@ bool SubmitLoginSelection(RoboGo::io::MqttClient &mqtt_client) {
     mqtt_client.set_server_endpoint(std::move(mqtt_host), std::move(mqtt_port)); // 设置 MQTT 服务端端点
     mqtt_client.set_client_id(std::to_string(current_robot_id));      // 以 robot_id 作为 client_id 连接
     logged_in_robot_id = static_cast<uint32_t>(current_robot_id);     // 记住身份：服务器消息到达前也能判断自己是哪个兵种
-    // 记录"这次登录用的是不是指挥手槽位"：指挥手没有自己的 robot_id，后续只能用这个标志区分身份。
+    // 记录"这次登录用的是不是指挥手槽位"：2027 指挥手登空中系统 6 号，而 6 号本身是合法兵种，
+    // 光看 robot_id 分不出"指挥手"和"空中系统操作手"，后续只能靠这个角色标志区分身份。
     set_commander_role(selection_state.selected_robot == kCommanderLoginSlot);
     return true;                                                      // 登录参数已写入，返回成功
 }
@@ -1014,7 +1023,8 @@ StartPanelVisibility GetStartPanelVisibility(const State &state) {
 
 /**
  * @brief 渲染飞镖控制面板（目标选择 + 闸门开关 + 确认发射）。
- * @note 思路：5 个目标单选按钮排成两行；切换目标即时下发；开/关闸门与确认发射分别发送 DartCommand，发射附带进入比赛标记。
+ * @note 思路：5 个目标单选按钮排成两行；切换目标即时下发；开/关闸门与确认发射分别发送 DartCommand。
+ *       发射**不再**顺带标记"进入比赛"——进入比赛只由显式的"进入比赛"按钮负责，避免点一下飞镖就把 HUD 顶掉。
  */
 void ShowDartPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, float panel_width) {
     ScopedTitledPanel dart_panel("DartPanel", panel_width, "飞镖控制", ImVec4(1.0f, 0.4f, 0.8f, 1.0f)); // 粉色标题子面板
@@ -1199,7 +1209,7 @@ void ShowAssemblyPanel(const State &state, RoboGo::io::MqttClient &mqtt_client, 
     ImGui::Spacing();                                               // 与按钮区留白
 
     // 2027 协议 2.2.21 AssemblyCommand.operation：0=开始兑换、1=确认装配、2=取消装配（2026 的"0=取消"写法已废止）。
-    // 2027 协议 2.2.22 TechCoreMotionStateSync.basic_state：1=初始位置(空闲)、2=运动中、3=已到达对应位姿。
+    // 2027 协议 TechCoreMotionStateSync.basic_state：1=初始位置(空闲)、2=运动中、3=已到达对应位姿。
     const bool has_core_state = state.tech_core_motion_state_sync.has_value();  // 是否已收到科技核心状态同步
     const uint32_t core_basic_state = has_core_state ? state.tech_core_motion_state_sync->basic_state() : 0;  // 0 表示未知
     const uint32_t max_difficulty = has_core_state ? state.tech_core_motion_state_sync->maximum_difficulty_level() : 0;  // 当前可选最高难度

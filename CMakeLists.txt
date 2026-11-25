@@ -200,9 +200,13 @@ if(WIN32)
         DirectXTK12
     )
 else()
+    # Linux：走 CMake 官方 FindVulkan 的 imported target。
+    # 原来直接写裸库名 vulkan，等价于 -lvulkan，依赖 loader 恰好在系统默认搜索路径里；
+    # 换发行版 / 交叉编译 / SDK 装在非标准位置时会静默链接失败，且拿不到头文件路径。
+    find_package(Vulkan REQUIRED)
     target_link_libraries(imgui PUBLIC
         glfw
-        vulkan
+        Vulkan::Vulkan
     )
 endif()
 add_subdirectory(3rdparty/ffmpeg)
@@ -290,6 +294,7 @@ add_executable(RoboGo WIN32
     src/panel/start_panel.cpp
     src/logging/logging.cpp
     src/io/mqtt_client.cpp
+    src/io/serial_controller.cpp
     src/io/video_stream_receiver.cpp
     src/video/rgba_image_transform.cpp
     src/video/video_decoder.cpp

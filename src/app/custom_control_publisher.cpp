@@ -49,7 +49,7 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
     }
 
     // 目标输出数组：敌方血量，固定槽位，给到 BuildCustomControlPayload 组装载荷
-    // kCustomControlRobotCount：包定义里支持的机器人数量（2027是5个槽：重装、保留工程、步兵3、步兵4、哨兵）
+    // kCustomControlRobotCount：包定义里支持的机器人数量（2027 是 5 个槽：重装、保留位、步兵3、步兵4、哨兵）
     std::array<uint16_t, kCustomControlRobotCount> enemy_health{}; // 零初始化，默认全部填0
 
     if (half_robot_health_size == 4) {
@@ -57,7 +57,7 @@ void PublishCustomControlIfDue(State &state, RoboGo::io::MqttClient &mqtt_client
         // robot_health后半段敌方顺序：下标0→1号重装、1→3号步兵、2→4号步兵、3→7号哨兵
         // 输出enemy_health载荷槽位映射：
         // enemy_health[0] → 重装(1号)
-        // enemy_health[1] → 保留工程槽（2027协议已经没有工程，固定填0）
+        // enemy_health[1] → 保留位槽（协议附录二里 2 号是保留位，固定填 0）
         // enemy_health[2] → 步兵3(3号)
         // enemy_health[3] → 步兵4(4号)
         // enemy_health[4] → 哨兵(7号)

@@ -402,7 +402,7 @@ message MapClickInfo {
 // 2.2.19 RadarInfoToClient
 // 用途: 雷达发送的机器人位置信息 (频率: 触发式发送)
 message RadarInfoToClient {
-  repeated RadarSingleRobotInfo robots_info = 1; // 雷达发送的所有机器人位置信息及特殊标识情况，每次触发发送时均按对方 1 号，2 号，3 号，4 号，6 号，7 号；己方 1 号，2 号，3 号，4 号，6 号，7 号的排列顺序发送以下结构的数据包
+  repeated RadarSingleRobotInfo robots_info = 1; // 每次触发按「对方 1/3/4/7 号；己方 1/3/4/7 号」共 8 台发送（2027 协议 2.2.19，已去掉 2 号保留位与 6 号空中系统）
 }
 
 message RadarSingleRobotInfo

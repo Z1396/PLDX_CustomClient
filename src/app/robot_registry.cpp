@@ -26,18 +26,19 @@ std::string GetRobotName(const std::string &robot_id) {
     const int id = *parsed_id;
 
     const bool is_red = team_util::IsRedRobotId(static_cast<uint32_t>(id));
-    const int num = is_red ? id : id - 100;  // 换算成 1~12 的兵种编号
+    const int num = is_red ? id : id - 100;  // 换算成 1~11 的兵种编号
     const std::string prefix = is_red ? "红方" : "蓝方";
 
-    // 1~9 号走统一名字表；11/12 是建筑，10 号未定义，走兜底。
+    // 1~9 号走统一名字表（2 号是保留位）。
+    // 建筑编号按 2027 协议附录二：10 = 基地，11 = 前哨（注意不是 12，2026 的 12 已经改了）。
     if (num >= 1 && num <= 9) {
         return prefix + kRobotTypes[num - 1].log_suffix;
     }
+    if (num == 10) {
+        return prefix + "基地";
+    }
     if (num == 11) {
         return prefix + "前哨站";
-    }
-    if (num == 12) {
-        return prefix + "基地";
     }
     return prefix + std::to_string(num) + "号";
 }

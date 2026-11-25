@@ -335,7 +335,7 @@ void ShowMiniMap(const State &state,
     DrawMapLayers(draw_list, foreground_draw_list, view, textures, scale, terrain_overlay_enabled,
                   team_known, is_red_team, marker_mode_active);
 
-    // 【2027 调整】哨兵轨迹（2.2.16）不再画在地图上：形状完全由数据决定，画在 200px 的小图上
+    // 【2027 调整】哨兵轨迹不再画在地图上：形状完全由数据决定，画在 200px 的小图上
     // 既容易和标记点混淆，对实际操作也没帮助。数据仍照常解析进 state，需要时随时可以恢复绘制。
     DrawUnits(state, draw_list, view, scale, team_known, is_red_team);
     DrawLocalMarker(draw_list, view, scale);

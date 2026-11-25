@@ -75,7 +75,6 @@ void ShowPerformancePanel() {
         ImGui::SameLine(96.0f * scale);  // 对齐数值列
         ImGui::TextColored(ImVec4(0.72f, 0.75f, 0.80f, 1.0f), "%d x %d", metrics.video_width, metrics.video_height);  // 当前图传尺寸
 
-        // 队列深度：>2 说明解码比渲染快，画面在客户端内部开始积压（延迟会变大）。
         ImGui::TextDisabled("帧率");  // 标签
         ImGui::SameLine(96.0f * scale);  // 对齐数值列
         ImGui::TextColored(metrics.fps >= 55.0f ? ImVec4(0.45f, 0.85f, 0.54f, 1.0f)  // 满帧绿
@@ -84,6 +83,7 @@ void ShowPerformancePanel() {
 
         ImGui::TextDisabled("队列");  // 标签
         ImGui::SameLine(96.0f * scale);  // 对齐数值列
+        // 队列深度：>2 说明解码比渲染快，画面在客户端内部开始积压（延迟会变大）。
         const bool backlog = metrics.udp_queue > 2;  // 有积压
         ImGui::TextColored(backlog ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)  // 积压标黄
                                    : ImVec4(0.72f, 0.75f, 0.80f, 1.0f),  // 正常灰白

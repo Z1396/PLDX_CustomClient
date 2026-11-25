@@ -1,4 +1,4 @@
-// 界面侧机制与指令回执类 MQTT 消息处理（协议 2.2.14 起）：
+// 界面侧机制与指令回执类 MQTT 消息处理（协议 2.2.14 起，按消息分列）：
 // Buff、判罚、地图打点、雷达目标、科技核心、性能选型同步、能量机关、哨兵姿态、飞镖目标、哨兵指令回执。
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include <google/protobuf/message.h>
@@ -121,7 +121,7 @@ void HandleMapClickInfo(State &state, std::string_view topic, const std::string 
 }
 
 /**
- * @brief 2.2.18 雷达目标信息（触发式）：12 台机器人位置。；解析成功后写入 State::radar_info_to_client 快照
+ * @brief 2.2.19 雷达目标信息（触发式）：8 台机器人位置（对方 1/3/4/7 + 己方 1/3/4/7）。；解析成功后写入 State::radar_info_to_client 快照
  * @param state 全局状态，写入 radar_info_to_client。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -136,7 +136,7 @@ void HandleRadarInfoToClient(State &state, std::string_view topic, const std::st
 }
 
 /**
- * @brief 2.2.21 科技核心（能量机关）运动状态（1Hz）。；解析成功后写入 State::tech_core_motion_state_sync 快照
+ * @brief 2.2.22 科技核心（能量机关）运动状态（1Hz）。；解析成功后写入 State::tech_core_motion_state_sync 快照
  * @param state 全局状态，写入 tech_core_motion_state_sync。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -151,7 +151,7 @@ void HandleTechCoreMotionStateSync(State &state, std::string_view topic, const s
 }
 
 /**
- * @brief 2.2.23 性能体系同步（1Hz）：服务器权威的发射机构 / 底盘选型，开局面板据此回显。；解析成功后写入 State::robot_performance_selection_sync 快照
+ * @brief 2.2.24 性能体系同步（1Hz）：服务器权威的发射机构 / 底盘选型，开局面板据此回显。；解析成功后写入 State::robot_performance_selection_sync 快照
  * @param state 全局状态，写入 robot_performance_selection_sync。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -169,7 +169,7 @@ void HandleRobotPerformanceSelectionSync(State &state, std::string_view topic, c
 }
 
 /**
- * @brief 2.2.28 能量机关状态（1Hz）：未激活 / 激活中 / 已激活 + 灯臂数 + 平均环数。；解析成功后写入 State::rune_status_sync 快照
+ * @brief 2.2.27 能量机关状态（1Hz）：未激活 / 激活中 / 已激活 + 灯臂数 + 平均环数。；解析成功后写入 State::rune_status_sync 快照
  * @param state 全局状态，写入 rune_status_sync。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -184,7 +184,7 @@ void HandleRuneStatusSync(State &state, std::string_view topic, const std::strin
 }
 
 /**
- * @brief 2.2.30 哨兵姿态（1Hz）：进攻 / 防御 / 移动 + 弱化 / 强化标记。；解析成功后写入 State::sentry_status_sync 快照
+ * @brief 2.2.28 哨兵姿态（1Hz）：进攻 / 防御 / 移动 + 弱化 / 强化标记。；解析成功后写入 State::sentry_status_sync 快照
  * @param state 全局状态，写入 sentry_status_sync。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -199,7 +199,7 @@ void HandleSentryStatusSync(State &state, std::string_view topic, const std::str
 }
 
 /**
- * @brief 2.2.31 飞镖目标选择（1Hz）：选定目标 + 闸门状态。；解析成功后写入 State::dart_select_target_status_sync 快照
+ * @brief 2.2.30 飞镖目标选择（1Hz）：选定目标 + 闸门状态。；解析成功后写入 State::dart_select_target_status_sync 快照
  * @param state 全局状态，写入 dart_select_target_status_sync。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -214,7 +214,7 @@ void HandleDartSelectTargetStatusSync(State &state, std::string_view topic, cons
 }
 
 /**
- * @brief 2.2.33 哨兵控制指令结果（触发式）：指令编号 + 执行结果码。 2027 协议只推「指令编号 + 结果码」不推失败原因，所以这里补一条日志：成功走 INFO、失败走 WARNING。；解析成功后写入
+ * @brief 2.2.32 哨兵控制指令结果（触发式）：指令编号 + 执行结果码。 2027 协议只推「指令编号 + 结果码」不推失败原因，所以这里补一条日志：成功走 INFO、失败走 WARNING。；解析成功后写入
  *        State::sentry_ctrl_result 快照
  * @param state 全局状态，写入 sentry_ctrl_result。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。

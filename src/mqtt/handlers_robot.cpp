@@ -72,7 +72,7 @@ void HandleRobotDynamicStatus(State &state, std::string_view topic, const std::s
 }
 
 /**
- * @brief 2.2.12 模块运行状态（1Hz）：11 个模块的在线状态。；解析成功后写入 State::robot_module_status 快照
+ * @brief 2.2.12 模块运行状态（1Hz）：11 个模块状态字段（电源管理/射频/灯条/.../主控；末位 modular_42mm 是「是否拥有模块化 42mm 安装权限」不是在线状态）。；解析成功后写入 State::robot_module_status 快照
  * @param state 全局状态，写入 robot_module_status。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。
  * @param payload protobuf 序列化的原始字节串。
@@ -87,7 +87,8 @@ void HandleRobotModuleStatus(State &state, std::string_view topic, const std::st
 }
 
 /**
- * @brief 2.2.13 机器人坐标与朝向（1Hz）：世界坐标 X/Y/Z 与 yaw 角。 坐标系口径未在协议里写清（与雷达站是否同一原点、单位是否 dm），真机必须实测后才能用于打点换算。；解析成功后写入
+ * @brief 2.2.13 机器人坐标与朝向（1Hz）：世界坐标 X/Y/Z + yaw。协议只写明 yaw 单位为度、正北为 0 度（取自测速模块），
+ *        X/Y/Z 的单位和原点没写，与雷达站是否同一坐标系也没说明——打点换算前必须真机实测。；解析成功后写入
  *        State::robot_position 快照
  * @param state 全局状态，写入 robot_position。
  * @param topic 话题名，仅用于 ParseInto 的解析日志。

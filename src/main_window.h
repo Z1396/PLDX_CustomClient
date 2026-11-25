@@ -49,7 +49,7 @@ struct EventToast {
 
 // 全局比赛状态：聚合所有裁判系统/模拟器 MQTT 话题解析后的最新快照，供各面板读取显示。
 struct State {
-    // 【2.2.3 比赛全局状态 · 1Hz】当前局号/总局数、红蓝双方比分、比赛阶段(0未开始/1准备/2自检/3五秒倒计时/4比赛中/5结算中)、
+    // 【2.2.3 比赛全局状态 · 5Hz】当前局号/总局数、红蓝双方比分、比赛阶段(0未开始/1准备/2自检/3五秒倒计时/4比赛中/5结算中)、
     // 阶段剩余与已过秒数、是否暂停、当局胜负(0平/1红胜/2蓝胜，非结算为255)、结束原因。
     // 消费方：header_panel 显示比分与倒计时；开局面板据此判断当前处于哪个阶段。
     std::optional<GameStatus> game_status;
@@ -77,7 +77,8 @@ struct State {
     // 消费方：robot_status_panel 复活倒计时与一键复活按钮。
     std::optional<RobotRespawnStatus> robot_respawn_status;
 
-    // 【2.2.10 机器人静态属性 · 1Hz】连接/上场/存活状态、robot_id、robot_type、等级、最大血量与热量、
+    // 【2.2.10 机器人静态属性 · 1Hz】连接状态(0未连接/1已连接)、上场状态(**0已上场/1未上场，反的**)、
+    // 存活状态(0未知/1存活/2战亡)、robot_id、robot_type、等级、最大血量与热量、
     // 热量冷却速率、最大功率、最大缓冲能量与底盘能量，以及发射机构/底盘性能体系选型。
     // 关键：这里的 robot_id 决定本机是红方还是蓝方，是判断敌我的依据。
     std::optional<RobotStaticStatus> robot_static_status;
@@ -124,17 +125,17 @@ struct State {
     // 地图坐标 X/Y。即操作手在小地图上打点后，裁判系统回传的同步信息。
     std::optional<MapClickInfo> map_click_info;
 
-    // 【2.2.18 雷达目标信息 · 触发式】雷达站下发的12台机器人位置(对方1/2/3/4/6/7号 + 己方1/2/3/4/6/7号)，
+    // 【2.2.19 雷达目标信息 · 触发式】雷达站下发的 8 台机器人位置(对方1/3/4/7号 + 己方1/3/4/7号)，
     // 每项含坐标(cm)与是否特殊标识(0否/1是/2是但目标定位模块离线)。
     // 消费方：mini_map 显示雷达解析出的敌方位置。
     std::optional<RadarInfoToClient> radar_info_to_client;
 
-    // 【2.2.21 科技核心(能量机关)运动状态 · 1Hz】当前可选最高装配难度、核心基础状态(1初始位/2运动中/3已到位)、
+    // 【2.2.22 科技核心运动状态 · 1Hz】当前可选最高装配难度、核心基础状态(1初始位/2运动中/3已到位)、
     // 能量单元的放入/平移/旋转状态、对方科技核心装配情况(仅己方四级装配可用时有效)、
     // 己方四级装配的总剩余时长与单步间隔剩余时长。
     std::optional<TechCoreMotionStateSync> tech_core_motion_state_sync;
 
-    // 【2.2.23 性能体系同步 · 1Hz】发射机构性能体系、底盘性能体系、哨兵控制方式选择的当前生效值。
+    // 【2.2.24 性能体系同步 · 1Hz】发射机构性能体系、底盘性能体系、哨兵控制方式选择的当前生效值。
     // 这是服务器权威值；开局面板上的选型控件在收到它后需要回显同步。
     std::optional<RobotPerformanceSelectionSync> robot_performance_selection_sync;
 
@@ -143,17 +144,17 @@ struct State {
     // （配合 performance_panel_state.ignore_remote_sync_until 使用）。
     std::chrono::steady_clock::time_point last_received_robot_performance_selection_sync;
 
-    // 【2.2.28 能量机关状态 · 1Hz】当前状态(1未激活/2正在激活/3已激活)、已激活灯臂数量、
+    // 【2.2.27 能量机关状态 · 1Hz】当前状态(1未激活/2正在激活/3已激活)、已激活灯臂数量、
     // 平均环数(仅大能量机关正在激活时有效，其余为0)。
     std::optional<RuneStatusSync> rune_status_sync;
 
-    // 【2.2.30 哨兵姿态 · 1Hz】姿态ID(1进攻/2防御/3移动)、是否弱化、是否强化。
+    // 【2.2.28 哨兵姿态 · 1Hz】姿态ID(1进攻/2防御/3移动)、is_weakened=是否弱化、is_powered=**是否强化**（字段名有误导，不是"通电"）。
     std::optional<SentryStatusSync> sentry_status_sync;
 
-    // 【2.2.31 飞镖目标选择 · 1Hz】当前选定的飞镖目标ID、闸门状态(0关闭/1开启中/2已开启)。
+    // 【2.2.30 飞镖目标选择 · 1Hz】当前选定的飞镖目标ID、闸门状态(0关闭/1开启中/2已开启)。
     std::optional<DartSelectTargetStatusSync> dart_select_target_status_sync;
 
-    // 【2.2.33 哨兵控制指令结果 · 触发式】对应指令编号与执行结果码(0成功，其他失败)。
+    // 【2.2.32 哨兵控制指令结果 · 触发式】对应指令编号与执行结果码(0成功，其他失败)。
     // 即客户端发出哨兵控制指令后，服务器回执的成功/失败反馈。
     std::optional<SentryCtrlResult> sentry_ctrl_result;
 

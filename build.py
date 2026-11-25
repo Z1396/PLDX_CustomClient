@@ -12,10 +12,14 @@
 #             - 自动把 MSVC 工具链(ml64.exe)加入 PATH，避免 boost_context 汇编失败
 #             - 生成 build.ninja 后自动打补丁：HLSL 着色器步骤独占单作业池，
 #               规避 ninja 在并行下读 cmd.exe /C 管道 "ReadFile: The handle is invalid"
-#   Linux   : clang(>=16) / gcc(>=11) + Ninja + 系统 Vulkan SDK / GLFW
-#             - 项目 CMake 已为 Linux 预留分支（glfw + vulkan + imgui vulkan 后端）
-#             - 但 Linux 分支尚未完整验证：CMakeLists.txt 直接 link 了未定义的
-#               'vulkan' 目标（缺 find_package(Vulkan)），configure 可能失败并给出提示
+#   Linux   : clang(>=16) / gcc(>=12) + Ninja + 系统 Vulkan SDK / GLFW
+#             - Ubuntu 24.04 自带 gcc-13 即可；22.04 需另装 g++-12 或更新
+#             - 门槛来自 C++23 std::expected（application.cpp / number_parser.h / resources.h），
+#               gcc-11 的 libstdc++ 没有 <expected>，会在编译期报缺头文件
+#             - Vulkan 走 find_package(Vulkan REQUIRED)，缺 libvulkan-dev 会在 configure 阶段报错
+#             - 首次配置环境先跑 tools/setup_ubuntu.sh（装编译器/Vulkan/GLFW/X11 开发包）
+#             - 图传解码：Linux 无 D3D11VA，随附 FFmpeg 静态库仅含 hevc_cuvid + 软解，
+#               无 N 卡的机器注意软解 CPU 占用（详见 src/video/video_decoder.cpp 注释）
 #
 # 用法： python build.py [选项] [-- 程序参数]
 #   python build.py                  # Release 编译并自动运行
@@ -210,20 +214,45 @@ def configure_linux():
                 cxx = which(c)
                 break
     if not cxx:
-        for c in ("g++-13", "g++-12", "g++-11", "g++"):
+        for c in ("g++-14", "g++-13", "g++-12", "g++"):
             if which(c):
-                if gcc_major(c) >= 11:
+                if gcc_major(c) >= 12:
                     cxx = which(c)
                     break
     if not cxx:
-        die("Linux 上未找到 clang(>=16) 或 gcc(>=11)。")
+        die("Linux 上未找到 clang(>=16) 或 gcc(>=12)。\n"
+            "    项目使用 C++23 std::expected，gcc-11 及更早版本缺少 <expected> 头。\n"
+            "    Ubuntu 24.04: sudo apt install g++     （默认 gcc-13）\n"
+            "    Ubuntu 22.04: sudo apt install g++-12  或升级发行版")
     cc = cxx.replace("clang++", "clang")
     if not (cc and which(cc)):
         cc = which("gcc") or cxx
     CMAKE_EXTRA_ARGS.extend(["-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx])
     BUILD_JOBS = num_cpus()
     ok("Linux ready (" + os.path.basename(cxx) + ")")
-    warn("Linux 构建依赖系统 Vulkan SDK + GLFW 开发包；且项目 CMake 当前引用了未定义的 'vulkan' 目标，configure 可能会失败。")
+
+    # 轻量依赖预检：只提示不自动安装，避免在脚本里乱动系统包。
+    # 真正的硬校验仍由 CMake 完成（find_package(Vulkan REQUIRED) / glfw 头文件）。
+    missing = []
+    if not os.path.isfile("/usr/include/vulkan/vulkan.h"):
+        missing.append("libvulkan-dev")
+    if not os.path.isfile("/usr/include/GLFW/glfw3.h"):
+        # GLFW 由 FetchContent 从 3rdparty_downloads/glfw 编译，不需要系统 glfw 开发包，
+        # 但 X11/Wayland 的头文件必须在，否则 glfw 自身编译会失败。
+        info("GLFW 由项目内 3rdparty_downloads/glfw 编译，不依赖系统 libglfw-dev。")
+    for header, pkg in (("/usr/include/X11/Xlib.h", "libx11-dev"),
+                        ("/usr/include/X11/extensions/Xrandr.h", "libxrandr-dev"),
+                        ("/usr/include/X11/extensions/Xinerama.h", "libxinerama-dev"),
+                        ("/usr/include/X11/extensions/XInput2.h", "libxi-dev"),
+                        ("/usr/include/xkbcommon/xkbcommon.h", "libxkbcommon-dev")):
+        if not os.path.isfile(header):
+            missing.append(pkg)
+    if missing:
+        warn("检测到可能缺失的开发包: " + " ".join(sorted(set(missing))))
+        warn("可执行 tools/setup_ubuntu.sh 一键安装，或手动：")
+        warn("    sudo apt install -y " + " ".join(sorted(set(missing))))
+    if not which("vulkaninfo"):
+        warn("未找到 vulkaninfo（vulkan-tools），建议安装以确认实际使用的是哪块 GPU，而非软渲染。")
 
 # -------------------------- CMake 流程 --------------------------
 def configure_cmake():
@@ -234,11 +263,12 @@ def configure_cmake():
         BUILD_DIR = "build/" + preset
         run_cmd(["cmake", "--preset", preset] + CMAKE_EXTRA_ARGS)
     else:
-        bd = "build/" + BUILD_TYPE.lower()
-        info(f"Configuring (dir={bd}) ...")
-        BUILD_DIR = bd
-        run_cmd(["cmake", "-G", "Ninja", "-B", bd, "-S", ".",
-                 "-DCMAKE_BUILD_TYPE=" + BUILD_TYPE] + CMAKE_EXTRA_ARGS)
+        # Linux 与 Windows 一样走 preset，保证「python3 build.py」与
+        # 「cmake --preset linux-release」产物落在同一目录，不会编出两份互不相认的缓存。
+        preset = "linux-debug" if BUILD_TYPE == "Debug" else "linux-release"
+        info(f"Configuring (preset={preset}) ...")
+        BUILD_DIR = "build/" + preset
+        run_cmd(["cmake", "--preset", preset] + CMAKE_EXTRA_ARGS)
 
 def build_target():
     args = []
@@ -249,8 +279,9 @@ def build_target():
         info(f"Building {BUILD_TARGET} ({BUILD_TYPE}) via preset {preset} ...")
         run_cmd(["cmake", "--build", "--preset", preset, "--target", BUILD_TARGET] + args)
     else:
-        info(f"Building {BUILD_TARGET} ({BUILD_TYPE}) ...")
-        run_cmd(["cmake", "--build", BUILD_DIR, "--target", BUILD_TARGET] + args)
+        preset = "linux-debug" if BUILD_TYPE == "Debug" else "linux-release"
+        info(f"Building {BUILD_TARGET} ({BUILD_TYPE}) via preset {preset} ...")
+        run_cmd(["cmake", "--build", "--preset", preset, "--target", BUILD_TARGET] + args)
     ok("Build complete!")
 
 def run_target():

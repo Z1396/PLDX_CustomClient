@@ -76,7 +76,7 @@ public:  // 公有接口
     ~ScopedChildWindow();  // 析构即 EndChild，保证与构造配对
 };
 
-// 带标题的命名子面板：构造时先绘制彩色标题，再开启子窗口。
+// 带标题的命名子面板：构造时先开启子窗口（成员 child_ 先于函数体构造），再在窗口内画彩色标题。
 class ScopedTitledPanel {
 public:  // 公有接口
     ScopedTitledPanel(const char *panel_id, float panel_width, const char *title, const ImVec4 &color);  // 参数：panel_id 子窗口标识；panel_width 面板宽度；title 标题；color 标题颜色

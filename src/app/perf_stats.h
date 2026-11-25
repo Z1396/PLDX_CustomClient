@@ -16,7 +16,7 @@ namespace RoboGo::app::perf {  // 应用层性能统计
 struct Metrics {
     double decode_ms = 0.0;      // HEVC 解码耗时（解码线程）
     double convert_ms = 0.0;     // YUV->RGBA 转换耗时（解码线程）
-    double upload_ms = 0.0;      // 纹理上传耗时（渲染线程，含提交与等待）
+    double upload_ms = 0.0;      // 纹理上传耗时（渲染线程，只含提交命令的开销，不含 GPU 等待）
     double ui_ms = 0.0;          // 界面构建耗时（渲染线程）
     double frame_ms = 0.0;       // 整帧耗时（事件泵到 Present 返回）
     float fps = 0.0f;            // 平滑后的帧率

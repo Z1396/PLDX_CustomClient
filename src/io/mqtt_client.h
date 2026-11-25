@@ -21,7 +21,7 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
 struct RoundContext;  // [run-split] 单轮连接的共享状态，完整定义见 mqtt_client.cpp
 
     /**
-     * @brief RoboGo 与 RoboMaster 2026 裁判系统之间的 MQTT 异步客户端封装。
+     * @brief RoboGo 与 RoboMaster 2027 赛事引擎之间的 MQTT 异步客户端封装。
      * @note 思路：连接/订阅/收包/自动重连全部跑在单个 Asio 协程 run() 中（detached 自管理生命周期）；通过原子修订号(endpoint_revision)与标志(is_client_id_updated)
      *        配合互斥锁，实现「主线程改参数、IO 协程感知并重建连接」的安全解耦；下行报文经 on_receive_message 回调交给业务层解析 Protobuf，上行消息由 publish()
      *        异步发出；连接状态用原子量 connection_state 暴露供 UI 无锁查询。
@@ -111,7 +111,9 @@ struct RoundContext;  // [run-split] 单轮连接的共享状态，完整定义�
 
         /**
          * @brief 请求停止客户端并复位状态。
-         * @note 思路：置 is_running=false（run() 循环据此退出），并把连接状态复位为 Idle；run() 退出时会关闭底层 socket，回收资源。
+         * @note 思路：置 is_running=false（run() 循环据此退出），并把连接状态复位为 Idle。
+         * @note 关闭时机：run() 退出时**不**自己 close，只复位状态；每一轮的断开由 ConnectOnce / CleanupAndBackoff
+         *       里的 async_close 负责，最后兜底是 active_client 析构时释放 socket。
          * @note 返回值：无。
          */
         void stop();  // 非阻塞：只置标志，实际关连由 run() 协程在下一检查点完成
@@ -120,8 +122,9 @@ struct RoundContext;  // [run-split] 单轮连接的共享状态，完整定义�
         /**
          * @brief 连接/订阅/收消息的主协程循环（核心异步状态机）。
          * @note 思路：在 is_running 下反复循环——每次取 endpoint 快照，若地址/ID 变化或连接失败则重建 client 对象；依次完成 底层握手→connect→subscribe→recv
-         *        循环；在握手/连接/订阅各阶段后都检查参数是否变更，变更则关闭并重连；任意异常捕获后置 Failed 并等待 mqtt_reconnect_delay 重连。所有网络操作用RunMqttOperationWithTimeout
-         *        包裹超时，避免永久挂死。
+         *        循环；在握手/连接/订阅各阶段后都检查参数是否变更，变更则关闭并重连；任意异常捕获后置 Failed 并等待 mqtt_reconnect_delay 重连。
+         *        超时保护只有一处：PINGRESP 的接收超时（mqtt_operation_timeout，5 秒），连不上就靠 async_mqtt 自身报错；
+         *        并没有一个"把所有网络操作都包一层超时"的包装器。
          * @note 参数：无（使用类成员）。
          * @return awaitable<void>，由 co_spawn(detached) 驱动，正常随 stop() 退出。
          */
@@ -143,7 +146,10 @@ struct RoundContext;  // [run-split] 单轮连接的共享状态，完整定义�
         /**
          * @brief 发布一条上行消息（topic + 负载）。
          * @note 思路：仅当状态为 Connected 才发送；取 active_client 共享指针副本，在其执行器上 detached 启动PublishMqttMessage 协程异步发送，
-         *        从而不阻塞调用方（多为 UI/业务线程）。参数 topic：目标话题（如 "CustomByteBlock"）；message：已序列化的 Protobuf 负载字节串。
+         *        从而不阻塞调用方（多为 UI/业务线程）。参数 topic：目标话题，必须是**上行**指令名，如
+         *        "CustomControl"（→ 机库/机器人）、"MapClickCmd"（→ 服务器）、"KeyboardMouseControl"。
+         *        注意不要拿下行话题（如 "CustomByteBlock"）来 publish——那是服务器发给你的，发了没人收。
+         *        message：已序列化的 Protobuf 负载字节串。
          * @note 返回值：无。
          */
         void publish(const std::string &topic, const std::string &message);  // 立即返回：真正发送在 IO 线程的协程里完成

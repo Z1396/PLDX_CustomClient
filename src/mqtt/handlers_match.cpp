@@ -12,13 +12,13 @@
 
 namespace RoboGo::mqtt {
 
-// 2.2.3 比赛全局状态（1Hz）：局号、比分、阶段、阶段剩余秒数、胜负。
+// 2.2.3 比赛全局状态（5Hz，见协议表 2-1）：局号、比分、阶段、阶段剩余秒数、胜负。
 /**
  * @brief 解析并覆盖比赛全局状态快照，供顶部胶囊与阶段提示读取。
  * @param state 全局状态，写入 game_status。
  * @param topic 话题名，仅用于 ParseInto 的解析日志；值恒为 "GameStatus"。
  * @param payload protobuf 序列化的 GameStatus 原始字节。
- * @note 由分发表 DispatchMqttMessage 在主线程回调，1Hz 到达；解析失败保留上一次快照，界面不闪回初始值。
+ * @note 由分发表 DispatchMqttMessage 在主线程回调，5Hz 到达；解析失败保留上一次快照，界面不闪回初始值。
  * @note 2027 移除空中支援后，原「进入比赛阶段重置反制次数」的上升沿逻辑已一并删除。
  */
 void HandleGameStatus(State &state, std::string_view topic, const std::string &payload) {
@@ -30,7 +30,7 @@ void HandleGameStatus(State &state, std::string_view topic, const std::string &p
     state.game_status = std::move(game_status);
 }
 
-// 2.2.4 全局单位状态（1Hz）：双方基地/前哨站血量、每方 4 台机器人血量与弹量、总伤害与控制度。
+// 2.2.4 全局单位状态（1Hz）：双方基地/前哨站血量、每方 4 台机器人血量 + 己方发弹量、总伤害与控制度。
 // 注意：本函数在赋值后仍要读 robot_health()/robot_bullets()，因此不能把消息 move 进 State。
 void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::string &payload) {
     GlobalUnitStatus global_unit_status;
@@ -40,7 +40,7 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     // 不能 move：后面还要从这份消息里读 robot_health() / robot_bullets() 派生双方面板数据。
     state.global_unit_status = global_unit_status;
 
-    // 同一份数据驱动左右双方血量/弹量面板，也是 CustomControl 敌方血量透传的数据源。
+    // 同一份数据驱动左右双方血量面板（弹量只有己方），也是 CustomControl 敌方血量透传的数据源。
     const auto &robot_health = global_unit_status.robot_health();
     const auto update_robot_health = [](RobotStatus &robot, uint32_t health) {
         robot.health = health;                                  // 血量会因受伤下降，也会因补血上升
@@ -52,10 +52,11 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     const auto robot_health_size = robot_health.size();
     const auto half_robot_health_size = robot_health_size / 2;
 
-    // 【2027 规范】robot_health 顺序：己方 1,3,4,7 + 对方 1,3,4,7（每方 4 台，已去掉 2 号工程）。
-    // 本地数组槽位：0=重装(1) 1=保留(2) 2=步兵(3) 3=步兵(4) 4=废弃步兵(5) 5=空中(6) 6=哨兵(7) 7=飞镖(8) 8=雷达(9)。
-    // 旧协议（每方 5 台，顺序 1,2,3,4,7）对应槽位 0,1,2,3,6，这里自适应兼容两种长度。
-            // 2027 每方 4 台（1/3/4/7），旧协议每方 5 台（含 2 号工程）；
+    // 【2027 规范】robot_health 顺序：己方 1,3,4,7 + 对方 1,3,4,7（每方 4 台；2 号是保留位）。
+    // 本地血量数组（State::red_robots / blue_robots）共 9 格，布局固定为：
+    //   0=重装1 / 1=保留 / 2=步兵3 / 3=步兵4 / 4=废弃步兵5 / 5=空中6 / 6=哨兵7 / 7=飞镖8 / 8=雷达9。
+    // kRobotTypeToSlot[兵种编号] 给出该兵种落在哪一格；2 号保留位不在血量数组里，映射值为 -1（不能直接拿来下标）。
+    // 旧协议是每方 5 台（1,2,3,4,7 → 槽位 0,1,2,3,6），这里按一半长度自适应兼容两种口径。
     // 用 kRobotTypeToSlot 把「兵种编号」翻到本地数组槽位，两种长度都能兼容。
     const int client_indices_2027[] = {
             RoboGo::app::robot_registry::kRobotTypeToSlot[1],
@@ -83,12 +84,17 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
     }
 
     // 处理弹量
+    // 协议 2.2.4 原文：robot_bullets 是「己方机器人剩余累计发弹量」，顺序与 robot_health 前半段
+    // 一致（1/3/4/7），共 4 项。所以**不能**简单地按 size/2 当双方各一半——那样只会写进前两台，
+    // 步兵 3/4 和哨兵的弹量永远显示 0。部分模拟器会按双方各 4 项（共 8 项）发，两种都兼容。
     const auto &robot_bullets = global_unit_status.robot_bullets();
     const auto robot_bullets_size = robot_bullets.size();
-    const auto half_robot_bullets_size = robot_bullets_size / 2;
-    for (int i = 0; i < half_robot_bullets_size; i++) {
+    const bool bullets_own_side_only = (robot_bullets_size == 4);  // 协议标准口径：只有己方
+    const auto half_robot_bullets_size =
+            bullets_own_side_only ? robot_bullets_size : robot_bullets_size / 2;
+    for (int i = 0; i < static_cast<int>(half_robot_bullets_size); i++) {
         int index = i;  // 默认认为协议顺序与本地数组一一对应
-        // 官方未明确说明弹量数组顺序，这里按每方长度做容错映射。
+        // 每方长度决定兵种编号 -> 槽位的映射；4 项就是 2027 的 1/3/4/7。
         if (half_robot_bullets_size == 4) {
             index = client_indices_2027[i];  // 2027：1,3,4,7 -> 槽位 0,2,3,6
         } else if (half_robot_bullets_size == 6) {
@@ -97,7 +103,7 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
                 index = i + 1;
             }
         } else if (half_robot_bullets_size == 5) {
-            // 1 3 4 6 7：第 4、5 项后移两位（跳过 2 号工程与 5 号），第 2、3 项后移一位
+            // 1 3 4 6 7：第 4、5 项后移两位（跳过 2 号保留位与 5 号），第 2、3 项后移一位
             if (i >= 3) {
                 index = i + 2;
             } else if (i >= 1) {
@@ -105,19 +111,29 @@ void HandleGlobalUnitStatus(State &state, std::string_view topic, const std::str
             }
         }
 
+        if (bullets_own_side_only) {
+            // 只有己方 4 项：全部写到己方数组，对方保持未同步（0），面板会显示未知而不是假的 0。
+            if (is_red_team) {
+                state.red_robots[index].bullets = robot_bullets[i];
+            } else {
+                state.blue_robots[index].bullets = robot_bullets[i];
+            }
+            continue;
+        }
+
         int red_index;
         int blue_index;
         if (is_red_team) {
             red_index = i;
-            blue_index = i + half_robot_bullets_size;
+            blue_index = i + static_cast<int>(half_robot_bullets_size);
         } else {
-            red_index = i + half_robot_bullets_size;
+            red_index = i + static_cast<int>(half_robot_bullets_size);
             blue_index = i;
         }
-        if (red_index < robot_bullets_size) {
+        if (red_index < static_cast<int>(robot_bullets_size)) {
             state.red_robots[index].bullets = robot_bullets[red_index];
         }
-        if (blue_index < robot_bullets_size) {
+        if (blue_index < static_cast<int>(robot_bullets_size)) {
             state.blue_robots[index].bullets = robot_bullets[blue_index];
         }
     }
@@ -148,7 +164,7 @@ void HandleGlobalSpecialMechanism(State &state, std::string_view topic, const st
     }
 }
 
-// 2.2.7 比赛事件（触发式）：击杀、前哨站被毁、能量机关、阵地控制、装配结果等。
+// 2.2.7 比赛事件（触发式，event_id 1~16）：击杀、前哨站被毁、能量机关、阵地控制、装配结果等。
 // 事件既要写进系统日志，重要事件还要推一条顶部提示（2027 的致盲等窗口只有几秒，日志来不及看）。
 void HandleEvent(State &state, std::string_view topic, const std::string &payload) {
     Event event;

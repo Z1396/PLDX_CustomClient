@@ -15,12 +15,12 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 // 命名空间 RoboGo::video：业务功能层-视频模块的对外实现，集中放置视频解码与管线相关类型与函数。
 namespace RoboGo::video { // 进入视频模块命名空间
 
+#ifdef _WIN32
     /**
-     * @brief 判断某个解码器是否支持通过 D3D11VA 设备上下文做硬件解码。
-     * @note 思路：先尝试 Nvidia 硬件解码(hevc_cuvid)，失败再回退 CPU 软解(hevc)；启用低延迟/快速解码标志，随后初始化解析器、数据包与帧缓存。任一关键步骤失败时【只降级、
-     *        不终止进程】：把 is_available_ 置 false 并记录 CRITICAL，后续 decode_frame 会直接返回，界面表现为"无画面"，但小地图/血量/自定义
-     *        UI 仍可正常使用—— 这是 2027 规则明确要求的行为（图传断开时 UI 仍须可用），也避免现场因缺解码器直接闪退。
+     * @brief 判断某个解码器是否支持通过 D3D11VA 设备上下文做硬件解码（仅 Windows）。
      * @note 思路：遍历 avcodec_get_hw_config 返回的硬件配置，找"由外部设备上下文驱动"且类型为 D3D11VA 的那一条。
+     * @note 只回答"这个 codec 能不能挂 D3D11VA"，不负责选解码器、也不建上下文；解码器的三段式选择在构造函数里做。
+     * @note Linux 不编译本函数：D3D11VA 是 Windows 专属硬解接口，Linux 后端走 cuvid 或软解。
      */
     static bool CodecSupportsD3d11va(const AVCodec *codec) {
         if (codec == nullptr) { // 解码器不存在
@@ -38,17 +38,24 @@ namespace RoboGo::video { // 进入视频模块命名空间
         }
         return false; // 未找到
     }
+#endif  // _WIN32
 
     /**
-     * @brief 构造解码器，按"硬件优先、软解兜底"的顺序选择 HEVC 解码器。顺序：① D3D11VA（A/N/I 三家通用）② hevc_cuvid（仅 NVIDIA）③ hevc 软解。
+     * @brief 构造解码器，按"硬件优先、软解兜底"的顺序选择 HEVC 解码器。
+     *        Windows 顺序：① D3D11VA（A/N/I 三家通用）② hevc_cuvid（仅 NVIDIA）③ hevc 软解；
+     *        Linux 顺序：① hevc_cuvid（仅 NVIDIA）② hevc 软解。
      *        为什么把 D3D11VA 放第一：原来只试 cuvid，队友用 AMD/Intel 核显的笔记本会直接掉到软解，1080p HEVC 软解要吃 1~2 个核；D3D11VA 是
      *        Windows 上的通用硬解接口，能把 CPU 占用砍半。任一关键步骤失败时【只降级、不终止进程】：is_available_ 置 false，界面表现为"无画面"，其余面板照常可用（2027
      *        规则要求图传断开时 UI 仍可用）。
+     * @note Linux 为何没有 VAAPI 分支：随附的 3rdparty/ffmpeg/lib/linux_x86_64 静态库
+     *        只启用了 hevc_cuvid 与软解（二进制中 hevc_vaapi 符号为 0），加 VAAPI 代码也跑不起来。
+     *        若要在 Intel/AMD 核显上硬解，需用 --enable-hwaccel=hevc_vaapi 重新构建 FFmpeg 后再加该分支。
      */
     VideoDecoder::VideoDecoder(const std::function<void(const AVFrame *frame)> &frame_callback) // 构造函数：接收出帧回调
         : frame_callback(frame_callback) { // 保存每解出一帧时的回调
-        // ---------- ① D3D11VA 硬解 ----------
         const AVCodec *hevc_codec = avcodec_find_decoder_by_name("hevc"); // 通用 HEVC 解码器（可挂硬件设备）
+#ifdef _WIN32
+        // ---------- ① D3D11VA 硬解（仅 Windows）----------
         if (hevc_codec != nullptr && CodecSupportsD3d11va(hevc_codec)) { // 当前构建支持 D3D11VA
             if (av_hwdevice_ctx_create(&hw_device_context, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0) { // 建设备
                 AVCodecContext *context = avcodec_alloc_context3(hevc_codec); // 分配上下文
@@ -77,8 +84,13 @@ namespace RoboGo::video { // 进入视频模块命名空间
             // 3rdparty 里那份裁剪过的静态库目前只带了 cuvid。
             SPDLOG_INFO("当前 FFmpeg 构建未包含 HEVC D3D11VA 硬解（需 --enable-hwaccel=hevc_d3d11va 重新构建）");
         }
+#else
+        // Linux：不尝试 D3D11VA（av_hwdevice_ctx_create 只会失败并打误导性 WARN），
+        // 直接进入 ② cuvid；没有 N 卡时回落到 ③ 软解。功能不变，只是省掉一次必然失败的设备创建。
+        SPDLOG_INFO("Linux 平台：跳过 D3D11VA，尝试 cuvid 或软解（随附 FFmpeg 未启用 VAAPI）");
+#endif
 
-        // ---------- ② NVIDIA cuvid ----------
+        // ---------- ② NVIDIA cuvid（Windows / Linux 通用）----------
         if (av_codec_context == nullptr) { // 上一步没成功
             const AVCodec *cuvid_codec = avcodec_find_decoder_by_name("hevc_cuvid"); // NVIDIA 专用硬解
             if (cuvid_codec != nullptr) { // 当前构建里有
@@ -172,7 +184,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
             av_frame_free(&transfer_frame); // 释放中转帧
         } // 中转帧已释放
         if (hw_device_context) { // 硬件设备上下文存在才释放
-            av_buffer_unref(&hw_device_context); // 释放 D3D11 设备（会顺带释放其占用的显存）
+            av_buffer_unref(&hw_device_context); // 释放硬解设备上下文（Windows D3D11VA 设备等），顺带释放其占用的显存
         } // 设备上下文已释放
     }
 
@@ -203,8 +215,9 @@ namespace RoboGo::video { // 进入视频模块命名空间
             return -1; // 无法识别，返回 -1
         }
 
-        // 取 NAL 头字节，HEVC 中类型占高 6 位，故右移 1 位后与 0x3F 取低 6 位
-        const int nal_type = payload[start_offset] >> 1 & 0x3F; // HEVC NAL 类型占头字节高 6 位（右移 1 位后取低 6 位）
+        // HEVC 的 NAL 头第 1 字节布局：bit7 forbidden_zero、bit6~1 nal_unit_type、bit0 层号最高位。
+        // 所以类型不等于"高 6 位"，而是右移 1 位后再取低 6 位。
+        const int nal_type = payload[start_offset] >> 1 & 0x3F; // 右移 1 位丢掉 forbidden_zero，再与 0x3F 取 6 位类型
         SPDLOG_TRACE("识别到NAL类型 nal_type={} frame_bytes={}", nal_type, payload.size()); // 记录识别结果
         return nal_type; // 返回 NAL 类型值
     }
@@ -251,7 +264,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
      * @note 思路：用 av_parser_parse2 按字节流逐步切出完整包，每切出一包就 send 给解码器，再循环 receive 把所有已就绪的帧取出回调，直到缓冲区空(EAGAIN)
      *        或出错。
      */
-    void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) { // const 成员：不修改对象可见状态
+    void VideoDecoder::decode_frame(const std::vector<uint8_t> &frame) { // 入参 const，但函数本身会推进解析器/解码器状态，不是 const 成员函数
         // 解码计时：只累加 send_packet 与 receive_frame 两段，**不包含帧回调**。
         // 为什么必须拆开：frame_callback 里做的是 YUV->RGBA 转换 + 入队，
         // 如果把它算进解码，性能面板上"解码"会虚高整整一个转换的时间（实测虚高 7.8ms），
@@ -318,6 +331,7 @@ namespace RoboGo::video { // 进入视频模块命名空间
                     }
                     // 解出一帧：D3D11VA 的输出是 GPU 纹理，先拷回系统内存（NV12）再交给上层；
                     // 其余路径（cuvid/软解）本来就是系统内存帧，直接回调。
+                    // Linux 下不会进入 D3D11 分支（该平台不创建 D3D11VA 设备）。
                     if (decoded_frame->format == AV_PIX_FMT_D3D11) { // 硬解输出在显存里
                         av_frame_unref(transfer_frame); // 中转帧必须先清空，transfer 要求目标是干净帧
                         if (av_hwframe_transfer_data(transfer_frame, decoded_frame, 0) < 0) { // 拷回内存

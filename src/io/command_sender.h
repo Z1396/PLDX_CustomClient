@@ -13,7 +13,8 @@
 namespace RoboGo::io {
 
 // 统一的指令发布：序列化成功才发布，并打一条 INFO 摘要（话题 + 字节数）。
-// 返回是否成功，调用方可据此决定是否给用户反馈。
+// 返回值只代表"序列化成功并已交给 publish()"，**不代表对端收到**——未连接时 publish() 内部会
+// 静默丢弃，这里照样返回 true。要判断链路是否通，请看 MqttClient 的连接状态，别看这个返回值。
 template<typename Message>
 /**
  * @brief 序列化并发布一条上行 protobuf 指令，是全项目指令发布的唯一出口
@@ -45,7 +46,7 @@ inline void SendCommonCommand(MqttClient &mqtt_client, uint32_t cmd_type, uint32
     CommonCommand command;
     command.set_cmd_type(cmd_type);
     command.set_param(param);
-    // CommonCommand 的语义由 param 承载：兑换、回血、复活等通用动作。
+    // 动作类型由 cmd_type 区分（兑换 / 回血 / 复活等），param 只是该动作的附带参数（如发弹量）。
     PublishCommand(mqtt_client, "CommonCommand", command);
 }
 

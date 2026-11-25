@@ -76,8 +76,8 @@ public:  // 公开接口区：主程序仅通过这些虚函数与后端交互
 
     /**
      * @brief 从解码后的图像（DecodedImage）上传纹理到指定纹理槽。
-     * @param slot 目标纹理槽（仅 MiniMap 接受）；image —— 已解码的图像（像素缓冲+宽高）。
-     * @note 思路：纯虚函数，目前仅小地图(MiniMap)槽使用此重载。
+     * @param slot 目标纹理槽（只有 MiniMap / MiniMapTerrain 接受，其余槽返回 false）；image —— 已解码的图像（像素缓冲+宽高）。
+     * @note 思路：纯虚函数，目前只有两张启动时加载一次的静态图走这个重载：小地图底图与地形分层叠加层。
      * @return true 表示上传成功，false 表示槽位不支持或失败。
      */
     [[nodiscard]] virtual bool UploadTexture(app::TextureSlot slot, const RoboGo::resource::DecodedImage &image) = 0;

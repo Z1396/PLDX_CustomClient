@@ -27,7 +27,10 @@ inline bool WeAreRed(const State &state) {
 }
 
 /**
- * @brief 把雷达槽位映射成 robot_id 列表（兼容 8 槽位与旧 12 槽位，红/蓝在前两种排序）。 与 mini_map 原本的内联列表完全一致，集中在此后两边共用单一来源。
+ * @brief 把雷达槽位映射成 robot_id 列表（2027 标准是 8 槽位：对方 1/3/4/7 + 己方 1/3/4/7，红/蓝在前两种排序）。
+ * @note 判据是 robots_info_size()：2027 协议 2.2.19 每次只发 8 台，所以正常都走 8 槽位表；
+ *       ≥12 的 12 槽位表只为兼容旧版本/模拟器保留，实际比赛不会命中。
+ *       两套表都不含 5/105——5 号步兵在 2027 已废弃；12 槽位表里的 2/102 是保留位、6/106 是空中系统。
  * @note 纯函数：只读入参，不修改全局状态，可在任意线程调用。
  */
 inline std::vector<uint32_t> RadarRobotIds(const State &state, bool we_red) {

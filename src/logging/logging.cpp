@@ -279,7 +279,9 @@ void flush_capture_stream(bool force_flush) {  // force_flush 为 true 时无条
 
 /**
  * @brief 网络抓包后台写盘线程主循环
- * @note 思路：阻塞式从无锁队列取抓包记录；收到停止信号并且队列已经空了，线程才退出。每次取到一条后，一次性把队列里积压的全部记录批量写完，减少多次flush、减少线程切换开销；写完按阈值触发落盘
+ * @note 思路：阻塞式从无锁队列取抓包记录；每次取到一条后，一次性把队列里积压的全部记录批量写完，减少多次flush、减少线程切换开销；写完按阈值触发落盘
+ * @note 退出条件：wait_dequeue_timed 超时后检查停止标志，一旦置位就 break，**不会等队列排空**。
+ *       因此 stop 之后仍在队列里的记录会丢；退出前只 flush 已经写进流缓冲的部分。
  */
 void network_capture_loop() {  // 该函数运行在独立线程中
     SPDLOG_INFO("网络抓包线程已启动");  // 记录线程生命周期，便于排查卡死
@@ -328,13 +330,9 @@ void network_capture_loop() {  // 该函数运行在独立线程中
 void initialize(std::string_view application_name, const bool invert_udp_video, const CaptureMode capture_mode) {  // 进程启动时调用
     //std::call_once表示调用一次，后续调用不会执行
     std::call_once(g_initialize_once, [application_name, invert_udp_video, capture_mode]() {  // 用 once_flag 保证多线程下也只执行一次
-        // 解析日志根目录
-        // 日志根目录：应用安装目录下的 log 子目录
-        // 会话 ID：当前时间戳（毫秒级）
+        // 解析日志根目录：环境变量 ROBOGO_LOG_ROOT 优先，否则用相对工作目录的 "logs"（不是安装目录）。
         g_log_root_directory = resolve_log_root_directory();  // 环境变量优先，否则 "logs"
-        // 生成会话 ID
-        // 会话 ID：当前时间戳（毫秒级）
-        // 用于区分不同运行实例的日志文件
+        // 生成会话 ID：当前时间戳（毫秒级），用于区分不同运行实例的日志文件
         g_session_id = make_session_id();  // 形如 2026-11-01_16-45-03.042
         // 会话目录：日志根目录下的会话 ID 子目录
         // 用于存储该会话的所有日志文件
@@ -372,9 +370,10 @@ void initialize(std::string_view application_name, const bool invert_udp_video, 
             }
         }  // 结束 proto 保存作用域(离开时 proto_stream 析构)
 
-        // 应用日志文件 sink：纯文件、带级别着色模式
+        // 应用日志文件 sink：纯文件输出。文件 sink 不做颜色渲染，pattern 里的 %^%l%$ 只会原样输出级别文本，
+        // 真正着色的是控制台 sink —— 两边看起来不一样是正常的，不是配置漏了。
         auto app_file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(app_log_path.string(), true);  // _mt 表示多线程安全；true 表示追加写
-        app_file_sink->set_pattern("%Y-%m-%d %H:%M:%S.%e [%^%l%$] %v");  // %e 毫秒，%^%l%$ 带色级别，%v 正文
+        app_file_sink->set_pattern("%Y-%m-%d %H:%M:%S.%e [%^%l%$] %v");  // %e 毫秒，%^%l%$ 级别，%v 正文
 
         std::vector<spdlog::sink_ptr> sinks{app_file_sink};  // sink 列表，先放入文件 sink
         // 控制台 sink：带颜色，便于开发期观察

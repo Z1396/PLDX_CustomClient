@@ -61,7 +61,8 @@ namespace RoboGo::io {  // 进入网络 IO 命名空间
             return false;  // 交给上层重试
         }
         // 调大接收缓冲区；失败不致命（系统上限可能更低），仅提示实际请求值
-        // set_option 是非同步阻塞的，不会阻塞当前协程;作用是设置 socket 的接收缓冲区大小
+        // set_option 是同步调用（底层一次 setsockopt），立即返回，不是异步操作；
+        // 这里只是设置缓冲区大小，开销在微秒级，不用担心挡住 IO 线程。
         socket.set_option(boost::asio::socket_base::receive_buffer_size(kReceiveBufferBytes), error_code);
         if (error_code) {  // 缓冲区设置失败不阻断收包
             SPDLOG_WARN("设置视频流接收缓冲区失败 message={} 请求值={}", error_code.message(), kReceiveBufferBytes);

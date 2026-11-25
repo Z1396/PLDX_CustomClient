@@ -6,7 +6,7 @@
 
 namespace RoboGo::app::match_display {
 
-// 比赛阶段码 -> 中文名（协议 2.2.3 current_stage）。
+// 比赛阶段码 -> 中文名（协议 2.2.3 GameStatus.current_stage）。
 // 0 未开始 / 1 准备 / 2 自检 / 3 五秒倒计时 / 4 比赛中 / 5 结算 / 其它未知。
 inline const char *StageName(uint32_t stage) {
     switch (stage) {

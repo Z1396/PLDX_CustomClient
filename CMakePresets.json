@@ -26,13 +26,31 @@
         },
         {
             "name": "release",
-            "displayName": "Release (Clang)",
+            "displayName": "Release (Windows clang-cl)",
             "binaryDir": "${sourceDir}/build/release",
             "generator": "Ninja",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_COMPILER": "clang-cl",
                 "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        },
+        {
+            "name": "linux-release",
+            "displayName": "Linux Release (需 GCC 12+ / Clang 16+，因使用 std::expected)",
+            "binaryDir": "${sourceDir}/build/linux-release",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "linux-debug",
+            "displayName": "Linux Debug (需 GCC 12+ / Clang 16+)",
+            "binaryDir": "${sourceDir}/build/linux-debug",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
             }
         }
     ],
@@ -49,6 +67,16 @@
         {
             "name": "rel-with-debug-info",
             "configurePreset": "rel-with-debug-info"
+        },
+        {
+            "name": "linux-release",
+            "configurePreset": "linux-release",
+            "jobs": 4
+        },
+        {
+            "name": "linux-debug",
+            "configurePreset": "linux-debug",
+            "jobs": 4
         }
     ]
 }

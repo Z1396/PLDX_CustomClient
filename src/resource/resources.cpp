@@ -29,8 +29,10 @@ namespace RoboGo::resource {   // 进入资源命名空间，集中管理内嵌�
  *        ，成功则拷贝像素到 DecodedImage 并返回。
  * @note 参数：encoded_bytes 为原始编码字节(只读视图)；resource_name 仅用于日志显示的资源名。
  * @return 解码成功返回含宽高与像素的 DecodedImage，失败返回 unexpected(ImageDecodeError)。
+ * @note 只支持 PNG：stb_image 编译时定义了 STBI_ONLY_PNG，JPG/BMP 等解码器没编进来，
+ *       传进来只会得到"解码失败"，不要往这里塞其它格式。
  */
-std::expected<DecodedImage, ImageDecodeError> LoadEmbeddedImage(const std::span<const uint8_t> encoded_bytes,  // 编码后的图像字节(PNG/JPG 等)
+std::expected<DecodedImage, ImageDecodeError> LoadEmbeddedImage(const std::span<const uint8_t> encoded_bytes,  // 编码后的图像字节（仅 PNG）
                                               const std::string_view resource_name) {  // 资源名，仅用于日志输出
     const std::string_view display_name = resource_name.empty() ? "内嵌资源" : resource_name;  // 资源名为空时给出默认显示名，便于日志定位
     if (encoded_bytes.empty()) {   // 防御性校验：传入字节为空无法解码

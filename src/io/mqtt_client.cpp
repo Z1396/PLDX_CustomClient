@@ -1,6 +1,4 @@
-// 实现 MqttClient 的构造、参数设置与协程主循环 run()，以及与 broker 交互的若干辅助协程：
-// WaitForMqttOperationTimeout（超时定时器）、RunMqttOperationWithTimeout（超时包裹器）、
-// PublishMqttMessage（上行发布）。
+// 实现 MqttClient 的构造、参数设置、协程主循环 run()，以及上行发布协程 PublishMqttMessage。
 // 异步模型：所有网络操作均为 async_mqtt 的 awaitable，跑在共用的 Boost.Asio io_context 上；
 // run() 以 detached 协程常驻，内部「连接→订阅→recv 循环→异常重连」，并通过
 // 原子修订号(endpoint_revision)与标志(is_client_id_updated)感知主线程的参数变更并重建连接。
@@ -21,7 +19,7 @@ namespace {  // 匿名命名空间：本编译单元内部辅助函数与类型�
     using MqttAsyncClient = async_mqtt::client<async_mqtt::protocol_version::v3_1_1, async_mqtt::protocol::mqtt>;  // 模板参数依次为"协议版本"与"传输层协议"
 
     // 单次 MQTT 操作（连接/订阅/收发等）的最长等待时间
-    constexpr auto mqtt_operation_timeout = std::chrono::seconds(5);  // 5 秒；既用于操作超时，也用作 PINGRESP 响应超时
+    constexpr auto mqtt_operation_timeout = std::chrono::seconds(5);  // 5 秒；当前仅用于下面的 PINGRESP 接收超时
     // 连接失败后重连前的等待间隔
     constexpr auto mqtt_reconnect_delay = std::chrono::milliseconds(100);  // 100ms 退避：既避免空转打满 CPU，又能快速恢复
     // MQTT 心跳（keep-alive）间隔，单位秒
@@ -518,7 +516,7 @@ struct RoundContext {
                                     RoboGo::logging::log_network_payload("mqtt", "rx", topic, payload, peer);
                                     on_receive_message(topic, payload);  // 此回调在 IO 线程执行，必须快速返回
                                 },
-                                // 订阅确认报文
+                                // 发布确认（PUBACK）：QoS1 上行被 broker 收下后的回执，不是订阅确认
                                 [&](async_mqtt::v3_1_1::puback_packet const &packet) {
                                     SPDLOG_DEBUG("收到MQTT PUBACK peer={} packet_id={}", peer, packet.packet_id());
                                 },

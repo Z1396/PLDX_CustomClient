@@ -7,9 +7,11 @@
 // 设计要点：
 // · 控制度比例用 g_last 静态平滑值（MoveTowards，速度 1.2/秒）逼近目标，
 // 因为裁判系统按 1Hz 推送，硬切会让色带明显闪动；双方都为 0 时取 0.5 对半；
-// · 图传清晰度按 2027 规则 5.6.1：己方基地掉血后 λ² 降采样，λ<0.75 转橙、<0.5 转红；
-// · panel_height 由内容行数算出并写入 g_last_panel_height，左下角本车卡通过
-// GetBottomPanelHeight() 读取以让位 —— 这是上一帧实测高度的自校准，避免估算偏差裁切；
+// · 图传清晰度 λ 由己方基地血量线性映射：10000 血 → 1.00，0 血 → 0.50（lambda = 1 - 掉血/20000），
+// λ<0.75 转橙。代码里还留着一条 λ<0.5 的红色分支，但按这个映射 λ 的下限就是 0.50，那条分支
+// 当前不可能触发——是规则口径变了还是公式该改，动之前先核对 2027 规则 5.6.1；
+// · panel_height 由内容行数算出（CollectStatusLines）后写入 g_last_panel_height，左下角本车卡
+// 通过 GetBottomPanelHeight() 读取、在下一帧让位。这是"按行数算"不是"按像素量"，行数一变高度就变；
 // · 状态行只在有内容时产生（CollectStatusLines 返回空即不占位），底部条自然收缩。
 // 依赖：ImGui（imgui_internal.h 提供 GetScale）、messages.pb.h、app/robot_registry.h、
 // app/team_util.h、ui/hud_primitives.h、ui/theme.h。
@@ -45,8 +47,9 @@ using RoboGo::ui::hud::TextSize;
 // 与顶部队伍条保持同一组「有血量」单位。
 constexpr std::array<int, 4> kHudRobotIds = {1, 3, 4, 7};
 
-// 上一帧底部条实际占用的高度：左下角本车卡靠它让位。
-// 用「实测值」而非公式估算，是因为状态行数可变，估算偏差会裁掉底部内容。
+// 上一帧底部条占用的高度：左下角本车卡靠它让位。
+// 注意这是「按状态行数算出来的」，不是从 ImGui 量回来的——状态行增删时会立刻变化，
+// 所以本车卡要读上一帧的值来让位，不能自己再算一遍。
 float g_last_panel_height = 0.0f;
 
 // 己方在总量中的占比；双方都为 0 时按对半，避免开局显示成一条纯对方色的空带。
@@ -178,7 +181,7 @@ void DrawControlBand(ImDrawList *draw_list, const ImVec2 &top_left, float width,
 /**
  * @brief 在屏幕底部居中绘制控制度带与状态行。
  * @param state 只读全局状态。
- * @note 思路：先由状态行数算 panel_height 与 panel_top，开一个全宽、透明、无输入的窗口；依次画状态行、控制度大数字、平滑后的双色带、摘要行；最后把实测高度写回g_last_panel_height（Begin
+ * @note 思路：先由状态行数算出 panel_height 与 panel_top，开一个全宽、透明、无输入的窗口；依次画状态行、控制度大数字、平滑后的双色带、摘要行；最后把算出的高度写回 g_last_panel_height（Begin
  *        失败的提前返回分支也写，避免让位信息陈旧）。
  */
 void ShowBottomPanel(const State &state) {

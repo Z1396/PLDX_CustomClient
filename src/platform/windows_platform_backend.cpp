@@ -595,12 +595,12 @@ private:  // 以下为内部实现细节，不对外暴露
         }
 
         // 创建并立即关闭一个命令列表（后续每帧 Reset 复用）。
-        if (device_->CreateCommandList(0,
-                                       D3D12_COMMAND_LIST_TYPE_DIRECT,  // 节点掩码 0 表示单 GPU 节点
-                                       frame_context_[0].command_allocator,  // 命令列表类型与队列一致（直接类型）
-                                       nullptr,  // 初始绑定的命令分配器（每帧会 Reset 重新绑定）
-                                        IID_PPV_ARGS(&command_list_)) != S_OK  // 初始管线状态，nullptr 表示无（由 ImGui 自行设置）
-            || command_list_->Close() != S_OK) {  // 输出图形命令列表接口指针
+        if (device_->CreateCommandList(0,  // 节点掩码 0 表示单 GPU 节点
+                                       D3D12_COMMAND_LIST_TYPE_DIRECT,  // 命令列表类型与队列一致（直接类型）
+                                       frame_context_[0].command_allocator,  // 初始绑定的命令分配器（每帧会 Reset 重新绑定）
+                                       nullptr,  // 初始管线状态，nullptr 表示无（由 ImGui 自行设置）
+                                       IID_PPV_ARGS(&command_list_)) != S_OK  // 输出图形命令列表接口指针
+            || command_list_->Close() != S_OK) {  // 创建后立即 Close，之后每帧 Reset 复用
             return false;  // 命令列表创建或关闭失败
         }
 
@@ -609,7 +609,7 @@ private:  // 以下为内部实现细节，不对外暴露
             return false;  // fence 创建失败
         }
 
-        fence_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);  // 创建手动重置的等待事件（初始未触发）
+        fence_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);  // 创建**自动重置**的等待事件（第二参数 FALSE = 不手动重置）
         if (fence_event_ == nullptr) {  // 等待事件创建失败则无法做 GPU 同步，直接返回失败
             return false;  // 事件创建失败
         }
@@ -809,11 +809,11 @@ private:  // 以下为内部实现细节，不对外暴露
      * @note 思路：在 DEFAULT 堆建目标纹理（初始 COPY_DEST），在 UPLOAD 堆建暂存缓冲并写入像素，再用独立命令列表拷贝并屏障转态，最后建 SRV。
      * @return true 创建并上传成功，false 任意一步（设备/缓冲/映射）失败。
      */
-    [[nodiscard]] bool LoadTextureFromMemory(const uint8_t *data,
-                                             const int width,  // 源像素数据指针（RGBA8 紧凑排列）
-                                             const int height,  // 纹理宽度（像素）
-                                             const D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu_handle,  // 纹理高度（像素）
-                                             ID3D12Resource **out_texture_resource) const {  // 创建 SRV 的目标 CPU 描述符句柄
+    [[nodiscard]] bool LoadTextureFromMemory(const uint8_t *data,  // 源像素数据指针（RGBA8 紧凑排列）
+                                             const int width,  // 纹理宽度（像素）
+                                             const int height,  // 纹理高度（像素）
+                                             const D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu_handle,  // 用于创建 SRV 的目标 CPU 描述符句柄
+                                             ID3D12Resource **out_texture_resource) const {  // 输出参数：成功时写入新建的纹理资源
         // 目标纹理放在默认（显存）堆，初态为 COPY_DEST，等待接收上传数据。
         D3D12_HEAP_PROPERTIES props = {};
         props.Type = D3D12_HEAP_TYPE_DEFAULT;  // 默认堆，显存
@@ -1110,7 +1110,6 @@ private:  // 以下为内部实现细节，不对外暴露
 
     /**
      * @brief 把一帧 RGBA 像素上传到指定纹理（复用纹理与上传缓冲，只在尺寸变化时重建）。
-     * @note 思路：尺寸校验 -> 必要时重建纹理 -> 确保上传上下文 -> 写映射内存 -> 录制「屏障 + 拷贝 + 屏障」-> 提交并等待完成。
      * @note 思路：选桶 -> 等该桶上一轮完成 -> 准备资源 -> 纹理尺寸变化时重建 -> 写常驻映射-> 录制「屏障 + 拷贝 + 屏障」-> 提交到渲染队列后立即返回（不等 GPU）
      *        。为什么可以不等：上传与渲染走同一个队列，命令按提交顺序执行，本帧的绘制必然排在上传之后；只有绕回同一个桶（3 帧后）时才可能需要等，而那时 GPU 早就拷完了。
      */
@@ -1461,7 +1460,7 @@ private:  // 以下为内部实现细节，不对外暴露
     WindowsVideoTexture mini_map_texture_;  // 小地图静态纹理，内容变化不频繁
     WindowsVideoTexture mini_map_terrain_texture_;  // 小地图地形分层叠加层（带 alpha，启动时上传一次）
     // 常驻的纹理上传上下文：命令队列/分配器/命令列表/fence/事件/上传缓冲只创建一次，之后逐帧复用。
-    // mutable 是因为上传发生在 const 成员函数里（UploadDynamicTexture 声明为 const）。
+    // 上传函数（UploadDynamicTexture / UploadFrameToTexture）都不是 const，直接改这些成员，所以不需要 mutable。
     TextureUploadContext texture_upload_;  // 上传上下文（三个桶轮转，提交到渲染队列）
     bool initialized_ = false;  // 后端是否已完成初始化，防止重复初始化或重复释放
     bool should_close_ = false;  // 是否已收到退出请求，决定主循环是否结束

@@ -51,10 +51,12 @@ namespace {
 std::string FormatEventText(const Event &event) {
     std::string text;
     switch (event.event_id()) {
-        case 1: {  // 击杀事件（参数 1 为被击杀者，参数 2 为击杀者，如 "1,101"）
+        case 1: {  // 击杀事件：协议规定「参数 1 = 被击杀者，参数 2 = 击杀者」，如 "1,101" 表示 101 击毁 1
             const auto parts = SplitByComma(event.param());
             if (parts.has_value()) {
-                text = GetRobotName(parts->first) + " 击杀了 " + GetRobotName(parts->second);
+                // 注意顺序：first 是被击杀者，second 才是击杀者。原来这里写反了，
+                // 会把"蓝方英雄击毁红方英雄"显示成"红方英雄击毁蓝方英雄"。
+                text = GetRobotName(parts->second) + " 击杀了 " + GetRobotName(parts->first);
             } else {
                 text = "击杀事件: " + event.param();  // 参数格式不符合预期（没有逗号）时原样附上
             }

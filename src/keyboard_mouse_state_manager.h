@@ -53,6 +53,20 @@ void set_mouse_sensitivity(float sensitivity);
 void accumulate_relative_mouse_delta(float delta_x, float delta_y);
 
 /**
+ * @brief 设置外接 RS232 手柄注入的键盘位（与 UI 键盘取并集，不覆盖鼠标键盘的真实输入）。
+ * @note 说明：2027 规则下官方取消了「自定义控制器」，手柄只能作为自定义终端的输入外设；
+ *       它的按键经 io/controller_input.h 映射成协议键位后，由串口线程调用本接口写入。
+ *       参数 bits：16 位键盘位图（bit0=W、bit1=S、…、bit15=B），与 KeyboardMouseControl 一致。
+ */
+void set_controller_keyboard_bits(uint32_t bits);
+
+/**
+ * @brief 设置外接 RS232 手柄注入的鼠标键（与 UI 鼠标取并集）。
+ * @note 参数 bits：bit0 左键、bit1 右键、bit2 中键（与内部 kButtonLeft/Right/Mid 对应）。
+ */
+void set_controller_mouse_buttons(uint32_t bits);
+
+/**
  * @brief 查询当前是否处于地图点位标记模式。
  */
 bool is_marker_mode();
@@ -90,7 +104,9 @@ void send_map_marker_now(RoboGo::io::MqttClient &mqtt_client, float map_x, float
 
 /**
  * @brief 查询/设置当前登录身份是否为"指挥手"。
- * @note 说明：指挥手不是机器人、没有自己的 robot_id，登录槽位沿用飞镖的 8 号，因此不能用 robot_id 判断身份，必须单独记一个角色标志。
+ * @note 说明：指挥手不是一个独立的机器人编号，2027 起登录槽位固定为空中系统 6 号（这样一条链路就能
+ *       打通机库 CustomControl + 飞镖 + 哨兵），但 6 号本身是合法兵种，光看 robot_id 无法区分
+ *       "空中系统操作手"和"指挥手"，因此必须单独记一个角色标志。
  */
 bool is_commander_role();
 void set_commander_role(bool enabled);

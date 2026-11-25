@@ -30,7 +30,8 @@ namespace RoboGo::video { // 进入视频模块命名空间
 
     public: // ---------- 公开接口 ----------
         /**
-         * @brief 构造解码器，优先尝试 Nvidia 硬解(hevc_cuvid)，失败则回退到 CPU 软解(hevc)。
+         * @brief 构造解码器，按"硬件优先、软解兜底"的顺序选择 HEVC 解码器：
+         *        ① D3D11VA（A/N/I 三家通用）→ ② hevc_cuvid（仅 NVIDIA）→ ③ hevc 纯软解。
          * @note 参数：frame_callback 为解出 AVFrame 后的回调。
          * @note 说明：找不到解码器/解析器时不再终止进程，而是降级为"无画面"（2027 规则要求图传中断时 UI 仍可用）。
          */

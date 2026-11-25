@@ -1,4 +1,4 @@
-// application.cpp：应用程序核心——解析启动参数、搭建后台服务(MQTT / UDP 视频流 / 字节块解码线程)，驱动主渲染循环、视频纹理上传与键鼠上报。
+// application.cpp：应用程序核心——解析启动参数、搭建后台服务(MQTT / UDP 视频流 / 串口手柄)，驱动主渲染循环、视频纹理上传与键鼠上报。
 // [pch-split] 本模块显式依赖（原由全局 pch.h 隐式提供）
 #include <boost/asio.hpp>
 extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
@@ -24,8 +24,11 @@ extern "C" {  // FFmpeg 为 C 接口，需按 C 链接方式包含
 #include "main_window.h"  // 主窗口/主界面绘制(ShowMainWindow)
 #include "video/rgba_image_transform.h"  // RGBA 缓冲变换工具(如 180 度旋转)
 #include "video/video_stream_manager.h"  // UDP 视频流管理器：绑定端口并解出 AVFrame 回调
+#include "io/controller_input.h"  // 外接 RS232 手柄的载荷解码与按键映射（纯逻辑）
+#include "io/referee_frame.h"  // 串口帧结构（回调参数类型）
+#include "io/serial_controller.h"  // RS232 串口读取（自定义终端的输入外设）
 
-// 应用核心实现：解析启动参数、建立后台服务(IO 线程/MQTT/UDP 视频流/自定义字节块解码 worker)、
+// 应用核心实现：解析启动参数、建立后台服务(IO 线程 / MQTT / UDP 视频流 / 串口手柄)、
 // 运行主渲染循环、将视频帧上传为 GPU 纹理，并按需上报键鼠控制与自定义控制载荷。
 namespace {  // 匿名命名空间：本文件内部的辅助函数与类型，不对外暴露
 
@@ -33,7 +36,7 @@ namespace {  // 匿名命名空间：本文件内部的辅助函数与类型，�
 using RoboGo::app::LaunchOptions;   // 启动选项结构体，包含 MQTT 服务器地址、视频端口、主机名等。
 using RoboGo::app::TextureSlot;     // 纹理槽枚举，定义了视频纹理/自定义视频纹理/小地图纹理的槽位。
 using RoboGo::app::TextureView;     // 纹理视图结构体，包含 GPU 句柄与尺寸，用于渲染。
-using RoboGo::app::UiLogMessage;    // UI 日志消息结构体，包含日志级别、时间戳、消息内容等。
+using RoboGo::app::UiLogMessage;    // UI 日志消息结构体（类型标记 + 文本，不含时间戳；时间是写日志时另存的）。
 using RoboGo::app::VideoFrame;      // 视频帧结构体，包含视频数据、时间戳等。
 
 constexpr bool kDefaultInvertUdpVideo = false; // UDP 视频是否默认做 180 度旋转
@@ -273,14 +276,107 @@ private:  // 内部状态
 // 无界队列会以每秒 500MB 的速度涨上去（拖 3 秒就是 1.4GB）。
 constexpr std::size_t kMaxQueuedVideoFrames = 4;
 
+/**
+ * @brief 把字节串转成十六进制文本（仅用于 --serial-raw 的现场排查）。
+ * @param data 原始字节；limit 最多打印多少字节（超出部分用 "..." 表示）。
+ * @return 形如 "01 A5 3C ..." 的文本。
+ */
+std::string ToHexText(const std::vector<std::uint8_t> &data, const std::size_t limit) {
+    std::string text;  // 输出文本
+    text.reserve(limit * 3);  // 每个字节 3 个字符（两位十六进制 + 空格）
+    char buffer[4] = {};  // 单字节格式化缓冲
+    const std::size_t count = data.size() < limit ? data.size() : limit;  // 实际打印字节数
+    for (std::size_t i = 0; i < count; ++i) {
+        std::snprintf(buffer, sizeof(buffer), "%02X", data[i]);  // 转两位十六进制
+        if (!text.empty()) {
+            text.push_back(' ');
+        }
+        text += buffer;
+    }
+    if (data.size() > limit) {
+        text += " ...";  // 明确提示还有后续字节
+    }
+    return text;
+}
+
+/**
+ * @brief 处理串口收到的一帧控制器数据：解码 → 摇杆积分成鼠标速度 → 按键映射成键盘/鼠标位。
+ * @param frame 完整帧（cmd_id + data）。
+ * @param raw_mode 只打印原始内容、不做映射（用于反推自家固件的载荷布局）。
+ * @param pixels_per_second 摇杆满杆时每秒注入的鼠标像素（灵敏度=1 时）。
+ * @note 2027 规则下官方已删除 0x0302/0x0306/0x0309，这里解析的是队伍私有的串口约定；
+ *       默认载荷布局见 io/controller_input.h，与固件不一致时只改那张偏移表即可。
+ * @note 只在 IO 线程调用（SerialController 的回调），函数内的 static 无需加锁。
+ */
+void HandleControllerFrame(const RoboGo::io::referee::Frame &frame,
+                           const bool raw_mode,
+                           const float pixels_per_second) {
+    using namespace RoboGo::io::controller;
+
+    if (raw_mode) {  // 只打印前 10 帧原始内容，够用来核对载荷布局
+        // 注意：raw 模式必须放在 cmd_id 过滤之前——它的用途就是看清「固件到底发了什么」，
+        // 包括未知命令码；先过滤就永远看不到真正想排查的东西。
+        static int raw_logged = 0;
+        if (raw_logged < 10) {
+            ++raw_logged;
+            SPDLOG_INFO("串口原始帧 #{}/10 cmd_id=0x{:04X} seq={} len={} data=[{}]",
+                        raw_logged, frame.cmd_id, frame.seq, frame.data.size(), ToHexText(frame.data, 40));
+        }
+        return;
+    }
+
+    if (frame.cmd_id != kCmdIdControllerData) {  // 目前只解析 0x0302（旧控制器数据帧）
+        static std::uint16_t last_unknown_cmd = 0xFFFFu;  // 上次提示过的未知命令码
+        if (last_unknown_cmd != frame.cmd_id) {  // 同一个未知 cmd_id 只提示一次，避免刷屏
+            last_unknown_cmd = frame.cmd_id;
+            SPDLOG_WARN("串口收到未识别的帧 cmd_id=0x{:04X} len={}；当前只解析 0x0302（可用 --serial-raw 查看原始内容）",
+                        frame.cmd_id, frame.data.size());
+        }
+        return;
+    }
+
+    const RawState state = DecodeDefaultLayout(frame.data);  // 按默认布局解码
+    if (!state.valid) {  // 长度不足（固件可能与默认布局不一致）
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            SPDLOG_WARN("控制器帧长度不足 len={}（默认布局至少需要 {} 字节，请用 --serial-raw 核对）",
+                        frame.data.size(), kMinPayloadSize);
+        }
+        return;
+    }
+
+    // 摇杆按时间积分：手柄 50Hz 还是 100Hz 发，手感都一致。
+    static auto last_frame_time = std::chrono::steady_clock::time_point{};  // 上一帧时刻
+    const auto now = std::chrono::steady_clock::now();
+    float delta_seconds = 0.02f;  // 默认按 50Hz 估；首帧或长时间中断时用它兜底
+    if (last_frame_time != std::chrono::steady_clock::time_point{}) {
+        const float measured = std::chrono::duration<float>(now - last_frame_time).count();  // 实际间隔（秒）
+        if (measured > 0.0f && measured < 0.2f) {  // 超过 200ms 视为中断，不把攒下的时间一次性补上
+            delta_seconds = measured;
+        }
+    }
+    last_frame_time = now;
+
+    const float velocity_x = AxisToVelocity(state.axis_x, kDefaultAxisDeadzone, pixels_per_second);  // 横轴速度
+    const float velocity_y = AxisToVelocity(state.axis_y, kDefaultAxisDeadzone, pixels_per_second);  // 纵轴速度
+    if (velocity_x != 0.0f || velocity_y != 0.0f) {  // 只有在动的时候才累加，避免无意义原子写
+        accumulate_relative_mouse_delta(velocity_x * delta_seconds, velocity_y * delta_seconds);
+    }
+
+    const MappedInput mapped = MapButtons(state.buttons);  // 按键映射
+    set_controller_keyboard_bits(mapped.keyboard_bits);    // 与 UI 键盘取并集
+    set_controller_mouse_buttons(mapped.mouse_buttons);    // 与 UI 鼠标取并集
+}
+
 // BackgroundServices —— 汇总所有后台线程与网络/视频服务：
-// IO 线程(Asio)、MQTT 客户端、UDP 视频流管理器、自定义字节块解码 worker，
-// 以及它们与主线程之间的无锁队列；主线程通过本类取出消息与最新视频帧。
+// IO 线程(Asio)、MQTT 客户端、UDP 视频流管理器，以及串口控制器；
+// 主线程通过本类取出消息与最新视频帧。
 class BackgroundServices {  // 生命周期与 RunApplication 中的作用域块绑定，退出时析构即停服
 public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages / TakeLatestVideoFrame 等接口
     /**
      * @brief 构造后台服务，按启动选项初始化各组件并启动 IO 线程。
-     * @note 思路：成员初始化列表中依次构造转换器、解码 worker、MQTT 客户端、视频流管理器，最后创建一个专用线程运行 Asio io_context。
+     * @note 思路：成员初始化列表中依次构造转换器、MQTT 客户端、视频流管理器、串口控制器，最后创建一个专用线程运行 Asio io_context。
      */
     explicit BackgroundServices(const LaunchOptions &options)  // explicit：防止 LaunchOptions 被隐式转换
         :   udp_frame_converter_(options.invert_udp_video), // AvFrameRgbaConverterUDP udp_frame_converter_帧转换器(带初始旋转开关)
@@ -309,6 +405,18 @@ public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages 
                 }
             }),
 
+            // 外接 RS232 手柄：2027 规则下它只能作为本终端的输入外设，
+            // 因此这里读的是队伍私有串口，不走官方任何控制器链路。
+            // 端口为空时构造出来但不会 Start()，对未接手柄的现场零影响。
+            serial_controller_(io_context_,  // 与 MQTT/UDP 共用同一个执行上下文
+                               options.serial_port,  // 端口名（空表示未配置）
+                               options.serial_baud,  // 波特率
+                               [serial_raw = options.serial_raw,  // 是否只打印原始帧
+                                serial_scale = options.serial_scale](  // 满杆像素速度
+                                       const RoboGo::io::referee::Frame &frame) {  // IO 线程回调
+                                   HandleControllerFrame(frame, serial_raw, serial_scale);  // 解码并注入键鼠
+                               }),
+
             // IO 线程：运行 Asio 事件循环，承接 MQTT 与 UDP 的异步操作。
             io_thread_([this]() {  // 新线程入口：整个 IO 线程都跑在 io_context_.run() 里
                 SPDLOG_INFO("IO线程已启动");  // 标记后台线程就绪
@@ -321,6 +429,14 @@ public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages 
                 if (video_test_enabled_) {  // 开发自检模式：没有图传时用合成画面验证整条链路
                     SPDLOG_INFO("合成视频源已启用 --video-test（仅用于自检，比赛请勿开启）");
                     video_test_thread_ = std::thread([this]() { RunVideoTestSource(); });  // 独立线程按 60fps 产帧
+                }
+                if (!options.serial_port.empty()) {  // 配置了外接手柄才启动串口
+                    if (options.serial_raw) {  // --serial-raw：连传输层原始字节一起打出来
+                        serial_controller_.EnableRawByteLog(true);
+                    }
+                    serial_controller_.Start();  // 打开端口并投递第一次异步读
+                } else {
+                    SPDLOG_INFO("未配置外接串口手柄（如需启用：--serial COM3）");
                 }
             }  // 构造函数结束(全部工作在初始化列表中完成)
 
@@ -358,7 +474,7 @@ public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages 
 
     /**
      * @brief 在主线程中消费所有已到达的 MQTT 消息。
-     * @note 思路：循环从无锁队列取出消息交给 HandleMqttMessage 分发；若消息携带自定义字节块数据，则转交解码 worker。
+     * @note 思路：循环从无锁队列取出消息交给 HandleMqttMessage 分发（只做解析与写 State，不在这里做重活）。
      */
     void ProcessMessages(State &state) {  // 每帧调用一次，必须取空以免积压
         std::pair<std::string, std::string> message;  // 复用的出参，避免每条消息都构造新对象
@@ -432,7 +548,7 @@ public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages 
 
     /**
      * @brief 按顺序停止各服务并回收 IO 线程。
-     * @note 思路：置停止标志 -> 停 MQTT/视频流 -> stop io_context -> join IO 线程 -> 停解码 worker。
+     * @note 思路：置停止标志 -> 停自检线程/串口 -> 停 MQTT/视频流 -> stop io_context -> join IO 线程。
      */
     void Stop() {  // 幂等：析构与显式调用都可安全触发
         if (stopped_) { // 保证只执行一次
@@ -443,6 +559,7 @@ public:  // 构造初始化各组件，之后由主循环调用 ProcessMessages 
         if (video_test_thread_.joinable()) {  // 自检线程可能从未启动
             video_test_thread_.join();  // 等它退出
         }  // 结束自检线程回收
+        serial_controller_.Stop();  // 停串口：关端口即可，挂起的异步读会立刻以 operation_aborted 返回
         mqtt_client_.stop(); // 停止 MQTT
         video_stream_manager_.stop(); // 停止 UDP 视频接收
         io_context_.stop(); // 让 io_context.run() 返回
@@ -458,7 +575,8 @@ private:  // 内部工具与成员
     static std::optional<VideoFrame> TakeLatestFrame(moodycamel::ReaderWriterQueue<VideoFrame> &queue) {  // static：不依赖实例状态
         std::optional<VideoFrame> latest_frame;  // 为空表示队列本来就空
         VideoFrame video_frame;  // 复用的中转对象
-        // try_dequeue 会阻塞，直到有新帧可用或队列为空
+        // try_dequeue 是**非阻塞**接口：队列空时立即返回 false，不会卡住调用线程。
+        // （要阻塞等新帧得用 wait_dequeue，这里是刻意不等的——渲染线程不能被视频饿死。）
         while (queue.try_dequeue(video_frame)) { // 持续取，直到取空
             latest_frame = std::move(video_frame); // 始终用更新的帧覆盖
         }
@@ -471,6 +589,7 @@ private:  // 内部工具与成员
     AvFrameRgbaConverter udp_frame_converter_; // YUV->RGBA 转换器
     RoboGo::io::MqttClient mqtt_client_; // MQTT 客户端
     RoboGo::video::VideoStreamManager video_stream_manager_; // UDP 视频流管理器
+    RoboGo::io::SerialController serial_controller_; // 外接 RS232 手柄（自定义终端的输入外设）
     std::thread io_thread_; // IO 线程
     std::thread video_test_thread_;                 // 合成视频源线程（仅 --video-test 时启动）
     std::atomic<bool> video_test_stop_{false};      // 合成视频源停止标志
@@ -544,6 +663,11 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只
         options.capture_mode = capture_env; // 读取环境变量档位
     }
 
+    // 外接 RS232 手柄：也支持环境变量给默认值（现场用快捷方式启动时不必改命令行）
+    if (const char *serial_env = std::getenv("ROBOGO_SERIAL"); serial_env != nullptr && serial_env[0] != '\0') {
+        options.serial_port = serial_env; // 读取环境变量里的串口名
+    }
+
     // --dev：本地联调快捷开关。客户端默认连 2027 裁判系统（192.168.12.1），
     // 而 tools/mock_rm_server.py 监听的是 127.0.0.1；加这个开关就不用每次手改地址。
     // 注意放在下面的参数循环之前：显式 --mqtt_server 仍然优先于 --dev。
@@ -567,6 +691,20 @@ LaunchOptions ParseLaunchOptions(const std::vector<std::string> &args) {  // 只
             ++i; // 跳过已消费的值
         } else if (args[i] == "--video-test") { // --video-test：用合成画面替代图传
             options.video_test = true; // 打开合成视频源
+        } else if (args[i] == "--serial" && i + 1 < args.size()) { // --serial COM3：启用外接 RS232 手柄
+            options.serial_port = args[i + 1]; // 取下一个参数作为串口设备名
+            ++i; // 跳过已消费的值
+        } else if (args[i] == "--serial-baud" && i + 1 < args.size()) { // --serial-baud 115200
+            options.serial_baud = ParseInteger<int>(args[i + 1]).value_or(115200); // 解析失败保留默认 115200
+            ++i; // 跳过已消费的值
+        } else if (args[i] == "--serial-raw") { // --serial-raw：只打印原始帧，用于核对载荷布局
+            options.serial_raw = true; // 打开原始帧日志
+        } else if (args[i] == "--serial-scale" && i + 1 < args.size()) { // --serial-scale 900：满杆像素速度
+            const float scale = std::strtof(args[i + 1].c_str(), nullptr); // 浮点解析
+            if (scale > 0.0f) { // 只接受正数，避免除零/反向
+                options.serial_scale = scale; // 覆盖默认速度
+            }
+            ++i; // 跳过已消费的值
         }  // if-else-if 结束(其它参数忽略)
     }
 
@@ -592,6 +730,11 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
                 options.mqtt_host,  // MQTT 服务器主机名
                 options.mqtt_port,  // MQTT 服务器端口
                 options.parsed_video_port);  // 解析后的 UDP 视频端口
+    SPDLOG_INFO("外接手柄 serial_port={} baud={} raw={} scale={}",  // 串口配置，便于现场核对
+                options.serial_port.empty() ? "(未启用)" : options.serial_port,  // 空表示不启用
+                options.serial_baud,
+                options.serial_raw,
+                options.serial_scale);
 
     if (!platform_backend.Initialize()) { // 初始化窗口/图形设备/ImGui
         return 1; // 初始化失败直接退出
@@ -640,7 +783,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
         // 必须在这里启动（早于主循环）且在 background_services.Stop() 之前停止，保证线程不会用到已析构的客户端。
         start_keyboard_mouse_publisher(background_services.mqtt_client());
 
-        // 记录两路视频最近一次出帧的时间，初值 min() 表示"尚未收到帧"。
+        // 记录 UDP 视频最近一次出帧的时间，初值 min() 表示"尚未收到帧"。
         std::chrono::steady_clock::time_point last_udp_frame_time = std::chrono::steady_clock::time_point::min();  // UDP 从未收到帧
 
         // 统计从启动到后台服务就绪的耗时。
@@ -686,7 +829,7 @@ int RunApplication(platform::PlatformBackend &platform_backend, const LaunchOpti
 
             const auto now = std::chrono::steady_clock::now();  // 本帧统一时间基准
 
-            // 为绘制重新计算两路视频的就绪状态(供界面决定占位/提示)。
+            // 为绘制重新计算 UDP 视频的就绪状态(供界面决定占位/提示)。
             const bool udp_video_display_ready = IsVideoDisplayReady(  // UDP 是否有画面
                     udp_video_texture,  // 纹理状态
                     last_udp_frame_time,  // 最近出帧时刻

@@ -67,7 +67,7 @@ std::string FitLine(const std::string &text, float max_width, float font_size) {
     return result;
 }
 
-// 10 个模块的连接状态（与协议 2.2.12 顺序一致）。
+// 10 个模块的连接状态（顺序与协议字段一致）。
 // CollectOfflineModules 里用 static_assert 校验它与状态数组等长，防止改协议时漏项。
 const char *const kModuleNames[] = {
         "主控", "电源管理", "图传", "RFID", "UWB",

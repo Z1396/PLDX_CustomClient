@@ -34,8 +34,8 @@ void HandleRobotPosition(State &state, std::string_view topic, const std::string
 // 处理本机与友军路径计划状态
 void HandleRobotPathPlanInfo(State &state, std::string_view topic, const std::string &payload);
 
-// ---------- handlers_ui.cpp：界面侧机制与指令回执（协议 2.2.14 起）----------
-// 处理本机与友军状态
+// ---------- handlers_ui.cpp：界面侧机制与指令回执（协议 2.2.14 起，非连续）----------
+// 处理本机与友军的 Buff 增益（获得时触发、随后 1Hz 续期）
 void HandleBuff(State &state, std::string_view topic, const std::string &payload);
 // 处理本机与友军惩罚状态
 void HandlePenaltyInfo(State &state, std::string_view topic, const std::string &payload);

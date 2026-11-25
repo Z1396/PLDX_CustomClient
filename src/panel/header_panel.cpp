@@ -4,7 +4,7 @@
 // 1) ShowHeaderPanel：居中状态胶囊（比分 / 倒计时 / 阶段 / 金币 / 自瞄·小陀螺）
 // + 左右各 300px 的队伍条（基地、前哨、2×2 单位块）；
 // 2) ShowPenaltyBanner：判罚横幅（按类型配色 + 本地倒计时）；
-// 3) ShowEventToasts：最近重要事件的堆叠提示（6 秒淡出、最多 6 条）；
+// 3) ShowEventToasts：最近重要事件的堆叠提示（3.5 秒起淡出、6 秒移除、最多 6 条）；
 // 4) GetPenaltyTypeName：判罚类型码 → 中文，供日志/横幅复用。
 // 数据流：只读 State。状态胶囊取 GameStatus / GlobalLogisticsStatus；
 // 队伍条取 GlobalUnitStatus + RobotStaticStatus + State::red_robots/blue_robots；

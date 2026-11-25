@@ -401,7 +401,7 @@ struct BuildingInfo {
 /**
  * @brief 把前哨站的 status 码翻成「我方/敌方 完全/临时」并选好颜色。
  * @param hp 当前血量；status —— 控制状态码；ours/theirs —— 双方强调色。
- * @note 思路：status 1~4 是协议 2.2.13 的控制状态，未知值保留「未知」+ 中性色，不把 0 误显示成某方控制。ours/theirs 按当前阵营传入，保证文案始终是「我方」视角。
+ * @note 思路：status 1~4 是协议约定的控制状态码，未知值保留「未知」+ 中性色，不把 0 误显示成某方控制。ours/theirs 按当前阵营传入，保证文案始终是「我方」视角。
  * @return 可直接交给 BuildingRow 的 BuildingInfo。
  */
 BuildingInfo MakeOutpostInfo(const char *label, uint32_t hp, uint32_t status, ImU32 ours, ImU32 theirs) {
@@ -1281,7 +1281,7 @@ using RoboGo::io::SendSentryCtrlCommand;
 
 /**
  * @brief 画「哨兵」页签的 3×3 指令网格 + 确认/金币复活。
- * @note 思路：按钮的 label 与协议 command_id 一一对应，点击直接 SendSentryCtrlCommand；用 GridButton 的 col_span 让最后一行「金币复活」占两列。
+ * @note 思路：按钮的 label 与协议 2.2.31 的 command_id 一一对应，点击直接 SendSentryCtrlCommand；用 GridButton 的 col_span 让最后一行「金币复活」占两列。
  */
 void DrawSentryTab(RoboGo::io::MqttClient &mqtt_client, ImDrawList *dl, ImVec2 p, float width,
                    const Colors &c, float s) {
